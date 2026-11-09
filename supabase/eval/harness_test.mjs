@@ -11,6 +11,7 @@ import {
   avaliarSemLigacao,
   citacoesInvalidas,
   classificarAvaliacao,
+  classificarIdCitado,
   extrairIdsRubrica,
   percentilLinear,
   precisaoRevocacao,
@@ -154,7 +155,9 @@ test('mock: citação inválida, bloco sem fonte e caso limpo', async () => {
     const jsonC = JSON.parse(await readFile(resultadoPath(c.run.stdout), 'utf8'))
     const idFantasma = jsonA.perguntas[0].repeticoes[0].citacoes.ids_invalidos.find((item) => item.id === 'id_inexistente_xyz')
     assert.ok(idFantasma)
-    assert.equal(idFantasma.motivo, 'formato_quebrado')
+    assert.equal(idFantasma.classe, 'inventado')
+    assert.equal(idFantasma.subtipo, null)
+    assert.equal(jsonA.motivos_saida.some((item) => item.endsWith(': id inventado')), true)
     assert.equal(jsonB.perguntas[0].repeticoes[0].grounding.quebrado, true)
     assert.ok(jsonB.perguntas[0].repeticoes[0].grounding.motivos.includes('bloco_documentado_sem_fonte'))
     assert.equal(jsonC.perguntas[0].repeticoes[0].citacoes.ids_invalidos.length, 0)
@@ -498,32 +501,133 @@ test('--ids-base marca id fora da referência como inválido', async () => {
   }
 })
 
-test('id inválido separa formato_quebrado, campo_errado e inexistente', () => {
+test('id inválido separa inventado e formato, com subtipo', () => {
   const base = {
     entidades: new Set(['walther_ms', 'heitor_lyra']),
     relacoes: new Set(['E219', 'PR3-E056', 'E005']),
     fontes: new Set(['B10', 'S02']),
     casos: new Set(['OP35']),
   }
+  const nomes = [{ id: 'heitor_lyra', nome: 'Heitor Lyra · diplomata' }]
   const invalidos = citacoesInvalidas({
-    entidades: ['Heitor Lyra · diplomata', 'id_E001', 'id', 'E219', 'walther_moreira_salles', 'walther_ms'],
+    entidades: [
+      'Heitor Lyra · diplomata',
+      'id:B10',
+      'id_B10',
+      'id":"B10"',
+      'id": "B10"',
+      '"B10"',
+      '{B10}',
+      'B10/',
+      'id',
+      'E219',
+      'walther_moreira_salles',
+      'walther_ms',
+      'id:nao_existe_eval',
+    ],
     relacoes: ['B10', 'E005'],
     fontes: ['S02'],
     bases: ['PR3-E056', 'B10'],
+  }, base, { nomes })
+  const achar = (campo, id) => invalidos.find((item) => item.campo === campo && item.id === id)
+  const rotulo = achar('entidade', 'Heitor Lyra · diplomata')
+  assert.equal(rotulo.classe, 'formato')
+  assert.equal(rotulo.subtipo, 'rotulo_exibicao')
+  assert.equal(rotulo.id_normalizado, 'heitor_lyra')
+  for (const id of ['id:B10', 'id_B10', 'id":"B10"', 'id": "B10"']) {
+    const item = achar('entidade', id)
+    assert.equal(item.classe, 'formato', id)
+    assert.equal(item.subtipo, 'prefixo_id', id)
+    assert.equal(item.id_normalizado, 'B10', id)
+  }
+  for (const id of ['"B10"', '{B10}', 'B10/']) {
+    const item = achar('entidade', id)
+    assert.equal(item.classe, 'formato', id)
+    assert.equal(item.subtipo, 'json_vazado', id)
+    assert.equal(item.id_normalizado, 'B10', id)
+  }
+  const literal = achar('entidade', 'id')
+  assert.equal(literal.classe, 'formato')
+  assert.equal(literal.subtipo, 'literal_id')
+  assert.equal(literal.id_normalizado, null)
+  assert.equal(classificarIdCitado('entidade', '', base).subtipo, 'literal_id')
+  assert.equal(classificarIdCitado('entidade', '{}', base).subtipo, 'literal_id')
+  assert.equal(classificarIdCitado('fonte', 'id": ', base).subtipo, 'literal_id')
+  const campo = achar('entidade', 'E219')
+  assert.equal(campo.classe, 'formato')
+  assert.equal(campo.subtipo, 'campo_errado')
+  assert.equal(campo.id_normalizado, 'E219')
+  assert.equal(achar('relacao', 'B10').subtipo, 'campo_errado')
+  assert.equal(achar('base', 'B10').subtipo, 'campo_errado')
+  const inventado = achar('entidade', 'walther_moreira_salles')
+  assert.equal(inventado.classe, 'inventado')
+  assert.equal(inventado.subtipo, null)
+  const prefixoFantasma = achar('entidade', 'id:nao_existe_eval')
+  assert.equal(prefixoFantasma.classe, 'inventado')
+  assert.equal(prefixoFantasma.subtipo, null)
+  assert.equal(prefixoFantasma.id_normalizado, 'nao_existe_eval')
+  assert.equal(achar('entidade', 'walther_ms'), undefined)
+  assert.equal(achar('relacao', 'E005'), undefined)
+  assert.equal(achar('fonte', 'S02'), undefined)
+  assert.equal(achar('base', 'PR3-E056'), undefined)
+  const semNome = citacoesInvalidas({
+    entidades: ['Heitor Lyra · diplomata'],
+    relacoes: [],
+    fontes: [],
+    bases: [],
   }, base)
-  const motivo = (campo, id) => invalidos.find((item) => item.campo === campo && item.id === id)?.motivo
-  assert.equal(motivo('entidade', 'Heitor Lyra · diplomata'), 'formato_quebrado')
-  assert.equal(motivo('entidade', 'id_E001'), 'formato_quebrado')
-  assert.equal(motivo('entidade', 'id'), 'formato_quebrado')
-  assert.equal(motivo('entidade', 'E219'), 'campo_errado')
-  assert.equal(motivo('relacao', 'B10'), 'campo_errado')
-  assert.equal(motivo('base', 'B10'), 'campo_errado')
-  assert.equal(motivo('entidade', 'walther_moreira_salles'), 'inexistente')
-  assert.equal(motivo('entidade', 'walther_ms'), undefined)
-  assert.equal(motivo('relacao', 'E005'), undefined)
-  assert.equal(motivo('fonte', 'S02'), undefined)
-  assert.equal(motivo('base', 'PR3-E056'), undefined)
-  assert.equal(invalidos.length, 7)
+  assert.equal(semNome[0].classe, 'inventado')
+})
+
+test('rótulo homônimo não usa o recorte para desempatar', () => {
+  const base = {
+    entidades: new Set(['heitor_lyra', 'heitor_outro', 'h0', 'h1', 'h2', 'h3', 'h4', 'h5']),
+    relacoes: new Set(),
+    fontes: new Set(),
+    casos: new Set(),
+  }
+  const nomes = [
+    { id: 'heitor_outro', nome: 'Heitor Lyra' },
+    { id: 'heitor_lyra', nome: 'Heitor Lyra · diplomata' },
+  ]
+  const preferir = new Set(['heitor_outro'])
+  const citados = (id) => ({ entidades: [id], relacoes: [], fontes: [], bases: [] })
+
+  const cheio = citacoesInvalidas(citados('Heitor Lyra · diplomata'), base, { nomes, preferir })
+  assert.equal(cheio[0].classe, 'formato')
+  assert.equal(cheio[0].subtipo, 'rotulo_exibicao')
+  assert.equal(cheio[0].id_normalizado, 'heitor_lyra')
+
+  const ambiguo = citacoesInvalidas(citados('Heitor Lyra · embaixador'), base, { nomes, preferir })
+  assert.equal(ambiguo[0].classe, 'formato')
+  assert.equal(ambiguo[0].subtipo, 'rotulo_ambiguo')
+  assert.equal(ambiguo[0].id_normalizado, null)
+  assert.deepEqual(ambiguo[0].candidatos, ['heitor_lyra', 'heitor_outro'])
+
+  const nenhum = citacoesInvalidas(citados('Pessoa Nenhuma · cargo'), base, { nomes, preferir })
+  assert.equal(nenhum[0].classe, 'inventado')
+  assert.equal(nenhum[0].subtipo, null)
+  assert.equal(nenhum[0].id_normalizado, null)
+  assert.equal(nenhum[0].candidatos, undefined)
+
+  const soUm = citacoesInvalidas(citados('Heitor Lyra · consul'), base, {
+    nomes: [{ id: 'heitor_lyra', nome: 'Heitor Lyra · diplomata' }],
+    preferir: new Set(['heitor_outro']),
+  })
+  assert.equal(soUm[0].subtipo, 'rotulo_exibicao')
+  assert.equal(soUm[0].id_normalizado, 'heitor_lyra')
+
+  const muitos = []
+  for (let i = 0; i < 6; i++) {
+    muitos.push({ id: `h${i}`, nome: i === 0 ? 'Homem Igual' : `Homem Igual · cargo ${i}` })
+  }
+  const cap = citacoesInvalidas(citados('Homem Igual · desconhecido'), base, {
+    nomes: muitos,
+    preferir: new Set(['h0']),
+  })
+  assert.equal(cap[0].subtipo, 'rotulo_ambiguo')
+  assert.equal(cap[0].id_normalizado, null)
+  assert.deepEqual(cap[0].candidatos, ['h0', 'h1', 'h2', 'h3', 'h4'])
 })
 
 test('light e ms na prosa da rubrica não viram id', () => {
@@ -639,7 +743,20 @@ test('chave recusada em toda corrida sai 3', async () => {
       assert.equal(corrida.custo, null)
     }
     assert.match(md, /nao_avaliado/)
+    assert.match(md, /rubricas nao_avaliado/)
     assert.match(md, /avaliacao_nao_ocorreu \(chave_recusada\)/)
+    assert.equal(json.agregado.rubricas.auto_ok, 0)
+    assert.equal(json.agregado.rubricas.auto_falha, 0)
+    assert.equal(json.agregado.rubricas.manual, 0)
+    assert.equal(json.perguntas[0].repeticoes[0].conter.nao_avaliado, true)
+    assert.ok(json.agregado.metricas_sem_amostra.includes('pt_br'))
+    assert.ok(json.agregado.metricas_sem_amostra.includes('custo_medio_usd'))
+    assert.ok(json.agregado.metricas_sem_amostra.includes('entidades'))
+    assert.ok(json.agregado.metricas_sem_amostra.includes('sem_ligacao'))
+    assert.equal(json.alertas.some((item) => item.includes('indefinido')), false)
+    assert.equal(json.alertas.some((item) => item.startsWith('sem_ligacao:')), false)
+    assert.match(md, /Métricas sem amostra:/)
+    assert.doesNotMatch(md, /indefinido \(limiar/)
     assert.equal(json.rede.fetches_supabase, 0)
     assert.deepEqual(json.rede.hosts, ['127.0.0.1'])
   } finally {
@@ -647,7 +764,7 @@ test('chave recusada em toda corrida sai 3', async () => {
   }
 })
 
-test('harness grava as três classes de id inválido', async () => {
+test('harness grava inventado e formato na mesma corrida', async () => {
   const tmp = await tempGolden([{
     ...limpa,
     id: 'classes',
@@ -670,27 +787,146 @@ test('harness grava as três classes de id inválido', async () => {
     assert.equal(run.code, 1, run.stderr + run.stdout)
     const json = JSON.parse(await readFile(resultadoPath(run.stdout), 'utf8'))
     const invalidos = json.perguntas[0].repeticoes[0].citacoes.ids_invalidos
-    const motivo = (id) => invalidos.find((item) => item.id === id)?.motivo
-    assert.equal(motivo('Heitor Lyra · diplomata'), 'formato_quebrado')
-    assert.equal(motivo('id_E001'), 'formato_quebrado')
-    assert.equal(motivo('id'), 'formato_quebrado')
-    assert.equal(motivo('E005'), 'campo_errado')
-    assert.equal(motivo('S02'), 'campo_errado')
-    assert.equal(motivo('walther_moreira_salles'), 'inexistente')
-    assert.equal(motivo('rockefeller'), undefined)
-    assert.equal(json.agregado.citacoes_invalidas_por_motivo.formato_quebrado, 3)
-    assert.equal(json.agregado.citacoes_invalidas_por_motivo.campo_errado, 2)
-    assert.equal(json.agregado.citacoes_invalidas_por_motivo.inexistente, 1)
+    const achar = (id) => invalidos.find((item) => item.id === id)
+    assert.equal(achar('Heitor Lyra · diplomata').classe, 'inventado')
+    assert.equal(achar('id_E001').classe, 'inventado')
+    assert.equal(achar('id').classe, 'formato')
+    assert.equal(achar('id').subtipo, 'literal_id')
+    assert.equal(achar('E005').subtipo, 'campo_errado')
+    assert.equal(achar('S02').subtipo, 'campo_errado')
+    assert.equal(achar('walther_moreira_salles').classe, 'inventado')
+    assert.equal(achar('rockefeller'), undefined)
+    assert.equal(json.agregado.citacoes_por_classe.inventado, 3)
+    assert.equal(json.agregado.citacoes_por_classe.formato, 3)
+    assert.equal(json.agregado.citacoes_por_classe.formato_por_subtipo.literal_id, 1)
+    assert.equal(json.agregado.citacoes_por_classe.formato_por_subtipo.campo_errado, 2)
+    assert.equal(json.perguntas[0].citacoes_por_classe.inventado, 3)
     assert.equal(json.codigo_saida, 1)
+    assert.ok(json.motivos_saida.includes('classes: id inventado'))
+    assert.ok(json.motivos_saida.includes('classes: citação com formato inválido'))
     const md = await readFile(
       run.stdout.split('\n').find((line) => line.startsWith('resumo ')).slice('resumo '.length).trim(),
       'utf8',
     )
-    assert.match(md, /formato_quebrado 3/)
+    assert.match(md, /inventado 3/)
+    assert.match(md, /formato 3/)
     assert.match(md, /campo_errado 2/)
-    assert.match(md, /inexistente 1/)
+    assert.match(md, /literal_id 1/)
+    assert.match(md, /id inventado em 1 corrida/)
+    assert.match(md, /citação com formato inválido em 1 corrida/)
   } finally {
     await rm(tmp.dir, { recursive: true, force: true })
+  }
+})
+
+test('finally restaura CHAT_DAILY_BUDGET_USD e CHAT_EXPOSE_STATE', async () => {
+  const { capturarAmbiente, restaurarAmbiente } = await import('./harness.mjs')
+  const anterior = {
+    CHAT_DAILY_BUDGET_USD: process.env.CHAT_DAILY_BUDGET_USD,
+    CHAT_EXPOSE_STATE: process.env.CHAT_EXPOSE_STATE,
+  }
+  const restaurarOriginal = () => {
+    for (const [key, value] of Object.entries(anterior)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+  try {
+    delete process.env.CHAT_DAILY_BUDGET_USD
+    delete process.env.CHAT_EXPOSE_STATE
+    const ausentes = capturarAmbiente()
+    process.env.CHAT_DAILY_BUDGET_USD = '3'
+    process.env.CHAT_EXPOSE_STATE = '1'
+    restaurarAmbiente(ausentes)
+    assert.equal(process.env.CHAT_DAILY_BUDGET_USD, undefined)
+    assert.equal(process.env.CHAT_EXPOSE_STATE, undefined)
+
+    process.env.CHAT_DAILY_BUDGET_USD = '9'
+    process.env.CHAT_EXPOSE_STATE = 'sim'
+    const presentes = capturarAmbiente()
+    process.env.CHAT_DAILY_BUDGET_USD = '3'
+    delete process.env.CHAT_EXPOSE_STATE
+    restaurarAmbiente(presentes)
+    assert.equal(process.env.CHAT_DAILY_BUDGET_USD, '9')
+    assert.equal(process.env.CHAT_EXPOSE_STATE, 'sim')
+  } finally {
+    restaurarOriginal()
+  }
+})
+
+test('reclassificar.mjs separa inventado e formato sem rede', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'aion-reclass-'))
+  const resultados = join(dir, 'resultados_teste.json')
+  const ids = join(dir, 'ids.json')
+  const sync = join(dir, 'sync.sql')
+  const out = join(dir, 'out')
+  await writeFile(ids, JSON.stringify({
+    entidades: ['heitor_lyra', 'walther_ms'],
+    relacoes: ['E219'],
+    fontes: ['B10'],
+    casos: [],
+  }))
+  await writeFile(sync, `INSERT INTO entities (entity_id, canonical_name, normalized_name, entity_type, research_cluster, note, metadata) VALUES
+('heitor_lyra', 'Heitor Lyra · diplomata', 'heitor lyra · diplomata', 'pessoa', 'x', 'nota com ''aspas''', '{}'::jsonb);
+`)
+  await writeFile(resultados, JSON.stringify({
+    gerado_em: '2026-11-09T00:00:00.000Z',
+    perguntas: [{
+      id: 'GS-007',
+      expectativa: 'inferencia',
+      repeticoes: [{
+        http_status: 200,
+        avaliavel: true,
+        grounding: { quebrado: false },
+        recorte: { raizes: ['heitor_lyra'] },
+        citacoes: {
+          ids_invalidos: [
+            { campo: 'entidade', id: 'id:B10', motivo: 'inexistente' },
+            { campo: 'entidade', id: 'fantasma_xyz', motivo: 'inexistente' },
+            { campo: 'entidade', id: 'Heitor Lyra · diplomata', motivo: 'formato_quebrado' },
+            { campo: 'entidade', id: 'E219', motivo: 'campo_errado' },
+            { campo: 'entidade', id: 'id', motivo: 'formato_quebrado' },
+          ],
+        },
+      }],
+    }],
+  }))
+  const script = fileURLToPath(new URL('./reclassificar.mjs', import.meta.url))
+  try {
+    const run = await new Promise((resolve) => {
+      const child = spawn(node, ['--experimental-strip-types', script, '--resultados', resultados, '--ids-base', ids, '--sync-sql', sync, '--out', out], {
+        cwd: repo,
+        env: childEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.on('data', (chunk) => { stdout += chunk })
+      child.stderr.on('data', (chunk) => { stderr += chunk })
+      child.on('close', (code) => resolve({ code, stdout, stderr }))
+    })
+    assert.equal(run.code, 1, run.stderr + run.stdout)
+    const json = JSON.parse(await readFile(join(out, 'reclassificado_teste.json'), 'utf8'))
+    const itens = json.perguntas[0].repeticoes[0].ids_invalidos
+    const achar = (id) => itens.find((item) => item.id === id)
+    assert.equal(achar('id:B10').subtipo, 'prefixo_id')
+    assert.equal(achar('id:B10').id_normalizado, 'B10')
+    assert.equal(achar('fantasma_xyz').classe, 'inventado')
+    assert.equal(achar('Heitor Lyra · diplomata').subtipo, 'rotulo_exibicao')
+    assert.equal(achar('Heitor Lyra · diplomata').id_normalizado, 'heitor_lyra')
+    assert.equal(achar('E219').subtipo, 'campo_errado')
+    assert.equal(achar('id').subtipo, 'literal_id')
+    assert.equal(achar('id').id_normalizado, null)
+    assert.equal(json.agregado.citacoes_por_classe.inventado, 1)
+    assert.equal(json.agregado.citacoes_por_classe.formato, 4)
+    assert.ok(json.motivos_saida.includes('GS-007: id inventado'))
+    assert.ok(json.motivos_saida.includes('GS-007: citação com formato inválido'))
+    const md = await readFile(join(out, 'reclassificado_teste.md'), 'utf8')
+    assert.match(md, /\| GS-007 \| 1 \| 4 \|/)
+    assert.match(md, /id inventado/)
+    assert.match(md, /citação com formato inválido/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
   }
 })
 

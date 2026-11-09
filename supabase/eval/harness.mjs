@@ -258,7 +258,13 @@ async function umaCorrida({ item, modelo, app, token, state, core, precos, base,
     metrics.idsDoModelo(brutoDelta),
     metrics.idsDoFinal(finalData),
   )
-  const invalidos = baseVazia(base) ? [] : metrics.citacoesInvalidas(citados, base)
+  const nomes = metrics.nomesDeContexto(recorte)
+  const invalidos = baseVazia(base)
+    ? []
+    : metrics.citacoesInvalidas(citados, base, {
+      nomes,
+      preferir: new Set(nomes.map((item) => item.id)),
+    })
   const avisos = Array.isArray(finalData?.avisos) ? finalData.avisos : []
   const groundingPartes = [brutoMock, brutoDelta]
     .filter(Boolean)
@@ -286,13 +292,15 @@ async function umaCorrida({ item, modelo, app, token, state, core, precos, base,
   const usd = usdReal ?? usdCalculado
   const conjunto = metrics.citadosComoConjunto(citados)
   const relCitadas = new Set([...citados.relacoes, ...citados.bases])
-  const rubricas = metrics.avaliarRubricas({
-    texto,
-    citados: conjunto,
-    deve: item.deve_conter,
-    naoDeve: item.nao_deve_conter,
-    conhecidos,
-  })
+  const rubricas = classe.avaliavel
+    ? metrics.avaliarRubricas({
+      texto,
+      citados: conjunto,
+      deve: item.deve_conter,
+      naoDeve: item.nao_deve_conter,
+      conhecidos,
+    })
+    : rubricaNaoAvaliada()
   const semLigacao = metrics.avaliarSemLigacao({
     expectativa: item.expectativa,
     texto,
@@ -411,15 +419,16 @@ function montarResultado({ args, precos, limiares, perguntas, baseModo, contagem
   const groundingOk = documentadas.filter((item) => item.repeticoes.every((run) => !run.grounding.quebrado))
   const latencias = corridas.map(({ run }) => run.latencia_ms)
   const custos = avaliadas.map(({ run }) => run.custo).filter(Boolean)
-  const porMotivo = contarMotivosCitacao(corridas)
+  const comRubrica = corridas.filter(({ run }) => run.avaliavel && run.conter?.nao_avaliado !== true)
+  const porClasse = metrics.contarClassesCitacao(corridas.flatMap(({ run }) => run.citacoes?.ids_invalidos ?? []))
   const agregado = {
     n_perguntas: perguntas.length,
     n_corridas: corridas.length,
     avaliaveis: avaliadas.length,
     nao_avaliaveis: corridas.length - avaliadas.length,
     grounding_documentado: documentadas.length === 0 ? null : groundingOk.length / documentadas.length,
-    citacoes_invalidas: corridas.reduce((sum, { run }) => sum + run.citacoes.ids_invalidos.length, 0),
-    citacoes_invalidas_por_motivo: porMotivo,
+    citacoes_invalidas: porClasse.inventado + porClasse.formato,
+    citacoes_por_classe: porClasse,
     fora_da_base: fora,
     recall_entidades_medio: metrics.media(avaliadas.map(({ run }) => run.recall_entidades?.recall)),
     recall_fontes_medio: metrics.media(avaliadas.map(({ run }) => run.recall_fontes?.recall)),
@@ -430,9 +439,9 @@ function montarResultado({ args, precos, limiares, perguntas, baseModo, contagem
       taxa: semLigacaoCorridas.length === 0 ? null : semLigacaoOk.length / semLigacaoCorridas.length,
     },
     rubricas: {
-      auto_ok: corridas.reduce((sum, { run }) => sum + (run.conter.auto_ok?.length ?? 0), 0),
-      auto_falha: corridas.reduce((sum, { run }) => sum + (run.conter.auto_falha?.length ?? 0), 0),
-      manual: corridas.reduce((sum, { run }) => sum + (run.conter.rubrica_manual?.length ?? 0), 0),
+      auto_ok: comRubrica.reduce((sum, { run }) => sum + (run.conter.auto_ok?.length ?? 0), 0),
+      auto_falha: comRubrica.reduce((sum, { run }) => sum + (run.conter.auto_falha?.length ?? 0), 0),
+      manual: comRubrica.reduce((sum, { run }) => sum + (run.conter.rubrica_manual?.length ?? 0), 0),
     },
     pt_br_medio: metrics.media(avaliadas.map(({ run }) => run.pt_br?.nota)),
     latencia_ms: {
@@ -452,6 +461,7 @@ function montarResultado({ args, precos, limiares, perguntas, baseModo, contagem
     recorte_indisponivel: perguntas.filter((item) => item.recorte_indisponivel).map((item) => item.id),
   }
   const avisosLimiar = calcularAlertas(agregado, limiares, corridas, avisosEsperados ?? [])
+  agregado.metricas_sem_amostra = avisosLimiar.metricas_sem_amostra
   const motivosQualidade = []
   const motivosInfra = []
   for (const { item, run } of corridas) {
@@ -459,7 +469,9 @@ function montarResultado({ args, precos, limiares, perguntas, baseModo, contagem
       motivosInfra.push(`${item.id}: avaliacao_nao_ocorreu (${run.codigo_nao_avaliavel})`)
       continue
     }
-    if (run.citacoes.ids_invalidos.length) motivosQualidade.push(`${item.id}: citação inválida`)
+    const invalidos = run.citacoes?.ids_invalidos ?? []
+    if (invalidos.some((cit) => cit.classe === 'inventado')) motivosQualidade.push(`${item.id}: id inventado`)
+    if (invalidos.some((cit) => cit.classe === 'formato')) motivosQualidade.push(`${item.id}: citação com formato inválido`)
     if (item.expectativa === 'documentado' && run.grounding.quebrado) motivosQualidade.push(`${item.id}: grounding quebrado`)
   }
   const codigoSaida = motivosQualidade.length ? 1 : (motivosInfra.length ? 3 : 0)
@@ -495,7 +507,7 @@ function montarResultado({ args, precos, limiares, perguntas, baseModo, contagem
       hosts: [...contagem.hosts],
     },
     limiares,
-    alertas: avisosLimiar,
+    alertas: avisosLimiar.alertas,
     agregado,
     codigo_saida: codigoSaida,
     motivos_saida: motivos,
@@ -513,21 +525,44 @@ function enxugarPergunta(item) {
     voz_aion_obrigatoria: item.voz_aion_obrigatoria ?? false,
     recorte_indisponivel: item.recorte_indisponivel,
     fixture_ignorada: item.fixture_ignorada ?? false,
+    citacoes_por_classe: metrics.contarClassesCitacao(
+      (item.repeticoes ?? []).flatMap((run) => run.citacoes?.ids_invalidos ?? []),
+    ),
     repeticoes: item.repeticoes ?? [],
+  }
+}
+
+function rubricaNaoAvaliada() {
+  return {
+    nao_avaliado: true,
+    passa: null,
+    faltou: [],
+    sobrou: [],
+    auto_ok: [],
+    auto_falha: [],
+    rubrica_manual: [],
   }
 }
 
 function calcularAlertas(agregado, limiares, corridas = [], avisosEsperados = []) {
   const alertas = []
+  const metricas_sem_amostra = []
+  const semAmostra = (nome, valor) => {
+    if (valor == null || Number.isNaN(valor)) {
+      metricas_sem_amostra.push(nome)
+      return true
+    }
+    return false
+  }
   const abaixo = (nome, valor, limiar) => {
     if (typeof limiar !== 'number') return
-    if (valor == null) alertas.push(`${nome}: indefinido (limiar ${limiar})`)
-    else if (valor + 1e-12 < limiar) alertas.push(`${nome}: ${fmt(valor)} abaixo de ${limiar}`)
+    if (semAmostra(nome, valor)) return
+    if (valor + 1e-12 < limiar) alertas.push(`${nome}: ${fmt(valor)} abaixo de ${limiar}`)
   }
   const acima = (nome, valor, limiar) => {
     if (typeof limiar !== 'number') return
-    if (valor == null) alertas.push(`${nome}: indefinido (limiar ${limiar})`)
-    else if (valor > limiar + 1e-12) alertas.push(`${nome}: ${fmt(valor)} acima de ${limiar}`)
+    if (semAmostra(nome, valor)) return
+    if (valor > limiar + 1e-12) alertas.push(`${nome}: ${fmt(valor)} acima de ${limiar}`)
   }
   abaixo('grounding_documentado', agregado.grounding_documentado, limiares.grounding_documentado)
   abaixo('fora_da_base_revocacao', agregado.fora_da_base.revocacao, limiares.fora_da_base_revocacao)
@@ -538,7 +573,8 @@ function calcularAlertas(agregado, limiares, corridas = [], avisosEsperados = []
   acima('p95_ms', agregado.latencia_ms.p95, limiares.p95_ms)
   acima('p50_ms', agregado.latencia_ms.p50, limiares.p50_ms)
   acima('custo_medio_usd', agregado.custo.usd_medio, limiares.custo_medio_usd)
-  if (agregado.sem_ligacao.n > 0) abaixo('sem_ligacao', agregado.sem_ligacao.taxa, limiares.sem_ligacao)
+  if (agregado.sem_ligacao.n === 0) metricas_sem_amostra.push('sem_ligacao')
+  else abaixo('sem_ligacao', agregado.sem_ligacao.taxa, limiares.sem_ligacao)
   if (agregado.recorte_indisponivel.length) {
     alertas.push(`recorte_indisponivel: ${agregado.recorte_indisponivel.join(', ')}`)
   }
@@ -551,7 +587,7 @@ function calcularAlertas(agregado, limiares, corridas = [], avisosEsperados = []
     }
   }
   if (avisosEsperados.length) alertas.push(`id_esperado_inexistente: ${avisosEsperados.length}`)
-  return alertas
+  return { alertas, metricas_sem_amostra }
 }
 
 function renderMd(resultado) {
@@ -564,12 +600,13 @@ function renderMd(resultado) {
     resultado.aviso_base ? resultado.aviso_base : '',
     `Juiz: ${resultado.juiz?.status ?? 'desativado'}.`,
     `Saída ${resultado.codigo_saida}.`,
+    fraseMotivoCitacao(resultado),
     ``,
     `## Agregado`,
     ``,
     `- Corridas avaliáveis: ${a.avaliaveis}. Não avaliáveis: ${a.nao_avaliaveis}.`,
     `- Grounding em perguntas documentado: ${fmt(a.grounding_documentado)}`,
-    `- Citações inválidas: ${a.citacoes_invalidas} (formato_quebrado ${a.citacoes_invalidas_por_motivo.formato_quebrado}, campo_errado ${a.citacoes_invalidas_por_motivo.campo_errado}, inexistente ${a.citacoes_invalidas_por_motivo.inexistente})`,
+    `- Citações inválidas: ${a.citacoes_invalidas} (${metrics.textoContagemCitacao(a.citacoes_por_classe)})`,
     `- Fora da base: precisão ${fmt(a.fora_da_base.precisao)}, revocação ${fmt(a.fora_da_base.revocacao)} (tp ${a.fora_da_base.tp}, fp ${a.fora_da_base.fp}, fn ${a.fora_da_base.fn}, tn ${a.fora_da_base.tn}). sem_ligacao não entra nesta conta.`,
     `- sem_ligacao: ${a.sem_ligacao.ok}/${a.sem_ligacao.n} (taxa ${fmt(a.sem_ligacao.taxa)})`,
     `- Recall médio de entidades: ${fmt(a.recall_entidades_medio)}`,
@@ -579,6 +616,7 @@ function renderMd(resultado) {
     `- Nota média de pt-BR: ${fmt(a.pt_br_medio)}`,
     `- Latência p50 ${fmt(a.latencia_ms.p50)} ms, p95 ${fmt(a.latencia_ms.p95)} ms. ${a.latencia_ms.metodo}`,
     `- Custo médio US$ ${fmtUsd(a.custo.usd_medio)} (R$ ${fmtUsd(a.custo.brl_medio)}). custo_real_usd somado ${fmtUsd(a.custo.custo_real_usd)}. Tokens de entrada ${a.custo.tokens_in}, de saída ${a.custo.tokens_out}.`,
+    `- Métricas sem amostra: ${(a.metricas_sem_amostra ?? []).join(', ') || 'nenhuma'}.`,
     ``,
     `## Alertas`,
     ``,
@@ -592,6 +630,7 @@ function renderMd(resultado) {
     linhas.push(`### ${item.id}`)
     linhas.push('')
     linhas.push(`Expectativa ${item.expectativa}. Categoria ${item.categoria || 'nenhuma'}. ${item.recorte_indisponivel ? 'Recorte indisponível.' : ''}`)
+    if (item.citacoes_por_classe) linhas.push(`Citações: ${metrics.textoContagemCitacao(item.citacoes_por_classe)}.`)
     if (item.notas) linhas.push(item.notas)
     for (const [index, run] of (item.repeticoes ?? []).entries()) {
       const sl = !run.avaliavel
@@ -601,7 +640,9 @@ function renderMd(resultado) {
         ? `fato ${run.voz.fato ? 'sim' : 'não'}, inferência ${run.voz.inferencia ? 'sim' : 'não'}, em aberto ${run.voz.aberto ? 'sim' : 'não'}, mistura ${run.voz.mistura_especulativa_em_documentado ? 'sim' : 'não'}, obrigatória ${run.voz.voz_aion_obrigatoria ? 'sim' : 'não'}`
         : 'nao_avaliado'
       const groundingTxt = run.avaliavel ? (run.grounding.quebrado ? 'quebrado' : 'ok') : 'nao_avaliado'
-      const rubrica = `auto ok ${run.conter.auto_ok?.length ?? 0} falha ${run.conter.auto_falha?.length ?? 0} manual ${run.conter.rubrica_manual?.length ?? 0}`
+      const rubrica = (!run.avaliavel || run.conter?.nao_avaliado)
+        ? 'nao_avaliado'
+        : `auto ok ${run.conter.auto_ok?.length ?? 0} falha ${run.conter.auto_falha?.length ?? 0} manual ${run.conter.rubrica_manual?.length ?? 0}`
       linhas.push(`- Corrida ${index + 1}: HTTP ${run.http_status}, ${run.latencia_ms} ms, grounding ${groundingTxt}, inválidas ${run.citacoes.ids_invalidos.length}, entidades ${fmt(run.recall_entidades?.recall)}, fontes ${fmt(run.recall_fontes?.recall)}, conexões ${fmt(run.recall_conexoes?.recall)}, sem_ligacao ${sl}, pt-BR ${fmt(run.pt_br?.nota)}, rubricas ${rubrica}, recusa ${run.recusa_fora_da_base ? 'sim' : 'não'}, US$ ${fmtUsd(run.custo?.usd)}.`)
       linhas.push(`  Voz: ${voz}. Raízes: ${(run.recorte.raizes ?? []).join(', ') || 'nenhuma'}.`)
       if (run.conter.faltou?.length) linhas.push(`  Faltou: ${run.conter.faltou.join(' | ')}`)
@@ -983,9 +1024,9 @@ function fmtUsd(value) {
   return Number(value).toFixed(6)
 }
 
-const AMBIENTE_FIXO = ['CHAT_DB', 'JWT_SECRET', 'SUPABASE_URL']
+const AMBIENTE_FIXO = ['CHAT_DB', 'JWT_SECRET', 'SUPABASE_URL', 'CHAT_DAILY_BUDGET_USD', 'CHAT_EXPOSE_STATE']
 
-function capturarAmbiente() {
+export function capturarAmbiente() {
   const saved = new Map()
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('OPENROUTER_') || AMBIENTE_FIXO.includes(key)) saved.set(key, process.env[key])
@@ -993,7 +1034,7 @@ function capturarAmbiente() {
   return saved
 }
 
-function restaurarAmbiente(saved) {
+export function restaurarAmbiente(saved) {
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('OPENROUTER_') || AMBIENTE_FIXO.includes(key)) delete process.env[key]
   }
@@ -1019,16 +1060,15 @@ function instalarFiltroStderr() {
   }
 }
 
-function contarMotivosCitacao(corridas) {
-  const contagem = { formato_quebrado: 0, campo_errado: 0, inexistente: 0 }
-  for (const { run } of corridas) {
-    for (const item of run.citacoes?.ids_invalidos ?? []) {
-      if (item.motivo === 'formato_quebrado' || item.motivo === 'campo_errado' || item.motivo === 'inexistente') {
-        contagem[item.motivo] += 1
-      }
-    }
-  }
-  return contagem
+function fraseMotivoCitacao(resultado) {
+  const motivos = resultado.motivos_saida ?? []
+  const inventado = motivos.filter((item) => item.endsWith(': id inventado')).length
+  const formato = motivos.filter((item) => item.endsWith(': citação com formato inválido')).length
+  if (!inventado && !formato) return 'Nenhuma citação inválida motivou a saída.'
+  const partes = []
+  if (inventado) partes.push(`id inventado em ${inventado} corrida(s)`)
+  if (formato) partes.push(`citação com formato inválido em ${formato} corrida(s)`)
+  return `Citação que motivou a saída: ${partes.join('; ')}. As duas continuam bloqueantes (limiar de citação inválida = 0).`
 }
 
 const entry = process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : ''

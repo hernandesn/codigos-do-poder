@@ -149,35 +149,233 @@ export function idsDoFinal(finalData) {
 
 const ID_FORMATO = /^[A-Za-z0-9_.:-]{1,120}$/
 
-function formatoQuebrado(id) {
-  return typeof id !== 'string' || !ID_FORMATO.test(id) || id.startsWith('id_') || id === 'id'
+export const SUBTIPOS_FORMATO = ['prefixo_id', 'rotulo_exibicao', 'rotulo_ambiguo', 'json_vazado', 'campo_errado', 'literal_id']
+
+function formatoLimpo(id) {
+  return typeof id === 'string' && ID_FORMATO.test(id)
 }
 
-function idExisteNaBase(id, base) {
+function idExisteEmAlgum(id, base) {
+  if (!id || !base) return false
   return base.entidades.has(id)
     || base.relacoes.has(id)
     || base.fontes.has(id)
     || Boolean(base.casos?.has?.(id))
 }
 
-/** formato_quebrado ganha de campo_errado e de inexistente. As três continuam inválidas. */
-function classificarIdInvalido(id, base) {
-  if (formatoQuebrado(id)) return 'formato_quebrado'
-  return idExisteNaBase(id, base) ? 'campo_errado' : 'inexistente'
+function noCampoCerto(campo, id, base) {
+  if (!base || !id) return false
+  if (campo === 'entidade') return base.entidades.has(id) || Boolean(base.casos?.has?.(id))
+  if (campo === 'relacao') return base.relacoes.has(id)
+  if (campo === 'fonte') return base.fontes.has(id)
+  if (campo === 'base') {
+    return base.entidades.has(id) || base.relacoes.has(id) || Boolean(base.casos?.has?.(id))
+  }
+  return false
 }
 
-export function citacoesInvalidas(citados, base) {
+function ladoEsquerdo(texto) {
+  const s = String(texto ?? '')
+  const idx = s.indexOf(' · ')
+  return (idx === -1 ? s : s.slice(0, idx)).trim()
+}
+
+function stripWrapping(value) {
+  let cur = String(value ?? '').trim()
+  for (let i = 0; i < 8; i++) {
+    const next = cur.replace(/^[\s"'`{}[\]]+|[\s"'`{}[\]]+$/g, '').trim()
+    if (next === cur) break
+    cur = next
+  }
+  return cur
+}
+
+function stripJson(value) {
+  return String(value ?? '').replace(/["'`{}[\]:\\/\s]+/g, '')
+}
+
+function temJsonVazado(value) {
+  return /["'`{}[\]:\\/]/.test(String(value ?? ''))
+}
+
+function restoPrefixo(value) {
+  const s = String(value ?? '')
+  const patterns = [
+    /^id"\s*:\s*"?([\s\S]*)$/,
+    /^id\s*:\s*"?([\s\S]*)$/,
+    /^id_([\s\S]*)$/,
+  ]
+  for (const re of patterns) {
+    const match = re.exec(s)
+    if (match) return match[1]
+  }
+  return null
+}
+
+function registro(classe, subtipo, idNormalizado, extra) {
+  const out = {
+    classe,
+    subtipo: subtipo ?? null,
+    id_normalizado: idNormalizado ? String(idNormalizado) : null,
+  }
+  if (extra?.candidatos) out.candidatos = extra.candidatos
+  return out
+}
+
+function chaveNome(texto) {
+  return fold(String(texto ?? '')).replace(/\s+/g, ' ').trim()
+}
+
+function idsDaChave(indice, texto) {
+  if (!indice?.map) return []
+  const conjunto = indice.map.get(chaveNome(texto))
+  if (!conjunto || conjunto.size === 0) return []
+  return [...conjunto].sort()
+}
+
+export function indiceNomes(entradas, preferir = null) {
+  void preferir
+  const map = new Map()
+  const add = (texto, id) => {
+    const chave = chaveNome(texto)
+    if (!chave || !id) return
+    if (!map.has(chave)) map.set(chave, new Set())
+    map.get(chave).add(id)
+  }
+  for (const item of entradas ?? []) {
+    if (!item?.id) continue
+    const nome = item.nome ?? item.canonical_name ?? ''
+    add(nome, item.id)
+    add(ladoEsquerdo(nome), item.id)
+    if (item.normalizado) {
+      add(item.normalizado, item.id)
+      add(ladoEsquerdo(item.normalizado), item.id)
+    }
+  }
+  // preferir não desempata. Vários ids na mesma chave ficam rotulo_ambiguo.
+  return { map }
+}
+
+/**
+ * Nome completo com um único id ganha. Senão, o lado esquerdo de " · "
+ * só entra se tiver exatamente um id. Vários ids não usam preferir.
+ */
+export function resolverRotulo(texto, indice) {
+  const completo = idsDaChave(indice, texto)
+  if (completo.length === 1) return { status: 'unico', id: completo[0], candidatos: [] }
+  const esquerdoTexto = ladoEsquerdo(texto)
+  const mesmaChave = chaveNome(esquerdoTexto) === chaveNome(texto)
+  const esquerdo = mesmaChave ? [] : idsDaChave(indice, esquerdoTexto)
+  if (esquerdo.length === 1) return { status: 'unico', id: esquerdo[0], candidatos: [] }
+  if (esquerdo.length > 1) return { status: 'ambiguo', id: null, candidatos: esquerdo.slice(0, 5) }
+  if (completo.length > 1) return { status: 'ambiguo', id: null, candidatos: completo.slice(0, 5) }
+  return { status: 'nenhum', id: null, candidatos: [] }
+}
+
+export function resolverNome(texto, indice) {
+  const achado = resolverRotulo(texto, indice)
+  return achado.status === 'unico' ? achado.id : null
+}
+
+export function nomesDeContexto(ctx) {
+  const entradas = []
+  const vistos = new Set()
+  const add = (item) => {
+    if (!item || typeof item !== 'object') return
+    const id = typeof item.id === 'string' ? item.id : ''
+    const nome = typeof item.nome === 'string' ? item.nome
+      : typeof item.rotulo === 'string' ? item.rotulo
+      : ''
+    if (!id || !nome.trim()) return
+    const key = `${id}\0${nome}`
+    if (vistos.has(key)) return
+    vistos.add(key)
+    entradas.push({ id, nome: nome.trim() })
+  }
+  for (const item of [...(ctx?.raizes ?? []), ...(ctx?.entidades ?? [])]) add(item)
+  return entradas
+}
+
+function classificarRestoPrefixo(resto, base) {
+  let candidato = stripWrapping(resto)
+  if (candidato.includes(' · ')) candidato = ladoEsquerdo(candidato)
+  candidato = stripWrapping(candidato)
+  if (temJsonVazado(candidato)) candidato = stripJson(candidato)
+  if (candidato === '' || candidato === 'id') return registro('formato', 'literal_id', null)
+  if (idExisteEmAlgum(candidato, base)) return registro('formato', 'prefixo_id', candidato)
+  return registro('inventado', null, candidato)
+}
+
+/**
+ * Duas classes. inventado: depois de normalizar, o id não está em
+ * entidades∪casos, relações nem fontes.
+ * formato: o id real existe, mas veio mal formatado ou no campo errado.
+ * literal_id é formato sem id real: o literal `id`, ou vazio depois de
+ * normalizar. Nesse subtipo id_normalizado fica nulo.
+ * Prefixo (`id:`, `id_`, `id":`) ganha de json vazado. Rótulo (` · `)
+ * consulta o nome completo; um único id nessa chave é o escolhido.
+ * Senão, o lado esquerdo só entra com exatamente um id. Vários ids
+ * viram rotulo_ambiguo, sem preferir. Nenhum id vira inventado, salvo
+ * o lado esquerdo já ser um id da base.
+ */
+export function classificarIdCitado(campo, raw, base, indice = null) {
+  const trim = String(raw ?? '').trim()
+  if (trim === 'id') return registro('formato', 'literal_id', null)
+
+  const limpo = stripWrapping(trim)
+  if (limpo === '' || limpo === 'id') return registro('formato', 'literal_id', null)
+
+  if (trim.includes(' · ') || limpo.includes(' · ')) {
+    const completo = stripWrapping(limpo)
+    const achado = resolverRotulo(completo, indice)
+    if (achado.status === 'unico') return registro('formato', 'rotulo_exibicao', achado.id)
+    if (achado.status === 'ambiguo') {
+      return registro('formato', 'rotulo_ambiguo', null, { candidatos: achado.candidatos })
+    }
+    const nome = ladoEsquerdo(completo)
+    if (formatoLimpo(nome) && idExisteEmAlgum(nome, base)) return registro('formato', 'rotulo_exibicao', nome)
+    return registro('inventado', null, null)
+  }
+
+  if (formatoLimpo(trim)) {
+    if (noCampoCerto(campo, trim, base)) return null
+    if (idExisteEmAlgum(trim, base)) return registro('formato', 'campo_errado', trim)
+    const resto = restoPrefixo(trim)
+    if (resto != null) return classificarRestoPrefixo(resto, base)
+    return registro('inventado', null, trim)
+  }
+
+  const restoBruto = restoPrefixo(trim) ?? restoPrefixo(limpo)
+  if (restoBruto != null) return classificarRestoPrefixo(restoBruto, base)
+
+  if (temJsonVazado(trim)) {
+    const candidato = stripJson(trim)
+    if (candidato === '' || candidato === 'id') return registro('formato', 'literal_id', null)
+    if (idExisteEmAlgum(candidato, base)) return registro('formato', 'json_vazado', candidato)
+    return registro('inventado', null, candidato || null)
+  }
+
+  if (formatoLimpo(limpo)) {
+    if (idExisteEmAlgum(limpo, base)) return registro('formato', 'json_vazado', limpo)
+    return registro('inventado', null, limpo)
+  }
+
+  return registro('inventado', null, null)
+}
+
+export function citacoesInvalidas(citados, base, opcoes = {}) {
+  const indice = opcoes?.indice
+    ?? (opcoes?.nomes ? indiceNomes(opcoes.nomes, opcoes.preferir) : null)
   const invalidos = []
-  const push = (campo, id, ok) => {
-    if (!formatoQuebrado(id) && ok) return
-    invalidos.push({ campo, id, motivo: classificarIdInvalido(id, base) })
+  const push = (campo, id) => {
+    const cls = classificarIdCitado(campo, id, base, indice)
+    if (!cls) return
+    invalidos.push({ campo, id, ...cls })
   }
-  for (const id of citados.entidades) push('entidade', id, base.entidades.has(id))
-  for (const id of citados.relacoes) push('relacao', id, base.relacoes.has(id))
-  for (const id of citados.fontes) push('fonte', id, base.fontes.has(id))
-  for (const id of citados.bases) {
-    push('base', id, base.entidades.has(id) || base.relacoes.has(id))
-  }
+  for (const id of citados.entidades) push('entidade', id)
+  for (const id of citados.relacoes) push('relacao', id)
+  for (const id of citados.fontes) push('fonte', id)
+  for (const id of citados.bases) push('base', id)
   const vistos = new Set()
   return invalidos.filter((item) => {
     const key = `${item.campo}|${item.id}`
@@ -185,6 +383,45 @@ export function citacoesInvalidas(citados, base) {
     vistos.add(key)
     return true
   })
+}
+
+export function contagemClassesVazia() {
+  return {
+    inventado: 0,
+    formato: 0,
+    formato_por_subtipo: Object.fromEntries(SUBTIPOS_FORMATO.map((nome) => [nome, 0])),
+  }
+}
+
+export function contarClassesCitacao(invalidos) {
+  const contagem = contagemClassesVazia()
+  for (const item of invalidos ?? []) {
+    if (item?.classe === 'inventado') contagem.inventado += 1
+    else if (item?.classe === 'formato') {
+      contagem.formato += 1
+      if (Object.hasOwn(contagem.formato_por_subtipo, item.subtipo)) {
+        contagem.formato_por_subtipo[item.subtipo] += 1
+      }
+    }
+  }
+  return contagem
+}
+
+export function somarContagens(listas) {
+  const total = contagemClassesVazia()
+  for (const item of listas ?? []) {
+    total.inventado += item?.inventado ?? 0
+    total.formato += item?.formato ?? 0
+    for (const sub of SUBTIPOS_FORMATO) {
+      total.formato_por_subtipo[sub] += item?.formato_por_subtipo?.[sub] ?? 0
+    }
+  }
+  return total
+}
+
+export function textoContagemCitacao(contagem) {
+  const s = contagem?.formato_por_subtipo ?? {}
+  return `inventado ${contagem?.inventado ?? 0}, formato ${contagem?.formato ?? 0} (prefixo_id ${s.prefixo_id ?? 0}, rotulo_exibicao ${s.rotulo_exibicao ?? 0}, rotulo_ambiguo ${s.rotulo_ambiguo ?? 0}, json_vazado ${s.json_vazado ?? 0}, campo_errado ${s.campo_errado ?? 0}, literal_id ${s.literal_id ?? 0})`
 }
 
 const CODIGOS_NAO_AVALIAVEIS = new Set([
