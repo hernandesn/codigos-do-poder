@@ -305,9 +305,15 @@ export interface ChatFinal {
   avisos: ChatAviso[]
   usage?: OpenRouterUsage
   custo_real: number
-  /** Cota grátis depois do commit. */
+  /**
+   * Cota grátis. Na resposta cobrada, saldo após o commit.
+   * No sem_ligacao, saldo após a liberação; se a liberação falhou, o pós-reserva.
+   */
   gratis_restantes: number
-  /** Saldo pago depois do commit. */
+  /**
+   * Saldo pago. Na resposta cobrada, saldo após o commit.
+   * No sem_ligacao, saldo após a liberação; se a liberação falhou, o pós-reserva.
+   */
   saldo_pago: number
 }
 
@@ -1395,6 +1401,7 @@ async function streamPreparedInner(input: {
 }): Promise<number> {
   const { prepared, db, emit } = input
   let creditsOpen = true
+  let creditsReleased = false
   let budgetOpen = true
   let terminal = false
   let text = ''
@@ -1412,6 +1419,7 @@ async function streamPreparedInner(input: {
     if (!creditsOpen) return
     creditsOpen = false
     await db.releaseReserve(prepared.reservation)
+    creditsReleased = true
   }
   const releaseBudgetHold = async () => {
     if (!budgetOpen) return
@@ -1427,7 +1435,7 @@ async function streamPreparedInner(input: {
     const generated = generatedNow()
     const cost = costNow()
     await runIsolated([
-      { run: releaseCredits, label: 'chat_release_failed' },
+      { run: releaseCredits, label: 'chat_release_failed', detail: releaseFailureDetail(prepared.reservation) },
       {
         run: () => generated ? settleBudget(cost) : releaseBudgetHold(),
         label: generated ? 'chat_budget_commit_failed' : 'chat_budget_release_failed',
@@ -1507,7 +1515,8 @@ async function streamPreparedInner(input: {
   }
 
   let { answer } = sanitizeAnswer(parsed, prepared.context)
-  if (answer.sem_base || answer.blocos.length === 0) {
+  const semLigacao = answer.sem_base || answer.blocos.length === 0
+  if (semLigacao) {
     const fallback = fallbackSemLigacao(prepared.context)
     if (!fallback) {
       await unwind()
@@ -1518,16 +1527,32 @@ async function streamPreparedInner(input: {
     answer = fallback
   }
 
-  let committed: { gratis_restantes: number; pago: number }
-  try {
-    if (!creditsOpen) throw new Error('commit vazio')
-    creditsOpen = false
-    committed = await db.commitCredits(prepared.reservation)
-  } catch {
-    creditsOpen = true
+  let balances: { gratis_restantes: number; pago: number }
+  if (semLigacao) {
     await unwind()
-    finish(errorEvent('modelo_indisponivel', chatErrorMessage('modelo_indisponivel')))
-    return sentMeta ? 200 : 503
+    const reservation = prepared.reservation
+    // Os saldos são pós-reserva; só repomos cost no saldo liberado com sucesso.
+    balances = {
+      gratis_restantes: reservation.gratis_restantes + (creditsReleased && reservation.kind === 'free' ? reservation.cost : 0),
+      pago: reservation.pago + (creditsReleased && reservation.kind === 'paid' ? reservation.cost : 0),
+    }
+    answer.avisos.push({
+      tipo: 'outro',
+      texto: creditsReleased
+        ? 'Sem cobrança: a ligação pedida não está documentada.'
+        : 'Esta resposta não é cobrada, mas a devolução da reserva falhou; o saldo pode aparecer reduzido até a correção.',
+    })
+  } else {
+    try {
+      if (!creditsOpen) throw new Error('commit vazio')
+      creditsOpen = false
+      balances = await db.commitCredits(prepared.reservation)
+    } catch {
+      creditsOpen = true
+      await unwind()
+      finish(errorEvent('modelo_indisponivel', chatErrorMessage('modelo_indisponivel')))
+      return sentMeta ? 200 : 503
+    }
   }
 
   const custo = typeof usage?.cost === 'number' ? usage.cost : prepared.estimate
@@ -1555,8 +1580,8 @@ async function streamPreparedInner(input: {
     fontes_detalhe: answer.fontes_detalhe,
     avisos: answer.avisos,
     custo_real: custo,
-    gratis_restantes: committed.gratis_restantes,
-    saldo_pago: committed.pago,
+    gratis_restantes: balances.gratis_restantes,
+    saldo_pago: balances.pago,
   }
   if (usage) finalEvent.usage = usage
   finish({ event: 'final', data: finalEvent })
@@ -1583,7 +1608,15 @@ function logRow(
   }
 }
 
-async function runIsolated(steps: { run: () => Promise<void>; label: string }[]): Promise<void> {
+function releaseFailureDetail(reservation: Reservation): { pedido_id: string; modelo: Modelo; kind: 'free' | 'paid' } {
+  return { pedido_id: reservation.pedidoId, modelo: reservation.modelo, kind: reservation.kind }
+}
+
+async function runIsolated(steps: {
+  run: () => Promise<void>
+  label: string
+  detail?: { pedido_id: string; modelo: Modelo; kind: 'free' | 'paid' }
+}[]): Promise<void> {
   let index = 0
   const next = async (): Promise<void> => {
     if (index >= steps.length) return
@@ -1592,7 +1625,8 @@ async function runIsolated(steps: { run: () => Promise<void>; label: string }[])
     try {
       await step.run()
     } catch {
-      console.error(step.label)
+      if (step.detail) console.error(step.label, step.detail)
+      else console.error(step.label)
     } finally {
       await next()
     }
@@ -1602,7 +1636,11 @@ async function runIsolated(steps: { run: () => Promise<void>; label: string }[])
 
 async function releasePair(db: ChatDb, reservation: Reservation, pedidoId: string): Promise<void> {
   await runIsolated([
-    { run: () => db.releaseReserve(reservation), label: 'chat_release_failed' },
+    {
+      run: () => db.releaseReserve(reservation),
+      label: 'chat_release_failed',
+      detail: releaseFailureDetail(reservation),
+    },
     { run: () => db.releaseBudget(pedidoId), label: 'chat_budget_release_failed' },
   ])
 }

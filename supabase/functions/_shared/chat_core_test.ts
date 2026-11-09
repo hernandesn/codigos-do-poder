@@ -34,6 +34,8 @@ import {
   type ChatFinal,
   type ChatMeta,
   type ChatSseEvent,
+  type Modelo,
+  type Reservation,
   type OpenRouterChunk,
   type OpenRouterClient,
 } from './chat_core.ts'
@@ -1128,6 +1130,23 @@ function semLigacaoContext(): ChatContextPayload {
 }
 
 const SEM_LIGACAO_AVISO = 'Resposta montada direto da base: a ligação pedida não está documentada.'
+const SEM_COBRANCA_AVISO = 'Sem cobrança: a ligação pedida não está documentada.'
+const RELEASE_FALHOU_AVISO = 'Esta resposta não é cobrada, mas a devolução da reserva falhou; o saldo pode aparecer reduzido até a correção.'
+
+function assertReleaseFailureLog(args: unknown[], pedidoId: string, modelo: Modelo, kind: 'free' | 'paid') {
+  eq(args.length, 2, 'label e pedido, sem o erro cru')
+  eq(args[0], 'chat_release_failed', 'label do release')
+  const detail = args[1] as { pedido_id?: string; modelo?: string; kind?: string }
+  eq(JSON.stringify(Object.keys(detail).sort()), JSON.stringify(['kind', 'modelo', 'pedido_id']), 'só pedido, modelo e kind')
+  eq(detail.pedido_id, pedidoId, 'uuid do pedido')
+  eq(detail.modelo, modelo, 'modelo sem texto da pergunta')
+  eq(detail.kind, kind, 'kind da reserva')
+  const text = JSON.stringify(args)
+  assert(!text.includes('falha de teste'), 'sem detalhe do erro')
+  assert(!text.includes('release recusado'), 'sem mensagem interna')
+  assert(!text.includes(QUESTION), 'sem texto da pergunta')
+  assert(!text.includes(USER), 'sem usuário')
+}
 
 Deno.test('SPEC4 fallback de dois temas gera três blocos com citações válidas', () => {
   const context = semLigacaoContext()
@@ -1193,10 +1212,10 @@ Deno.test('SPEC4 fallback retorna null sem dois temas aproveitáveis ou com liga
   eq(fallbackSemLigacao(unsourced), null, 'saneamento continua recusando pessoa sem fonte')
 })
 
-async function streamSemLigacao(context: ChatContextPayload, raw: string) {
-  const store = db()
+async function streamSemLigacao(context: ChatContextPayload, raw: string, opts: { store?: MemoryChatDb; modelo?: Modelo } = {}) {
+  const store = opts.store ?? db()
   store.chatContext = async () => context
-  const prepared = await prepareChat({ userId: USER, body: request(), db: store, clock: CLOCK, inferenceKey: acceptedKey() })
+  const prepared = await prepareChat({ userId: USER, body: request({ modelo: opts.modelo ?? 'basico' }), db: store, clock: CLOCK, inferenceKey: acceptedKey() })
   assert(prepared.ok, 'pedido preparado com reservas')
   const model = scripted([{ delta: raw }, { usage: { prompt_tokens: 11, completion_tokens: 7, cost: 0.0002 } }])
   const emitted: ChatSseEvent[] = []
@@ -1207,41 +1226,237 @@ async function streamSemLigacao(context: ChatContextPayload, raw: string) {
   return { store, model, result: { httpStatus, events: emitted } }
 }
 
-Deno.test('SPEC4 streamPrepared sem_base em dois temas sem ligação termina ok com um débito', async () => {
-  const { store, model, result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: true, blocos: [] }))
+Deno.test('SPEC4 streamPrepared sem_base em dois temas sem ligação termina ok sem débito e libera reserva grátis', async () => {
+  const store = db()
+  store.setUsed(USER, 4)
+  store.setPaid(USER, 32)
+  const before = store.snapshot(USER, CLOCK())
+  const { model, result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: true, blocos: [] }), { store })
   eq(result.httpStatus, 200, 'sucesso')
   eq(model.calls.length, 1, 'uma chamada ao modelo')
   eq(terminals(result).length, 1, 'um terminal')
   const final = finalOf(result)
   eq(final.blocos.length, 3, 'resposta determinística completa')
-  eq(final.gratis_restantes, 19, 'um crédito debitado')
+  assert(final.blocos.some((b) => b.texto.startsWith('O atlas não documenta ligação')), 'lacuna no final')
+  eq(final.gratis_restantes, 16, 'cota após liberar a reserva grátis')
+  eq(final.saldo_pago, before.paid, 'saldo pago preservado no final')
   eq(final.custo_real, 0.0002, 'custo real mantido')
   eq(final.fontes_detalhe.H1.titulo, 'Registro diplomático', 'detalhes das fontes presentes')
   assert(final.avisos.some((a) => a.texto === SEM_LIGACAO_AVISO), 'aviso no final')
+  assert(final.avisos.some((a) => a.tipo === 'outro' && a.texto === SEM_COBRANCA_AVISO), 'aviso de gratuidade no final')
   const state = store.snapshot(USER, CLOCK())
   eq(state.reserveCalls, 1, 'uma reserva')
-  eq(state.commitCalls, 1, 'um commit de crédito')
-  eq(state.releaseCalls, 0, 'não libera crédito usado')
-  eq(state.used, 1, 'um débito')
-  eq(state.reserved, 0, 'nenhuma reserva pendente')
+  eq(state.commitCalls, 0, 'sem commit de crédito')
+  eq(state.releaseCalls, 1, 'libera a reserva uma vez')
+  eq(state.used, before.used, 'cota usada preservada')
+  eq(state.reserved, before.reserved, 'reservas voltam ao valor anterior')
+  eq(state.paid, before.paid, 'saldo pago inalterado')
+  eq(state.ledger.filter((r) => r.reason === 'chat_debit').length, 0, 'ledger sem débito')
+  eq(state.ledger.filter((r) => r.reason === 'chat_reserve_release').length, 1, 'liberação registrada no ledger')
+  eq(state.ledger.reduce((sum, r) => sum + r.delta, 0), 0, 'ledger sem gasto líquido')
   eq(state.logs.length, 1, 'um log')
   eq(state.logs[0].status, 'ok', 'log de sucesso')
+  eq(state.logs[0].custo_usd, 0.0002, 'log preserva custo da API')
   eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.0002, 'orçamento liquidado normalmente')
   eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'orçamento sem reserva pendente')
 })
 
+Deno.test('CRED1 sem_ligacao no Avançado devolve os oito pagos sem alterar cota grátis', async () => {
+  const store = db()
+  store.setUsed(USER, 6)
+  store.setPaid(USER, 24)
+  const before = store.snapshot(USER, CLOCK())
+  const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: true, blocos: [] }), { store, modelo: 'avancado' })
+  eq(result.httpStatus, 200, 'sucesso')
+  eq(terminals(result).length, 1, 'um terminal')
+  const final = finalOf(result)
+  assert(final.blocos.some((b) => b.texto.startsWith('O atlas não documenta ligação')), 'fallback no final')
+  eq(final.gratis_restantes, 14, 'cota grátis preservada no final')
+  eq(final.saldo_pago, before.paid, 'oito créditos devolvidos no final')
+  const state = store.snapshot(USER, CLOCK())
+  eq(state.used, before.used, 'uso grátis inalterado')
+  eq(state.reserved, before.reserved, 'reserva grátis inalterada')
+  eq(state.paid, before.paid, 'saldo pago restaurado')
+  eq(state.commitCalls, 0, 'sem commit')
+  eq(state.releaseCalls, 1, 'libera uma vez')
+  eq(state.ledger.filter((r) => r.reason === 'chat_debit').length, 0, 'ledger sem débito confirmado')
+  eq(state.ledger.find((r) => r.reason === 'chat_reserve')?.delta, -8, 'reserva paga de oito')
+  eq(state.ledger.find((r) => r.reason === 'chat_reserve_release')?.delta, 8, 'devolução de oito')
+  eq(state.ledger.reduce((sum, r) => sum + r.delta, 0), 0, 'ledger sem gasto líquido')
+  eq(state.logs.length, 1, 'log gravado')
+  eq(state.logs[0].status, 'ok', 'status de sucesso preservado')
+  eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.0002, 'custo real da API mantido')
+  eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'budget liquidado')
+})
+
+Deno.test('CRED1 sem_ligacao no Básico com cota esgotada também devolve o crédito pago', async () => {
+  const store = db()
+  store.setUsed(USER, 20)
+  store.setPaid(USER, 16)
+  const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: true, blocos: [] }), { store })
+  const final = finalOf(result)
+  eq(final.gratis_restantes, 0, 'não cria cota grátis')
+  eq(final.saldo_pago, 16, 'saldo após devolver o pago')
+  const state = store.snapshot(USER, CLOCK())
+  eq(state.paid, 16, 'nenhum pago gasto')
+  eq(state.used, 20, 'cota usada preservada')
+  eq(state.reserved, 0, 'nenhuma reserva grátis')
+  eq(state.commitCalls, 0, 'sem commit')
+  eq(state.releaseCalls, 1, 'libera uma vez')
+  eq(state.ledger.find((r) => r.reason === 'chat_reserve')?.delta, -1, 'reserva de um pago')
+  eq(state.ledger.find((r) => r.reason === 'chat_reserve_release')?.delta, 1, 'devolve um pago')
+  eq(state.ledger.filter((r) => r.reason === 'chat_debit').length, 0, 'sem débito confirmado')
+})
+
+Deno.test('CRED1 falha no release não confirma nem repete a cobrança e mantém budget, final e log', async () => {
+  const calls: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => { calls.push(args) }
+  try {
+    for (const modelo of ['basico', 'avancado'] as const) {
+      for (const applied of [false, true]) {
+        const store = db()
+        store.setPaid(USER, 24)
+        const release = store.releaseReserve.bind(store)
+        let attempts = 0
+        store.releaseReserve = async (reservation) => {
+          attempts++
+          if (applied) await release(reservation)
+          throw new Error('falha de teste: detalhe não deve ser logado')
+        }
+        const before = calls.length
+        const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: true, blocos: [] }), { store, modelo })
+        eq(attempts, 1, 'liberação não é repetida após falha ambígua')
+        eq(result.httpStatus, 200, 'final continua disponível')
+        eq(terminals(result).length, 1, 'um terminal')
+        const final = finalOf(result)
+        assert(final.blocos.some((b) => b.texto.startsWith('O atlas não documenta ligação')), 'resposta preservada')
+        assert(final.avisos.some((a) => a.tipo === 'outro' && a.texto === RELEASE_FALHOU_AVISO), 'avisa devolução não confirmada')
+        assert(!final.avisos.some((a) => a.texto === SEM_COBRANCA_AVISO), 'não afirma liberação confirmada')
+        eq(final.gratis_restantes, modelo === 'basico' ? 19 : 20, 'não anuncia devolução grátis não confirmada')
+        eq(final.saldo_pago, modelo === 'avancado' ? 16 : 24, 'não anuncia devolução paga não confirmada')
+        const state = store.snapshot(USER, CLOCK())
+        eq(state.commitCalls, 0, 'nunca tenta confirmar crédito após falha')
+        eq(state.used, 0, 'nenhuma cota consumida')
+        eq(state.reserved, modelo === 'basico' && !applied ? 1 : 0, 'estado real da reserva preservado')
+        eq(state.paid, modelo === 'avancado' && !applied ? 16 : 24, 'sem cobrança ou devolução duplicada')
+        eq(state.ledger.filter((r) => r.reason === 'chat_debit').length, 0, 'sem débito confirmado')
+        eq(state.logs.length, 1, 'log não é bloqueado pela falha')
+        eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.0002, 'falha de crédito não bloqueia custo da API')
+        eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'budget liquidado')
+        const logged = calls.slice(before)
+        eq(logged.length, 1, 'uma label por falha')
+        assertReleaseFailureLog(logged[0], store.reservedPedidos[0], modelo, modelo === 'basico' ? 'free' : 'paid')
+      }
+    }
+  } finally {
+    console.error = originalError
+  }
+  eq(calls.length, 4, 'uma label por falha')
+  assert(calls.every((args) => args[0] === 'chat_release_failed'), 'apenas label segura existente, sem detalhe do erro')
+  assert(calls.every((args) => !JSON.stringify(args).includes('falha de teste')), 'sem detalhe do erro')
+})
+
+Deno.test('CRED1 sem_ligacao com release recusado avisa sem devolver e não cobra', async () => {
+  const calls: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => { calls.push(args) }
+  try {
+    for (const modelo of ['basico', 'avancado'] as const) {
+      const store = db()
+      store.releaseRefuse = true
+      store.setPaid(USER, 24)
+      const before = calls.length
+      const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: true, blocos: [] }), { store, modelo })
+      eq(result.httpStatus, 200, 'final continua disponível')
+      eq(terminals(result).length, 1, 'um terminal')
+      const final = finalOf(result)
+      assert(final.blocos.some((b) => b.texto.startsWith('O atlas não documenta ligação')), 'resposta preservada')
+      assert(final.avisos.some((a) => a.tipo === 'outro' && a.texto === RELEASE_FALHOU_AVISO), 'aviso honesto exato')
+      assert(!final.avisos.some((a) => a.texto === SEM_COBRANCA_AVISO), 'não afirma liberação confirmada')
+      eq(final.gratis_restantes, modelo === 'basico' ? 19 : 20, 'saldo grátis pós-reserva')
+      eq(final.saldo_pago, modelo === 'avancado' ? 16 : 24, 'saldo pago pós-reserva')
+      const state = store.snapshot(USER, CLOCK())
+      eq(state.commitCalls, 0, 'sem commitCredits')
+      eq(state.releaseCalls, 1, 'uma tentativa de release, sem segunda')
+      eq(state.used, 0, 'cota usada intacta')
+      eq(state.reserved, modelo === 'basico' ? 1 : 0, 'cota reservada não volta')
+      eq(state.paid, modelo === 'avancado' ? 16 : 24, 'saldo pago não volta')
+      eq(state.ledger.filter((row) => row.reason === 'chat_debit').length, 0, 'sem débito confirmado')
+      eq(state.ledger.filter((row) => row.reason === 'chat_reserve_release').length, 0, 'recusa não grava ledger de liberação')
+      eq(state.logs.length, 1, 'log gravado')
+      eq(state.logs[0].status, 'ok', 'status do chat preservado')
+      const logged = calls.slice(before)
+      eq(logged.length, 1, 'um console.error')
+      assertReleaseFailureLog(logged[0], store.reservedPedidos[0], modelo, modelo === 'basico' ? 'free' : 'paid')
+    }
+  } finally {
+    console.error = originalError
+  }
+})
+
+Deno.test('CRED1 fora_da_base com release recusado segue erro sem cobrar', async () => {
+  const calls: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => { calls.push(args) }
+  try {
+    for (const modelo of ['basico', 'avancado'] as const) {
+      const context = semLigacaoContext()
+      context.raizes = context.raizes.slice(0, 1)
+      const store = db()
+      store.releaseRefuse = true
+      store.setPaid(USER, 24)
+      const before = calls.length
+      const { result } = await streamSemLigacao(context, answerJson({ sem_base: true, blocos: [] }), { store, modelo })
+      eq(result.httpStatus, 200, 'stream já aberto')
+      const terminal = terminals(result)
+      eq(terminal.length, 1, 'um terminal')
+      assert(terminal[0].event === 'error', 'terminal de erro')
+      eq(terminal[0].data.code, 'fora_da_base', 'código preservado')
+      const state = store.snapshot(USER, CLOCK())
+      eq(state.commitCalls, 0, 'não cobra')
+      eq(state.releaseCalls, 1, 'uma tentativa de release')
+      eq(state.reserved, modelo === 'basico' ? 1 : 0, 'reserva grátis presa')
+      eq(state.paid, modelo === 'avancado' ? 16 : 24, 'pago não devolvido')
+      eq(state.ledger.filter((row) => row.reason === 'chat_reserve_release').length, 0, 'sem ledger de liberação')
+      eq(state.logs.length, 1, 'log gravado')
+      eq(state.logs[0].status, 'fora_da_base', 'status preservado')
+      const logged = calls.slice(before)
+      eq(logged.length, 1, 'um console.error')
+      assertReleaseFailureLog(logged[0], store.reservedPedidos[0], modelo, modelo === 'basico' ? 'free' : 'paid')
+    }
+  } finally {
+    console.error = originalError
+  }
+})
+
 Deno.test('SPEC4 streamPrepared com blocos vazios também usa fallback', async () => {
-  const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: false, blocos: [] }))
-  eq(finalOf(result).blocos.length, 3, 'fallback mesmo sem flag sem_base')
+  for (const modelo of ['basico', 'avancado'] as const) {
+    const store = db()
+    store.setPaid(USER, 24)
+    const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: false, blocos: [] }), { store, modelo })
+    const final = finalOf(result)
+    eq(final.blocos.length, 3, 'fallback mesmo sem flag sem_base')
+    eq(final.gratis_restantes, 20, 'cota grátis no final restaurada')
+    eq(final.saldo_pago, 24, 'saldo pago no final restaurado')
+    eq(store.snapshot(USER, CLOCK()).used, 0, 'não consome grátis')
+    eq(store.snapshot(USER, CLOCK()).paid, 24, 'não consome pagos')
+    eq(store.snapshot(USER, CLOCK()).reserved, 0, 'reserva liberada')
+    eq(store.snapshot(USER, CLOCK()).releaseCalls, 1, 'uma liberação')
+    eq(store.snapshot(USER, CLOCK()).commitCalls, 0, 'sem commit')
+  }
 })
 
 Deno.test('SPEC4 streamPrepared sem_base com uma raiz ou ligação continua fora_da_base', async () => {
-  for (const variant of ['uma raiz', 'com ligação', 'tema sem documentação']) {
+  for (const [variant, modelo] of (['basico', 'avancado'] as const).flatMap((modelo) =>
+    ['uma raiz', 'com ligação', 'tema sem documentação'].map((variant) => [variant, modelo] as const))) {
     const context = semLigacaoContext()
     if (variant === 'uma raiz') context.raizes = context.raizes.slice(0, 1)
     if (variant === 'com ligação') context.ligacoes_entre_raizes = [{ de: 'golpe64', para: 'heitor_lyra', via: null, relacoes: ['ligacao'] }]
     if (variant === 'tema sem documentação') context.relacoes = context.relacoes.filter((r) => r.origem !== 'heitor_lyra')
-    const { store, result } = await streamSemLigacao(context, answerJson({ sem_base: true, blocos: [] }))
+    const store = db()
+    store.setPaid(USER, 24)
+    const { result } = await streamSemLigacao(context, answerJson({ sem_base: true, blocos: [] }), { store, modelo })
     eq(result.httpStatus, 200, `${variant}: stream já aberto`)
     const terminal = terminals(result)
     eq(terminal.length, 1, `${variant}: um terminal`)
@@ -1252,6 +1467,9 @@ Deno.test('SPEC4 streamPrepared sem_base com uma raiz ou ligação continua fora
     eq(state.commitCalls, 0, `${variant}: sem commit`)
     eq(state.releaseCalls, 1, `${variant}: devolve crédito uma vez`)
     eq(state.reserved, 0, `${variant}: crédito sem reserva pendente`)
+    eq(state.paid, 24, `${modelo}: pagos devolvidos`)
+    eq(state.ledger.filter((r) => r.reason === 'chat_debit').length, 0, `${modelo}: ledger sem débito confirmado`)
+    eq(state.ledger.reduce((sum, r) => sum + r.delta, 0), 0, `${modelo}: ledger sem gasto líquido`)
     eq(state.logs.length, 1, `${variant}: um log`)
     eq(state.logs[0].status, 'fora_da_base', `${variant}: status preservado`)
     eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.0002, `${variant}: mantém custo da geração`)
@@ -1260,12 +1478,85 @@ Deno.test('SPEC4 streamPrepared sem_base com uma raiz ou ligação continua fora
 })
 
 Deno.test('SPEC4 streamPrepared preserva resposta válida do modelo em dois temas', async () => {
+  for (const modelo of ['basico', 'avancado'] as const) {
+    const store = db()
+    store.setUsed(USER, 4)
+    store.setPaid(USER, 24)
+    const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({
+      entidades: [], fontes: [], avisos: [],
+      blocos: [{ tipo: 'documentado', texto: 'Resposta do modelo.', entidades: ['golpe64', 'ipes'], relacoes: ['golpe_primeira'], fontes: ['G1'] }],
+    }), { store, modelo })
+    const final = finalOf(result)
+    eq(final.blocos.length, 1, 'não acrescenta fallback')
+    eq(final.blocos[0].texto, 'Resposta do modelo.', 'texto preservado')
+    assert(!final.avisos.some((a) => a.texto === SEM_LIGACAO_AVISO), 'sem aviso de fallback')
+    const state = store.snapshot(USER, CLOCK())
+    eq(state.used, modelo === 'basico' ? 5 : 4, 'Básico consome um grátis; Avançado preserva cota')
+    eq(state.paid, modelo === 'avancado' ? 16 : 24, 'Avançado consome oito pagos; Básico preserva saldo')
+    eq(state.reserved, 0, 'reserva confirmada')
+    eq(state.commitCalls, 1, 'um commit de crédito')
+    eq(state.releaseCalls, 0, 'sem liberação')
+    eq(state.ledger.filter((r) => r.reason === 'chat_debit').length, 1, 'um débito no ledger')
+    eq(final.gratis_restantes, modelo === 'basico' ? 15 : 16, 'cota cobrada no final')
+    eq(final.saldo_pago, state.paid, 'saldo cobrado no final')
+    eq(state.logs.length, 1, 'um log')
+    eq(state.logs[0].status, 'ok', 'log de sucesso')
+    eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.0002, 'custo da API preservado')
+    eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'budget liquidado')
+  }
+})
+
+Deno.test('CRED1 resposta documentada no Básico pago cobra um crédito e preserva a cota grátis', async () => {
+  const store = db()
+  store.setUsed(USER, 20)
+  store.setPaid(USER, 16)
   const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({
     entidades: [], fontes: [], avisos: [],
     blocos: [{ tipo: 'documentado', texto: 'Resposta do modelo.', entidades: ['golpe64', 'ipes'], relacoes: ['golpe_primeira'], fontes: ['G1'] }],
-  }))
+  }), { store, modelo: 'basico' })
   const final = finalOf(result)
-  eq(final.blocos.length, 1, 'não acrescenta fallback')
+  eq(final.blocos.length, 1, 'resposta documentada')
   eq(final.blocos[0].texto, 'Resposta do modelo.', 'texto preservado')
-  assert(!final.avisos.some((a) => a.texto === SEM_LIGACAO_AVISO), 'sem aviso de fallback')
+  assert(!final.avisos.some((a) => a.texto === SEM_COBRANCA_AVISO), 'resposta cobrada não avisa gratuidade')
+  const state = store.snapshot(USER, CLOCK())
+  eq(state.used, 20, 'cota grátis intacta')
+  eq(state.reserved, 0, 'reserva paga confirmada')
+  eq(state.paid, 15, 'um crédito pago debitado')
+  eq(state.commitCalls, 1, 'um commit')
+  eq(state.releaseCalls, 0, 'sem liberação')
+  eq(state.ledger.filter((row) => row.reason === 'chat_debit').length, 1, 'débito confirmado')
+  eq(state.ledger.find((row) => row.reason === 'chat_reserve')?.delta, -1, 'reserva de um pago')
+  eq(final.gratis_restantes, 0, 'cota grátis esgotada no final')
+  eq(final.saldo_pago, 15, 'final com saldo pago decrementado')
+  eq(state.logs.length, 1, 'um log')
+  eq(state.logs[0].status, 'ok', 'log de sucesso')
+})
+
+Deno.test('CRED1 pg releaseReserve lança em ok false e aceita noop', async () => {
+  // O runner offline do Node não resolve npm:postgres. O Deno carrega o adaptador sem abrir conexão.
+  if (typeof Deno.version === 'undefined') return
+  const { adapt } = await import('./pg_chat_db.ts')
+  const reservation: Reservation = {
+    ok: true,
+    userId: USER,
+    kind: 'paid',
+    cost: 1,
+    day: '2026-11-05',
+    pedidoId: '33333333-3333-4333-8333-333333333333',
+    modelo: 'basico',
+    gratis_restantes: 0,
+    pago: 15,
+  }
+  const fakeSql = (payload: Record<string, unknown>) => {
+    const tag = (_strings: TemplateStringsArray, ..._values: unknown[]) => Promise.resolve([{ result: payload }])
+    return tag as never
+  }
+  let message = ''
+  try {
+    await adapt(fakeSql({ ok: false, code: 'sem_creditos' })).releaseReserve(reservation)
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err)
+  }
+  eq(message, 'release recusado', 'ok false lança')
+  await adapt(fakeSql({ ok: true, noop: true })).releaseReserve(reservation)
 })

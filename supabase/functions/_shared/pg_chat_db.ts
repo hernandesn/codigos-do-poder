@@ -24,7 +24,7 @@ export function createPgChatDb(url: string): ChatDb {
   return adapt(singleton)
 }
 
-function adapt(sql: Sql): ChatDb {
+export function adapt(sql: Sql): ChatDb {
   return {
     async rateTouch(userId) {
       const result = await one(sql`select chat_private.chat_rate_touch(${userId}) as result`)
@@ -114,7 +114,7 @@ function adapt(sql: Sql): ChatDb {
       }
     },
     async releaseReserve(reservation) {
-      await one(sql`
+      const result = await one(sql`
         select chat_private.chat_release_reserve(
           ${reservation.userId}::uuid,
           ${reservation.modelo},
@@ -124,6 +124,8 @@ function adapt(sql: Sql): ChatDb {
           ${reservation.pedidoId}::uuid
         ) as result
       `)
+      // {ok:true} liberou; {ok:true, noop:true} já não estava reservado. Os dois seguem.
+      if (result.ok !== true) throw new Error('release recusado')
     },
     async chatContext(entityIds, query) {
       const rows = await sql<{ ctx: unknown }[]>`

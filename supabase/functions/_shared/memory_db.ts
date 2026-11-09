@@ -88,8 +88,10 @@ export const MAUA_CONTEXT: ChatContextPayload = {
   limites: { relacoes: 1, fontes: 1, truncado: false },
 }
 
-export function createMemoryDb(opts?: { clock?: () => Date }): MemoryChatDb {
-  return new MemoryChatDb(opts?.clock ?? (() => new Date()))
+export function createMemoryDb(opts?: { clock?: () => Date; releaseRefuse?: boolean }): MemoryChatDb {
+  const db = new MemoryChatDb(opts?.clock ?? (() => new Date()))
+  db.releaseRefuse = opts?.releaseRefuse ?? false
+  return db
 }
 
 export class MemoryChatDb implements ChatDb {
@@ -98,6 +100,8 @@ export class MemoryChatDb implements ChatDb {
   reserveCalls = 0
   commitCalls = 0
   releaseCalls = 0
+  /** Simula `{ok:false}` de chat_release_reserve: lança sem mexer em cota, saldo ou ledger. */
+  releaseRefuse = false
   private readonly quotas = new Map<string, Quota>()
   private readonly paid = new Map<string, number>()
   private readonly ledger: LedgerRow[] = []
@@ -173,6 +177,7 @@ export class MemoryChatDb implements ChatDb {
       used: quota?.used ?? 0,
       reserved: quota?.reserved ?? 0,
       paid: this.paid.get(userId) ?? 0,
+      ledger: this.ledger.filter((row) => row.userId === userId),
       logs: this.logs.filter((row) => row.user_key === userId),
       reserveCalls: this.reserveCalls,
       commitCalls: this.commitCalls,
@@ -314,6 +319,7 @@ export class MemoryChatDb implements ChatDb {
   async releaseReserve(reservation: Reservation): Promise<void> {
     await this.enqueue(() => {
       this.releaseCalls += 1
+      if (this.releaseRefuse) throw new Error('release recusado')
       const hold = this.creditHolds.get(reservation.pedidoId)
       if (!hold || hold.estado !== 'reservado') return
       if (hold.kind === 'free') {
