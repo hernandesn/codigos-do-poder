@@ -1661,7 +1661,7 @@
     let origin;
     try { origin = new URL(loc.origin).origin; } catch { return INTENDED_ORIGIN; }
     const host = new URL(origin).hostname;
-    if (origin === INTENDED_ORIGIN || host === 'localhost' || host === '127.0.0.1') {
+    if (origin === INTENDED_ORIGIN || origin === 'https://hernandesn.github.io' || host === 'localhost' || host === '127.0.0.1') {
       const path = typeof loc.pathname === 'string' && loc.pathname.startsWith('/') ? loc.pathname : '/';
       return origin + path;
     }
