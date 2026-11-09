@@ -1,0 +1,39 @@
+{
+  "conversa_id": "c_exemplo",
+  "blocos": [
+    {
+      "tipo": "documentado",
+      "texto": "Mauá aparece no recorte com fonte.",
+      "entidades": ["maua"],
+      "relacoes": ["r1"],
+      "fontes": ["S1"]
+    },
+    {
+      "tipo": "inferencia",
+      "texto": "A leitura não cria fato novo.",
+      "base": ["maua", "r1"],
+      "justificativa": "O recorte mostra a sociedade e não um fato além dele."
+    }
+  ],
+  "entidades": [{ "id": "maua", "nome": "Mauá" }],
+  "fontes": ["S1"],
+  "fontes_detalhe": {
+    "S1": {
+      "titulo": "Relatório de Mauá",
+      "url": "https://exemplo.test/maua",
+      "localizador": "p. 12"
+    }
+  },
+  "avisos": [
+    { "tipo": "citacao_removida", "texto": "Citação inválida removida." }
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 12,
+    "total_tokens": 32,
+    "cost": 0.000123
+  },
+  "custo_real": 0.000123,
+  "gratis_restantes": 19,
+  "saldo_pago": 0
+}
