@@ -5,6 +5,9 @@ import {
   CHAT_ERROR_STATUS,
   assessInferenceKey,
   boundContextJson,
+  buildSystemPrompt,
+  type ChatContextPayload,
+  fallbackSemLigacao,
   modelRequestBody,
   loadInferenceKeyAssessment,
   type KeyAssessment,
@@ -23,6 +26,7 @@ import {
   redactSecrets,
   prepareChat,
   runChat,
+  streamPrepared,
   saoPauloDay,
   userIdFromAuthorization,
   validateChatBody,
@@ -1014,4 +1018,254 @@ Deno.test('pedido ao modelo desliga reasoning para não esgotar max_tokens', () 
   eq(body.max_tokens, CHAT_MAX_TOKENS.basico, 'teto de saída')
   const reasoning = body.reasoning as { effort?: string }
   eq(reasoning?.effort, 'none', 'effort none')
+})
+
+
+Deno.test('SPEC3 recorte real Rockefeller cabe sem stub e mantém raízes', async () => {
+  const context: ChatContextPayload = JSON.parse(await Deno.readTextFile(
+    new URL('../chat/fixtures/ctx_rockefeller_golpe64.json', import.meta.url),
+  ))
+  const original = JSON.stringify(context)
+  const bound = boundContextJson(context)
+  const parsed = JSON.parse(bound)
+  assert(bound.length <= 8000, `recorte real: ${bound.length} caracteres`)
+  console.log(`SPEC3 fixture Rockefeller: ${original.length} -> ${bound.length} chars`)
+  assert(!parsed.truncado, 'não cai no stub')
+  eq(JSON.stringify(parsed.raizes), JSON.stringify(context.raizes), 'mantém raízes completas')
+  assert(parsed.entidades.length > 0 && parsed.relacoes.length > 0, 'mantém documentação útil')
+  assert(parsed.casos.length < context.casos!.length, 'reduz também casos')
+  eq(JSON.stringify(context), original, 'não modifica o contexto original')
+})
+
+Deno.test('SPEC3 preserva caminhos, intermediários, relações e fontes ao reduzir', async () => {
+  const context: ChatContextPayload = JSON.parse(await Deno.readTextFile(
+    new URL('../chat/fixtures/ctx_rockefeller_golpe64.json', import.meta.url),
+  ))
+  context.raizes.push({ id: 'david_r', nome: 'David Rockefeller' }, { id: 'golpe64', nome: 'Golpe de 1964' })
+  context.ligacoes_entre_raizes = [
+    { de: 'david_r', para: 'golpe64', via: 'ipes', relacoes: ['PR4-E017', 'E219'] },
+    { de: 'david_r', para: 'golpe64', via: 'ipes', relacoes: ['PR4-E018', 'E219'] },
+  ]
+  // Deliberately put required items at the end, beyond every ordinary slice.
+  context.entidades.push({ id: 'ipes', nome: 'IPES', nota: 'n'.repeat(10000) })
+  for (const [id, origem, destino] of [
+    ['PR4-E017', 'ipes', 'david_r'], ['PR4-E018', 'ipes', 'david_r'], ['E219', 'ipes', 'golpe64'],
+  ]) {
+    context.relacoes.push({ id, origem, destino, fontes: ['bridge_source'], afirmacao: 'a'.repeat(10000), limite: 'l'.repeat(10000) })
+  }
+  context.fontes.push({ id: 'bridge_source', titulo: 't'.repeat(10000), url: 'https://fixture.example/path' })
+  const original = JSON.stringify(context)
+  const bound = boundContextJson(context)
+  const parsed: ChatContextPayload = JSON.parse(bound)
+  assert(bound.length <= 8000, `com caminhos: ${bound.length} caracteres`)
+  console.log(`SPEC3 synthetic paths: ${original.length} -> ${bound.length} chars; paths=${parsed.ligacoes_entre_raizes?.length}`)
+  assert(!('truncado' in parsed), 'sem stub')
+  eq(JSON.stringify(parsed.raizes), JSON.stringify(context.raizes), 'preserva três raízes')
+  eq(JSON.stringify(parsed.ligacoes_entre_raizes), JSON.stringify(context.ligacoes_entre_raizes), 'preserva todos os caminhos')
+  assert(parsed.entidades.some((e) => e.id === 'ipes'), 'mantém intermediário')
+  for (const id of ['PR4-E017', 'PR4-E018', 'E219']) {
+    const relation = parsed.relacoes.find((r) => r.id === id)
+    assert(relation, `mantém ${id}`)
+    assert(relation.afirmacao!.length <= 300, 'encurta afirmação')
+    assert(relation.limite!.length <= 300, 'encurta limitações')
+  }
+  assert(parsed.fontes.some((s) => s.id === 'bridge_source'), 'mantém fonte citada')
+  eq(parsed.fontes.find((s) => s.id === 'bridge_source')?.url, 'https://fixture.example/path', 'URL não é cortada')
+  eq(JSON.stringify(context), original, 'sem mutação')
+})
+
+Deno.test('SPEC3 casos e notas muito longos ainda preservam recorte com raízes', () => {
+  const context: ChatContextPayload = {
+    raizes: [{ id: 'rockefeller', nome: 'Rockefeller' }],
+    entidades: [{ id: 'rockefeller', nome: 'Rockefeller', nota: 'n'.repeat(50000) }],
+    relacoes: [{ id: 'r1', afirmacao: 'a'.repeat(50000) }], fontes: [],
+    casos: Array.from({ length: 3 }, () => ({ conclusao: 'c'.repeat(50000), mecanismo: 'm'.repeat(50000) })),
+  }
+  const bound = boundContextJson(context)
+  const parsed = JSON.parse(bound)
+  assert(bound.length <= 8000 && !parsed.truncado, 'cabe sem stub')
+  eq(parsed.raizes[0].id, 'rockefeller', 'mantém raiz')
+  eq(parsed.casos.length, 0, 'pode remover todos os casos')
+})
+
+Deno.test('SPEC3 prompt distingue temas documentados, ausência de ligação e caminho indireto', () => {
+  const context: ChatContextPayload = { raizes: [], entidades: [], relacoes: [], fontes: [] }
+  for (const modelo of ['basico', 'avancado'] as const) {
+    const prompt = buildSystemPrompt(modelo, context)
+    assert(prompt.includes('só quando o recorte não sustenta nenhum dos temas'), 'sem_base limitado à falta de temas')
+    assert(prompt.includes('explique o que documenta sobre cada um'), 'resposta útil sobre temas')
+    assert(prompt.includes('a ligação direta não está documentada no atlas'), 'explicita lacuna')
+    assert(prompt.includes('explique primeiro essa ligação, citando suas relações e fontes'), 'prioriza caminho com fontes')
+    assert(prompt.includes('Um caminho por intermediário não prova ligação direta'), 'não transforma contato em prova direta')
+  }
+})
+
+// Minimal synthetic fixture: the two themes have independent documentary edges.
+function semLigacaoContext(): ChatContextPayload {
+  return {
+    raizes: [
+      { id: 'golpe64', nome: 'Golpe de 1964 · evento', tipo: 'evento' },
+      { id: 'heitor_lyra', nome: 'Heitor Lyra · diplomata', tipo: 'pessoa' },
+    ],
+    entidades: [
+      { id: 'ipes', nome: 'IPES', tipo: 'instituicao' },
+      { id: 'papacy', nome: 'Santa Sé', tipo: 'instituicao' },
+    ],
+    relacoes: [
+      { id: 'heitor_primeira', origem: 'heitor_lyra', destino: 'papacy',
+        afirmacao: 'Heitor Lyra foi embaixador junto à Santa Sé.', fontes: ['H1', 'ausente'], estado: 'historico' },
+      { id: 'golpe_primeira', origem: 'ipes', destino: 'golpe64',
+        afirmacao: 'O IPES aparece na documentação do golpe de 1964.', fontes: ['G1'] },
+      { id: 'heitor_segunda', origem: 'heitor_lyra', destino: 'papacy',
+        afirmacao: 'Esta relação tem prioridade menor.', fontes: ['H1'] },
+    ],
+    fontes: [
+      { id: 'H1', titulo: 'Registro diplomático', url: 'https://fixture.test/heitor', localizador: 'p. 1' },
+      { id: 'G1', titulo: 'Registro do IPES' },
+    ],
+    ligacoes_entre_raizes: [],
+  }
+}
+
+const SEM_LIGACAO_AVISO = 'Resposta montada direto da base: a ligação pedida não está documentada.'
+
+Deno.test('SPEC4 fallback de dois temas gera três blocos com citações válidas', () => {
+  const context = semLigacaoContext()
+  const original = JSON.stringify(context)
+  const answer = fallbackSemLigacao(context)
+  assert(answer, 'fallback disponível')
+  eq(answer.sem_base, false, 'tem base para os temas')
+  eq(answer.blocos.length, 3, 'dois temas e a lacuna')
+  const [golpe, heitor, lacuna] = answer.blocos
+  assert(golpe.tipo === 'documentado' && heitor.tipo === 'documentado' && lacuna.tipo === 'documentado', 'só blocos documentados')
+  eq(golpe.texto, 'Golpe de 1964: O IPES aparece na documentação do golpe de 1964.', 'ordem das raízes e nome sem sufixo')
+  eq(JSON.stringify(golpe.entidades), JSON.stringify(['golpe64', 'ipes']), 'cita raiz e outro extremo, mesmo sendo destino')
+  eq(JSON.stringify(golpe.relacoes), JSON.stringify(['golpe_primeira']), 'primeira relação que toca a raiz')
+  eq(heitor.texto, 'Heitor Lyra: Heitor Lyra foi embaixador junto à Santa Sé.', 'não usa relação de menor prioridade')
+  eq(JSON.stringify(heitor.entidades), JSON.stringify(['heitor_lyra', 'papacy']), 'cita raiz na origem e outro extremo')
+  eq(JSON.stringify(heitor.relacoes), JSON.stringify(['heitor_primeira']), 'cita a primeira relação de Heitor')
+  eq(JSON.stringify(heitor.fontes), JSON.stringify(['H1']), 'só fontes presentes no recorte')
+  eq(lacuna.texto, 'O atlas não documenta ligação direta entre Golpe de 1964 e Heitor Lyra.', 'lacuna explícita')
+  eq(JSON.stringify([lacuna.entidades, lacuna.relacoes, lacuna.fontes]), '[[],[],[]]', 'lacuna sem citações')
+  for (const bloco of answer.blocos) {
+    assert(bloco.tipo === 'documentado', 'documentado')
+    assert(bloco.entidades.every((id) => [...context.raizes, ...context.entidades].some((e) => e.id === id)), 'entidades válidas')
+    assert(bloco.relacoes.every((id) => context.relacoes.some((r) => r.id === id)), 'relações válidas')
+    assert(bloco.fontes.every((id) => context.fontes.some((f) => f.id === id)), 'fontes válidas')
+  }
+  eq(answer.fontes_detalhe.H1.url, 'https://fixture.test/heitor', 'detalhes pelo saneamento normal')
+  eq(answer.fontes_detalhe.H1.localizador, 'p. 1', 'localizador preservado')
+  assert(answer.avisos.some((a) => a.tipo === 'estado' && a.relacao === 'heitor_primeira'), 'aviso de estado preservado')
+  assert(answer.avisos.some((a) => a.tipo === 'outro' && a.texto === SEM_LIGACAO_AVISO), 'aviso do fallback')
+  eq(JSON.stringify(context), original, 'função pura, sem mutar contexto')
+})
+
+Deno.test('SPEC4 fallback aceita ligação ausente, nota e três nomes sem HTML', () => {
+  const context = semLigacaoContext()
+  delete context.ligacoes_entre_raizes
+  context.raizes[0].nome = '<b>Golpe de 1964</b> · evento'
+  context.relacoes[0].afirmacao = `<b>${'a'.repeat(450)}</b>`
+  context.raizes.push({ id: 'arquivo', nome: 'Arquivo · acervo', tipo: 'instituicao' })
+  context.entidades.push({ id: 'arquivo', nota: '<p>Nota documental do arquivo.</p>' })
+  const answer = fallbackSemLigacao(context)
+  assert(answer, 'usa nota de raiz sem relação')
+  eq(answer.blocos.length, 4, 'três temas e a lacuna')
+  eq(answer.blocos[1].texto, `Heitor Lyra: ${'a'.repeat(400)}`, 'afirmação limitada a 400 caracteres sem tags')
+  eq(answer.blocos[2].texto, 'Arquivo: Nota documental do arquivo.', 'nota sem HTML')
+  eq(answer.blocos[3].texto, 'O atlas não documenta ligação direta entre Golpe de 1964, Heitor Lyra e Arquivo.', 'lista de três nomes sem sufixos')
+  assert(answer.blocos.every((b) => !/[<>]/.test(b.texto)), 'texto simples')
+})
+
+Deno.test('SPEC4 fallback retorna null sem dois temas aproveitáveis ou com ligação', () => {
+  for (const count of [0, 1]) {
+    const context = semLigacaoContext()
+    context.raizes = context.raizes.slice(0, count)
+    eq(fallbackSemLigacao(context), null, `${count} raiz não ativa fallback`)
+  }
+  const linked = semLigacaoContext()
+  linked.ligacoes_entre_raizes = [{ de: 'golpe64', para: 'heitor_lyra', via: null, relacoes: ['ligacao'] }]
+  eq(fallbackSemLigacao(linked), null, 'não contradiz ligação documentada')
+  const missing = semLigacaoContext()
+  missing.relacoes = missing.relacoes.filter((r) => r.origem !== 'heitor_lyra')
+  eq(fallbackSemLigacao(missing), null, 'raiz sem relação nem nota é pulada')
+  const unsourced = semLigacaoContext()
+  unsourced.fontes = unsourced.fontes.filter((f) => f.id !== 'H1')
+  eq(fallbackSemLigacao(unsourced), null, 'saneamento continua recusando pessoa sem fonte')
+})
+
+async function streamSemLigacao(context: ChatContextPayload, raw: string) {
+  const store = db()
+  store.chatContext = async () => context
+  const prepared = await prepareChat({ userId: USER, body: request(), db: store, clock: CLOCK, inferenceKey: acceptedKey() })
+  assert(prepared.ok, 'pedido preparado com reservas')
+  const model = scripted([{ delta: raw }, { usage: { prompt_tokens: 11, completion_tokens: 7, cost: 0.0002 } }])
+  const emitted: ChatSseEvent[] = []
+  const httpStatus = await streamPrepared({
+    prepared, db: store, openrouter: model.client,
+    signal: new AbortController().signal, emit: (event) => emitted.push(event),
+  })
+  return { store, model, result: { httpStatus, events: emitted } }
+}
+
+Deno.test('SPEC4 streamPrepared sem_base em dois temas sem ligação termina ok com um débito', async () => {
+  const { store, model, result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: true, blocos: [] }))
+  eq(result.httpStatus, 200, 'sucesso')
+  eq(model.calls.length, 1, 'uma chamada ao modelo')
+  eq(terminals(result).length, 1, 'um terminal')
+  const final = finalOf(result)
+  eq(final.blocos.length, 3, 'resposta determinística completa')
+  eq(final.gratis_restantes, 19, 'um crédito debitado')
+  eq(final.custo_real, 0.0002, 'custo real mantido')
+  eq(final.fontes_detalhe.H1.titulo, 'Registro diplomático', 'detalhes das fontes presentes')
+  assert(final.avisos.some((a) => a.texto === SEM_LIGACAO_AVISO), 'aviso no final')
+  const state = store.snapshot(USER, CLOCK())
+  eq(state.reserveCalls, 1, 'uma reserva')
+  eq(state.commitCalls, 1, 'um commit de crédito')
+  eq(state.releaseCalls, 0, 'não libera crédito usado')
+  eq(state.used, 1, 'um débito')
+  eq(state.reserved, 0, 'nenhuma reserva pendente')
+  eq(state.logs.length, 1, 'um log')
+  eq(state.logs[0].status, 'ok', 'log de sucesso')
+  eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.0002, 'orçamento liquidado normalmente')
+  eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'orçamento sem reserva pendente')
+})
+
+Deno.test('SPEC4 streamPrepared com blocos vazios também usa fallback', async () => {
+  const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({ sem_base: false, blocos: [] }))
+  eq(finalOf(result).blocos.length, 3, 'fallback mesmo sem flag sem_base')
+})
+
+Deno.test('SPEC4 streamPrepared sem_base com uma raiz ou ligação continua fora_da_base', async () => {
+  for (const variant of ['uma raiz', 'com ligação', 'tema sem documentação']) {
+    const context = semLigacaoContext()
+    if (variant === 'uma raiz') context.raizes = context.raizes.slice(0, 1)
+    if (variant === 'com ligação') context.ligacoes_entre_raizes = [{ de: 'golpe64', para: 'heitor_lyra', via: null, relacoes: ['ligacao'] }]
+    if (variant === 'tema sem documentação') context.relacoes = context.relacoes.filter((r) => r.origem !== 'heitor_lyra')
+    const { store, result } = await streamSemLigacao(context, answerJson({ sem_base: true, blocos: [] }))
+    eq(result.httpStatus, 200, `${variant}: stream já aberto`)
+    const terminal = terminals(result)
+    eq(terminal.length, 1, `${variant}: um terminal`)
+    assert(terminal[0].event === 'error', `${variant}: terminal de erro`)
+    eq(terminal[0].data.code, 'fora_da_base', `${variant}: código preservado`)
+    const state = store.snapshot(USER, CLOCK())
+    eq(state.used, 0, `${variant}: não debita`)
+    eq(state.commitCalls, 0, `${variant}: sem commit`)
+    eq(state.releaseCalls, 1, `${variant}: devolve crédito uma vez`)
+    eq(state.reserved, 0, `${variant}: crédito sem reserva pendente`)
+    eq(state.logs.length, 1, `${variant}: um log`)
+    eq(state.logs[0].status, 'fora_da_base', `${variant}: status preservado`)
+    eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.0002, `${variant}: mantém custo da geração`)
+    eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, `${variant}: orçamento liquidado`)
+  }
+})
+
+Deno.test('SPEC4 streamPrepared preserva resposta válida do modelo em dois temas', async () => {
+  const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({
+    entidades: [], fontes: [], avisos: [],
+    blocos: [{ tipo: 'documentado', texto: 'Resposta do modelo.', entidades: ['golpe64', 'ipes'], relacoes: ['golpe_primeira'], fontes: ['G1'] }],
+  }))
+  const final = finalOf(result)
+  eq(final.blocos.length, 1, 'não acrescenta fallback')
+  eq(final.blocos[0].texto, 'Resposta do modelo.', 'texto preservado')
+  assert(!final.avisos.some((a) => a.texto === SEM_LIGACAO_AVISO), 'sem aviso de fallback')
 })

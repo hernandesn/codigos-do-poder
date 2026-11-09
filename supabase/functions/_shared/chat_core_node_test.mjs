@@ -2,15 +2,16 @@
 import { readFileSync } from 'node:fs'
 import { registerHooks, stripTypeScriptTypes } from 'node:module'
 
-// The existing memory DB uses a TS constructor parameter property, which strip-only
-// mode cannot erase. Transform just that module in memory, leaving the source intact.
+// Load the local Deno modules as ESM even under the root CommonJS package.
+// The memory DB also needs transformation for its TS constructor parameter property.
+const sharedUrl = new URL('./', import.meta.url).href
 const memoryDbUrl = new URL('./memory_db.ts', import.meta.url).href
 registerHooks({
   load(url, context, nextLoad) {
-    if (url === memoryDbUrl) {
+    if (url.startsWith(sharedUrl) && url.endsWith('.ts')) {
       return {
         format: 'module', shortCircuit: true,
-        source: stripTypeScriptTypes(readFileSync(new URL(url), 'utf8'), { mode: 'transform' }),
+        source: stripTypeScriptTypes(readFileSync(new URL(url), 'utf8'), { mode: url === memoryDbUrl ? 'transform' : 'strip' }),
       }
     }
     return nextLoad(url, context)
@@ -20,6 +21,7 @@ registerHooks({
 const tests = []
 globalThis.Deno = {
   test(name, fn) { tests.push({ name, fn }) },
+  async readTextFile(path) { return readFileSync(path, 'utf8') },
   env: { get: (key) => process.env[key] },
 }
 globalThis.fetch = () => { throw new Error('Network disabled in offline tests') }
