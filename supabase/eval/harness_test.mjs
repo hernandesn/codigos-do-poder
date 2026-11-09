@@ -13,6 +13,7 @@ import {
   classificarAvaliacao,
   classificarIdCitado,
   extrairIdsRubrica,
+  paresPerguntados,
   percentilLinear,
   precisaoRevocacao,
   vozExigida,
@@ -333,6 +334,79 @@ test('rubricas, sem_ligacao e voz', () => {
   assert.equal(vozExigida({ categoria: 'documentado_tipico', pergunta: 'O que foi a CPI do IBAD?', explicita: false }), false)
 })
 
+test('GS-008: ligação vizinha documentada não conta, ligação entre as raízes perguntadas conta', async () => {
+  const esperadas = ['rothschild', 'golpe64', 'ipes', 'ibad']
+  const v2 = parseGolden(await readFile(new URL('./golden/seed_v0.2.jsonl', import.meta.url), 'utf8'), 'seed_v0.2.jsonl')
+  const pares = v2.find((item) => item.id === 'GS-008').pares_sem_ligacao
+  const arestas = [
+    { id: 'E219', origem: 'ipes', destino: 'golpe64' },
+    { id: 'RX1', origem: 'rothschild', destino: 'lord_rothschild_familia' },
+    { id: 'RX2', origem: 'lord_rothschild_familia', destino: 'golpe64' },
+    { id: 'RD', origem: 'rothschild', destino: 'golpe64' },
+  ]
+  assert.deepEqual([...paresPerguntados(pares, esperadas)].sort(), ['golpe64|rothschild', 'ibad|rothschild', 'ipes|rothschild'])
+  assert.equal(paresPerguntados([], esperadas).size, 6, 'sem pares explícitos vale a régua antiga: todo par')
+  const lacuna = 'O atlas não documenta ligação direta entre Rothschild e IPES.'
+  const comum = { expectativa: 'sem_ligacao', arestas, entidadesEsperadas: esperadas }
+  const vizinhaBruto = { sem_base: false, blocos: [
+    { tipo: 'documentado', texto: 'O IPES atuou na propaganda do golpe.', entidades: ['ipes', 'golpe64'], relacoes: ['E219'], fontes: ['B10'] },
+    { tipo: 'documentado', texto: lacuna, entidades: [], relacoes: [], fontes: [] },
+  ] }
+  const vizinha = avaliarSemLigacao({ ...comum, paresSemLigacao: pares, texto: `O IPES atuou na propaganda do golpe. ${lacuna}`, bruto: vizinhaBruto })
+  assert.equal(vizinha.reconhece, true)
+  assert.equal(vizinha.afirma_relacao, false, 'citar E219 (ipes↔golpe64) não afirma Rothschild↔golpe/IPES')
+  assert.deepEqual(vizinha.relacoes, [])
+  assert.equal(vizinha.ok, true)
+  const antiga = avaliarSemLigacao({ ...comum, texto: `O IPES atuou na propaganda do golpe. ${lacuna}`, bruto: vizinhaBruto })
+  assert.deepEqual(antiga.relacoes, ['E219'], 'régua antiga (sem pares) reprovava a vizinha')
+  assert.equal(antiga.ok, false)
+  const caminho = avaliarSemLigacao({ ...comum, paresSemLigacao: pares, texto: `Os Rothschild chegam ao golpe pela família. ${lacuna}`,
+    bruto: { sem_base: false, blocos: [
+      { tipo: 'documentado', texto: 'O IPES atuou na propaganda do golpe.', relacoes: ['E219'], fontes: ['B10'] },
+      { tipo: 'inferencia', texto: 'Os Rothschild chegam ao golpe pela família.', base: ['RX1', 'RX2'], justificativa: 'caminho' },
+    ] } })
+  assert.equal(caminho.afirma_relacao, true, 'caminho rothschild→família→golpe64 liga o par perguntado')
+  assert.ok(!caminho.relacoes.includes('E219'), 'a vizinha documentada não entra na lista')
+  assert.equal(caminho.ok, false)
+  const direta = avaliarSemLigacao({ ...comum, paresSemLigacao: pares, texto: lacuna,
+    bruto: { sem_base: false, blocos: [{ tipo: 'documentado', texto: 'Rothschild e o golpe.', relacoes: ['RD'], fontes: ['F'] }] } })
+  assert.deepEqual(direta.relacoes, ['RD'], 'aresta direta Rothschild↔golpe é afirmação')
+  assert.equal(direta.ok, false)
+})
+
+test('GS-009: pares explícitos não mudam o caso Aranha', async () => {
+  const esperadas = ['oswaldo_aranha', 'egydio_aranha', 'alfredo_aranha']
+  const v2 = parseGolden(await readFile(new URL('./golden/seed_v0.2.jsonl', import.meta.url), 'utf8'), 'seed_v0.2.jsonl')
+  const pares = v2.find((item) => item.id === 'GS-009').pares_sem_ligacao
+  const arestas = [
+    { id: 'E178', origem: 'egydio_aranha', destino: 'alfredo_aranha' },
+    { id: 'RO', origem: 'oswaldo_aranha', destino: 'x_intermediario' },
+    { id: 'RE', origem: 'x_intermediario', destino: 'egydio_aranha' },
+  ]
+  const texto = 'O atlas não documenta ligação direta entre Oswaldo Aranha e Egydio de Souza Aranha. Sobrenome igual não prova parentesco.'
+  const casos = [
+    { texto, bruto: { sem_base: false, blocos: [{ tipo: 'documentado', texto, entidades: [], relacoes: [], fontes: [] }] } },
+    { texto: 'Oswaldo Aranha e Egydio são parentes.', bruto: { sem_base: false, blocos: [] } },
+    { texto, bruto: { sem_base: false, blocos: [{ tipo: 'inferencia', texto: 'via x', base: ['RO', 'RE'], justificativa: 'caminho' }] } },
+    { texto: 'Sem registro.', bruto: { sem_base: false, blocos: [] } },
+  ]
+  for (const caso of casos) {
+    const base = { expectativa: 'sem_ligacao', arestas, entidadesEsperadas: esperadas, ...caso }
+    const nova = avaliarSemLigacao({ ...base, paresSemLigacao: pares })
+    const velha = avaliarSemLigacao(base)
+    assert.equal(nova.ok, velha.ok, caso.texto)
+    assert.equal(nova.afirma_relacao, velha.afirma_relacao, caso.texto)
+  }
+})
+
+test('golden aceita pares_sem_ligacao e recusa par inválido', () => {
+  const linha = (pares) => JSON.stringify({ id: 'X1', pergunta: 'a e b?', expectativa: 'sem_ligacao', entidades_esperadas: ['a', 'b'], pares_sem_ligacao: pares })
+  assert.deepEqual(parseGolden(linha([['a', 'b']]), 'x.jsonl')[0].pares_sem_ligacao, [['a', 'b']])
+  assert.deepEqual(parseGolden(JSON.stringify({ id: 'X2', pergunta: 'p', expectativa: 'documentado' }), 'x.jsonl')[0].pares_sem_ligacao, [])
+  assert.throws(() => parseGolden(linha([['a']]), 'x.jsonl'), /pares_sem_ligacao/)
+  assert.throws(() => parseGolden(linha([['a', 'a']]), 'x.jsonl'), /pares_sem_ligacao/)
+})
+
 test('seed oficial aceita entidades em objeto', async () => {
   const raw = await readFile(new URL('./golden/seed_v0.1.jsonl', import.meta.url), 'utf8')
   const items = parseGolden(raw, 'seed_v0.1.jsonl')
@@ -352,6 +426,21 @@ test('seed oficial aceita entidades em objeto', async () => {
   })}\n`, 't.jsonl')
   assert.equal(solto.entidades_esperadas[0].id_pendente, true)
   assert.deepEqual(idsDeEntidades(solto.entidades_esperadas), ['aa_eval', 'bb_eval'])
+})
+
+test('seed_v0.2 = v0.1 + pares_sem_ligacao só no GS-008 e no GS-009', async () => {
+  const v1 = parseGolden(await readFile(new URL('./golden/seed_v0.1.jsonl', import.meta.url), 'utf8'), 'seed_v0.1.jsonl')
+  const v2 = parseGolden(await readFile(new URL('./golden/seed_v0.2.jsonl', import.meta.url), 'utf8'), 'seed_v0.2.jsonl')
+  assert.equal(v2.length, v1.length)
+  for (const item of v1) assert.deepEqual(item.pares_sem_ligacao, [], `${item.id}: v0.1 sem pares (régua antiga)`)
+  for (let i = 0; i < v1.length; i++) {
+    const { pares_sem_ligacao: pares, ...resto } = v2[i]
+    const { pares_sem_ligacao: _vazio, ...base } = v1[i]
+    assert.deepEqual(resto, base, `${v1[i].id}: igual à v0.1 fora do campo novo`)
+    if (v2[i].id === 'GS-008') assert.deepEqual(pares, [['rothschild', 'golpe64'], ['rothschild', 'ipes'], ['rothschild', 'ibad']])
+    else if (v2[i].id === 'GS-009') assert.deepEqual(pares, [['oswaldo_aranha', 'egydio_aranha'], ['oswaldo_aranha', 'alfredo_aranha']])
+    else assert.deepEqual(pares, [], `${v2[i].id}: sem pares`)
+  }
 })
 
 test('sem_ligacao, objetos, conexões e rubrica no harness', async () => {

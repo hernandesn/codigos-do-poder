@@ -850,10 +850,14 @@ export function reconheceSemLigacao({ texto, bruto, erro, avisos }) {
 
 /**
  * sem_ligacao passa se a resposta reconhece a ausência de ligação e não afirma uma.
- * Afirma se um bloco documentado ou inferencia cita relação que liga as entidades
- * esperadas direto ou por um intermediário, ou se o texto afirma a ligação.
+ * Afirma se um bloco documentado ou inferencia cita relação que liga um par
+ * perguntado, direto ou por um intermediário, ou se o texto afirma a ligação.
+ * Par perguntado é o par cuja ausência a pergunta espera: `pares_sem_ligacao` do
+ * golden, quando existe; sem ele, todo par de entidades esperadas (régua antiga).
+ * Com os pares explícitos, citar uma ligação documentada vizinha (ex.: E219
+ * ipes↔golpe64, quando a pergunta é Rothschild × golpe/IPES) não conta.
  */
-export function avaliarSemLigacao({ expectativa, texto, bruto, finalData, erro, avisos, arestas, entidadesEsperadas }) {
+export function avaliarSemLigacao({ expectativa, texto, bruto, finalData, erro, avisos, arestas, entidadesEsperadas, paresSemLigacao }) {
   if (expectativa !== 'sem_ligacao') {
     return { aplicavel: false, ok: null, reconhece: null, afirma_relacao: false, relacoes: [], afirma_texto: false }
   }
@@ -868,7 +872,7 @@ export function avaliarSemLigacao({ expectativa, texto, bruto, finalData, erro, 
   for (const id of citadas) {
     for (const aresta of porId.get(id) ?? []) edges.push(aresta)
   }
-  const relacoes = ligamEsperadas(edges, esperados)
+  const relacoes = ligamEsperadas(edges, esperados, paresPerguntados(paresSemLigacao, esperados))
   const afirmaRelacao = relacoes.length > 0
   const afirmaTexto = textoAfirmaLigacao(texto)
   const reconhece = reconheceSemLigacao({ texto, bruto, erro, avisos })
@@ -882,9 +886,26 @@ export function avaliarSemLigacao({ expectativa, texto, bruto, finalData, erro, 
   }
 }
 
-function ligamEsperadas(edges, esperados) {
-  const esp = new Set(esperados)
-  if (esp.size < 2) return []
+/** Pares perguntados (chave "a|b" ordenada): os explícitos do golden ou, sem eles, todo par de esperadas. */
+export function paresPerguntados(paresSemLigacao, esperados) {
+  const pares = new Set()
+  for (const par of paresSemLigacao ?? []) {
+    if (Array.isArray(par) && par.length === 2 && par[0] && par[1] && par[0] !== par[1]) pares.add(chavePar(par[0], par[1]))
+  }
+  if (pares.size) return pares
+  const esp = [...new Set((esperados ?? []).filter(Boolean))]
+  for (let i = 0; i < esp.length; i++) {
+    for (let j = i + 1; j < esp.length; j++) pares.add(chavePar(esp[i], esp[j]))
+  }
+  return pares
+}
+
+function chavePar(a, b) {
+  return a < b ? `${a}|${b}` : `${b}|${a}`
+}
+
+function ligamEsperadas(edges, esperados, perguntados) {
+  if (new Set(esperados).size < 2 || !perguntados?.size) return []
   const ruins = new Set()
   const adj = new Map()
   const add = (de, para, id) => {
@@ -892,19 +913,15 @@ function ligamEsperadas(edges, esperados) {
     adj.get(de).push({ no: para, id })
   }
   for (const edge of edges) {
-    if (edge.origem !== edge.destino && esp.has(edge.origem) && esp.has(edge.destino)) ruins.add(edge.id)
+    if (edge.origem !== edge.destino && perguntados.has(chavePar(edge.origem, edge.destino))) ruins.add(edge.id)
     add(edge.origem, edge.destino, edge.id)
     add(edge.destino, edge.origem, edge.id)
   }
-  const lista = [...esp]
-  for (let i = 0; i < lista.length; i++) {
-    for (let j = i + 1; j < lista.length; j++) {
-      const a = lista[i]
-      const b = lista[j]
-      for (const hop of adj.get(a) ?? []) {
-        if (hop.no === b) continue
-        if ((adj.get(hop.no) ?? []).some((viz) => viz.no === b)) ruins.add(hop.id)
-      }
+  for (const chave of perguntados) {
+    const [a, b] = chave.split('|')
+    for (const hop of adj.get(a) ?? []) {
+      if (hop.no === b) continue
+      if ((adj.get(hop.no) ?? []).some((viz) => viz.no === b)) ruins.add(hop.id)
     }
   }
   return [...ruins]

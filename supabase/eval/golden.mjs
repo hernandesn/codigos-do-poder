@@ -72,6 +72,18 @@ function normalizeItem(item, ordem, ids) {
       throw new GoldenError(`golden inválido: pergunta ${id}: entidade_contexto ${entityId}`)
     }
   }
+  const paresSemLigacao = []
+  if (item.pares_sem_ligacao !== undefined) {
+    if (!Array.isArray(item.pares_sem_ligacao)) {
+      throw new GoldenError(`golden inválido: pergunta ${id}: pares_sem_ligacao deve ser lista de pares`)
+    }
+    for (const par of item.pares_sem_ligacao) {
+      if (!Array.isArray(par) || par.length !== 2 || par.some((x) => typeof x !== 'string' || !ENTITY_RE.test(x)) || par[0] === par[1]) {
+        throw new GoldenError(`golden inválido: pergunta ${id}: par de pares_sem_ligacao inválido`)
+      }
+      paresSemLigacao.push([par[0], par[1]])
+    }
+  }
   if (item.voz_aion_obrigatoria !== undefined && typeof item.voz_aion_obrigatoria !== 'boolean') {
     throw new GoldenError(`golden inválido: pergunta ${id}: voz_aion_obrigatoria deve ser boolean`)
   }
@@ -101,6 +113,7 @@ function normalizeItem(item, ordem, ids) {
     nao_deve_conter: stringArray(item.nao_deve_conter, `pergunta ${id}: nao_deve_conter`),
     entidades_contexto: entidadesContexto,
     voz_aion_obrigatoria: item.voz_aion_obrigatoria === true,
+    pares_sem_ligacao: paresSemLigacao,
     contexto_fixture: typeof item.contexto_fixture === 'string' ? item.contexto_fixture : null,
     mock_resposta: item.mock_resposta ?? null,
     notas: typeof item.notas === 'string' ? item.notas : '',

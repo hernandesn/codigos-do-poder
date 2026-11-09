@@ -310,6 +310,7 @@ async function umaCorrida({ item, modelo, app, token, state, core, precos, base,
     avisos,
     arestas: metrics.arestasDe(state.lastContext ?? recorte),
     entidadesEsperadas: idsDeEntidades(item.entidades_esperadas),
+    paresSemLigacao: item.pares_sem_ligacao,
   })
   const vozObrigatoria = metrics.vozExigida({
     categoria: item.categoria,
