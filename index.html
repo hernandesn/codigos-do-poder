@@ -1482,7 +1482,7 @@
   selected=work.selected;inspectorOpen=work.inspectorOpen??!!selected;rebuild();const requestedHash=decodeURIComponent(location.hash.slice(1)),requestedCase=(model.casos||[]).some(c=>c.id===requestedHash);if(requestedCase){work.view='caso:'+requestedHash;selected={kind:'node',id:(model.casos||[]).find(c=>c.id===requestedHash).no_mural};inspectorOpen=true;}else if(presets.some(v=>v.id===requestedHash)){work.view=requestedHash;}if(!presets.some(v=>v.id===work.view)&&!['brasil','mundo','all','custom'].includes(work.view)&&!(model.casos||[]).some(c=>'caso:'+c.id===work.view))work.view='all';refresh();requestAnimationFrame(()=>{applyCamera();save();});
   new ResizeObserver(()=>{syncSheet();if(!layout().camera)fit(false);else scheduleEdgeLabels();}).observe($('canvas-wrap'));
   window.addEventListener('resize',()=>{syncSheet();if(selected?.kind==='node')centerNode(selected.id);});
-  window.mural={getState:()=>({view:work.view,selected:clone(selected),highlighted:selected?.id||null,inspectorOpen:!!selected&&inspectorOpen,hovered,directEdges:directEdges.size,secondEdges:secondEdges.size,visibleLabels:labelBoxes.length,labelOverlaps:labelBoxes.reduce((count,a,i)=>count+labelBoxes.slice(i+1).filter(b=>overlaps(a,b)).length,0),sheetState:mobile()&&selected?(inspectorOpen?sheetState:'collapsed'):null,camera:{...camera()},positions:clone(layout().positions),visibleNodes:shownNodes.map(n=>n.id),visibleEdges:shownEdges.map(e=>e.id),notes:clone(work.notes),nodeCount:nodes.size,edgeCount:edges.size,sourceCount:sources.size,caseCount:(model.casos||[]).length}),perf:()=>({lastFrameMs,lastHoverMs,domNodes:document.getElementsByTagName('*').length}),fit:()=>fit()};
+  window.mural={getState:()=>({view:work.view,selected:clone(selected),selectedEndpoints:selected?.kind==='edge'?[edges.get(selected.id)?.origem,edges.get(selected.id)?.destino]:[],highlighted:selected?.id||null,inspectorOpen:!!selected&&inspectorOpen,hovered,directEdges:directEdges.size,secondEdges:secondEdges.size,visibleLabels:labelBoxes.length,labelOverlaps:labelBoxes.reduce((count,a,i)=>count+labelBoxes.slice(i+1).filter(b=>overlaps(a,b)).length,0),sheetState:mobile()&&selected?(inspectorOpen?sheetState:'collapsed'):null,camera:{...camera()},positions:clone(layout().positions),visibleNodes:shownNodes.map(n=>n.id),visibleEdges:shownEdges.map(e=>e.id),notes:clone(work.notes),nodeCount:nodes.size,edgeCount:edges.size,sourceCount:sources.size,caseCount:(model.casos||[]).length}),perf:()=>({lastFrameMs,lastHoverMs,domNodes:document.getElementsByTagName('*').length}),fit:()=>fit()};
 })();
 </script>
   <script>/* Login Supabase Auth e chat da Edge Function. Sem resposta simulada. */
@@ -1923,7 +1923,9 @@
     const host = typeof globalThis !== 'undefined' ? globalThis : null;
     const state = host && host.mural && host.mural.getState ? host.mural.getState() : null;
     const id = state && state.selected && state.selected.kind === 'node' ? state.selected.id : '';
-    return { entidades: id ? [id] : [], view: state && state.view ? state.view : '' };
+    const entidades = state?.selected?.kind === 'edge' && Array.isArray(state.selectedEndpoints)
+      ? state.selectedEndpoints.slice(0, 2) : id ? [id] : [];
+    return { entidades: entidades.filter((id) => typeof id === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(id)), view: state && state.view ? state.view : '' };
   }
 
   function mount(doc, deps) {
@@ -1956,7 +1958,7 @@
         const selected = selectedContext();
         context.textContent = selected.entidades.length
           ? `Recorte enviado: ${selected.entidades.join(', ')}`
-          : 'Nenhuma entidade selecionada. A pergunta segue sem id de entidade.';
+          : 'Selecione uma pessoa ou instituição no mural, ou cite o nome dela na pergunta.';
       }
     }
 
@@ -1996,6 +1998,12 @@
         p.dataset.code = result.code || '';
         p.textContent = result.message || MESSAGES.incompleto;
         item.appendChild(p);
+        if (result.code === 'fora_da_base') {
+          const tip = documentRef.createElement('p');
+          tip.className = 'chat-tip';
+          tip.textContent = 'Dica: selecione a entidade no mural antes de perguntar.';
+          item.appendChild(tip);
+        }
       }
       log.appendChild(item);
       log.scrollTop = log.scrollHeight;
