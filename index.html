@@ -94,6 +94,9 @@
 .chat-question{color:#d5dbe0;font-size:12px;margin:0 0 6px}
 .chat-answer,.chat-inference{font-size:13px;line-height:1.55;margin:0 0 8px;white-space:pre-wrap}
 .chat-inference{border-left:2px solid #7a674a;padding-left:8px;color:#c4b59a}
+.chat-sources{font-size:11px;line-height:1.5;margin:0 0 8px}
+.chat-sources h4,.chat-sources p{font-size:inherit;margin:4px 0}
+.chat-sources ul{margin:4px 0 8px;padding-left:18px}
 .chat-error{color:var(--danger);font-size:12px;margin:0}
 @media(max-width:820px){.chat-panel{top:62px}}
 @media(max-width:620px){#auth-button,#chat-open{padding:7px 8px;font-size:11px}}
@@ -1503,6 +1506,7 @@
     rate_limit: 'Muitas perguntas seguidas. Tente de novo em instantes.',
     fora_da_base: 'Não encontrei isso na base do atlas.',
     modelo_indisponivel: 'O modelo está indisponível agora. Tente de novo.',
+    modelo_ocupado: 'Muitas perguntas agora, tente em alguns segundos.',
     pedido_invalido: 'Pergunta inválida (até 2000 caracteres e 3 entidades).',
     rede: 'Não foi possível conectar ao chat.',
     abortado: 'Pedido cancelado.',
@@ -1985,6 +1989,55 @@
           p.textContent = MESSAGES.incompleto;
           item.appendChild(p);
         }
+        const sourceIds = [...new Set((Array.isArray(result.final.fontes) && result.final.fontes.length
+          ? result.final.fontes : blocos.flatMap((bloco) => Array.isArray(bloco.fontes) ? bloco.fontes : []))
+          .filter((id) => typeof id === 'string' && id))];
+        const relationIds = [...new Set(blocos.flatMap((bloco) => {
+          const ids = bloco.tipo === 'inferencia' ? bloco.base : bloco.tipo === 'documentado' ? bloco.relacoes : [];
+          return Array.isArray(ids) ? ids : [];
+        }).filter((id) => typeof id === 'string' && id))].slice(0, 12);
+        const sources = documentRef.createElement('div');
+        sources.className = 'chat-sources';
+        const list = documentRef.createElement('ul');
+        if (sourceIds.length) {
+          const sourceHeading = documentRef.createElement('h4');
+          sourceHeading.textContent = 'Fontes citadas';
+          sources.appendChild(sourceHeading);
+        }
+        for (const id of sourceIds) {
+          const detalhe = result.final.fontes_detalhe?.[id];
+          const titulo = typeof detalhe?.titulo === 'string' && detalhe.titulo.trim() ? detalhe.titulo : id;
+          let url;
+          try {
+            const parsed = new URL(detalhe?.url);
+            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') url = parsed.href;
+          } catch {}
+          const li = documentRef.createElement('li');
+          if (url) {
+            const link = documentRef.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('target', '_blank');
+            link.setAttribute('rel', 'noopener noreferrer');
+            link.textContent = titulo;
+            li.appendChild(link);
+          } else li.textContent = titulo;
+          if (typeof detalhe?.localizador === 'string' && detalhe.localizador.trim()) {
+            const locator = documentRef.createElement('span');
+            locator.textContent = ` · ${detalhe.localizador}`;
+            li.appendChild(locator);
+          }
+          list.appendChild(li);
+        }
+        if (sourceIds.length) sources.appendChild(list);
+        if (relationIds.length) {
+          const relationHeading = documentRef.createElement('h4');
+          relationHeading.textContent = 'Relações usadas';
+          sources.appendChild(relationHeading);
+          const relations = documentRef.createElement('p');
+          relations.textContent = relationIds.join(', ');
+          sources.appendChild(relations);
+        }
+        if (sourceIds.length || relationIds.length) item.appendChild(sources);
         const meta = documentRef.createElement('p');
         meta.className = 'chat-meta';
         const gratis = result.final.gratis_restantes;
