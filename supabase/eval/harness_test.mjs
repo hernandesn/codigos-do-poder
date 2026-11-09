@@ -1,0 +1,726 @@
+import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { parseGolden, idsDeEntidades } from './golden.mjs'
+import {
+  avaliarRubricas,
+  avaliarSemLigacao,
+  citacoesInvalidas,
+  classificarAvaliacao,
+  extrairIdsRubrica,
+  percentilLinear,
+  precisaoRevocacao,
+  vozExigida,
+} from './metrics.mjs'
+
+const repo = fileURLToPath(new URL('../../', import.meta.url))
+const harness = fileURLToPath(new URL('./harness.mjs', import.meta.url))
+const fixture = fileURLToPath(new URL('../functions/chat/fixtures/ctx_rockefeller_golpe64.json', import.meta.url))
+const node = process.execPath
+
+function childEnv(extra = {}) {
+  const env = { ...process.env, ...extra }
+  delete env.OPENROUTER_API_KEY
+  delete env.ATLAS_SYNC_SQL
+  delete env.OPENROUTER_URL
+  delete env.OPENROUTER_KEY_URL
+  return env
+}
+
+function runHarness(args, env = childEnv(), preload) {
+  const nodeArgs = ['--experimental-strip-types']
+  if (preload) nodeArgs.push('--import', preload)
+  nodeArgs.push(harness, ...args)
+  return new Promise((resolve) => {
+    const child = spawn(node, nodeArgs, {
+      cwd: repo,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += chunk })
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.on('close', (code) => resolve({ code, stdout, stderr }))
+  })
+}
+
+async function tempGolden(lines) {
+  const dir = await mkdtemp(join(tmpdir(), 'aion-eval-'))
+  const golden = join(dir, 'golden.jsonl')
+  const out = join(dir, 'out')
+  const body = Array.isArray(lines)
+    ? lines.map((line) => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n') + '\n'
+    : lines
+  await writeFile(golden, body)
+  return { dir, golden, out }
+}
+
+function resultadoPath(stdout) {
+  const line = stdout.split('\n').find((item) => item.startsWith('resultados '))
+  assert.ok(line, `sem caminho de resultado:\n${stdout}`)
+  return line.slice('resultados '.length).trim()
+}
+
+const limpa = {
+  id: 'limpa',
+  pergunta: 'O que o recorte diz sobre a família Rockefeller?',
+  expectativa: 'documentado',
+  entidades_esperadas: ['rockefeller'],
+  fontes_esperadas: ['S02'],
+  deve_conter: ['Rockefeller'],
+  nao_deve_conter: ['bolo de cenoura'],
+  contexto_fixture: fixture,
+  mock_resposta: {
+    blocos: [{
+      tipo: 'documentado',
+      texto: 'A família Rockefeller aparece como coinvestidora na Rockefeller Financial Services, segundo o comunicado.',
+      entidades: ['rockefeller', 'rfs'],
+      relacoes: ['E005'],
+      fontes: ['S02'],
+    }],
+    sem_base: false,
+  },
+}
+
+test('percentil linear e precisão/revocação', () => {
+  assert.equal(percentilLinear([], 0.5), null)
+  assert.equal(percentilLinear([7], 0.95), 7)
+  assert.equal(percentilLinear([1, 2, 3, 4], 0.5), 2.5)
+  assert.equal(percentilLinear([10, 20, 30, 40, 50], 0.95), 48)
+  const pr = precisaoRevocacao([
+    { esperado: true, detectado: true },
+    { esperado: true, detectado: false },
+    { esperado: false, detectado: true },
+    { esperado: false, detectado: false },
+  ])
+  assert.equal(pr.tp, 1)
+  assert.equal(pr.fp, 1)
+  assert.equal(pr.fn, 1)
+  assert.equal(pr.tn, 1)
+  assert.equal(pr.precisao, 0.5)
+  assert.equal(pr.revocacao, 0.5)
+  const vazio = precisaoRevocacao([{ esperado: false, detectado: false }])
+  assert.equal(vazio.precisao, null)
+  assert.equal(vazio.revocacao, null)
+})
+
+test('mock: citação inválida, bloco sem fonte e caso limpo', async () => {
+  const invalida = {
+    ...limpa,
+    id: 'invalida',
+    mock_resposta: {
+      blocos: [{
+        tipo: 'documentado',
+        texto: 'Citação inventada que aponta uma entidade que não existe na base.',
+        entidades: ['id_inexistente_xyz'],
+        relacoes: [],
+        fontes: ['S02'],
+      }],
+      sem_base: false,
+    },
+  }
+  const semFonte = {
+    ...limpa,
+    id: 'sem_fonte',
+    mock_resposta: {
+      blocos: [{
+        tipo: 'documentado',
+        texto: 'Fato sem fonte sobre a família Rockefeller no recorte.',
+        entidades: ['rockefeller'],
+        relacoes: ['E005'],
+        fontes: [],
+      }],
+      sem_base: false,
+    },
+  }
+  const dirs = []
+  try {
+    const [a, b, c] = await Promise.all([invalida, semFonte, limpa].map(async (item) => {
+      const tmp = await tempGolden(['// comentario', '', item])
+      dirs.push(tmp.dir)
+      const run = await runHarness(['--golden', tmp.golden, '--modo', 'mock', '--out', tmp.out])
+      return { run, tmp }
+    }))
+    assert.equal(a.run.code, 1, a.run.stderr)
+    assert.equal(b.run.code, 1, b.run.stderr)
+    assert.equal(c.run.code, 0, c.run.stderr + c.run.stdout)
+    const jsonA = JSON.parse(await readFile(resultadoPath(a.run.stdout), 'utf8'))
+    const jsonB = JSON.parse(await readFile(resultadoPath(b.run.stdout), 'utf8'))
+    const jsonC = JSON.parse(await readFile(resultadoPath(c.run.stdout), 'utf8'))
+    const idFantasma = jsonA.perguntas[0].repeticoes[0].citacoes.ids_invalidos.find((item) => item.id === 'id_inexistente_xyz')
+    assert.ok(idFantasma)
+    assert.equal(idFantasma.motivo, 'formato_quebrado')
+    assert.equal(jsonB.perguntas[0].repeticoes[0].grounding.quebrado, true)
+    assert.ok(jsonB.perguntas[0].repeticoes[0].grounding.motivos.includes('bloco_documentado_sem_fonte'))
+    assert.equal(jsonC.perguntas[0].repeticoes[0].citacoes.ids_invalidos.length, 0)
+    assert.equal(jsonC.perguntas[0].repeticoes[0].grounding.quebrado, false)
+    assert.equal(jsonC.rede.fetches_supabase, 0)
+  } finally {
+    await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })))
+  }
+})
+
+test('jsonl inválido sai 2', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'aion-eval-'))
+  try {
+    const ruim = join(dir, 'ruim.jsonl')
+    await writeFile(ruim, '// ok\n\n{nao json\n')
+    const run = await runHarness(['--golden', ruim, '--modo', 'mock', '--out', join(dir, 'out')])
+    assert.equal(run.code, 2)
+    assert.match(run.stderr, /golden inválido/)
+    const esquema = join(dir, 'esquema.jsonl')
+    await writeFile(esquema, JSON.stringify({ id: 'x', pergunta: 'y', expectativa: 'chute' }) + '\n')
+    const run2 = await runHarness(['--golden', esquema, '--modo', 'mock', '--out', join(dir, 'out2')])
+    assert.equal(run2.code, 2)
+    assert.match(run2.stderr, /expectativa/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('openrouter sem chave sai 3 e não abre rede', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'aion-eval-'))
+  const preload = join(dir, 'no-net.mjs')
+  await writeFile(preload, `
+import net from 'node:net'
+net.Socket.prototype.connect = function connectBloqueado() {
+  console.error('NETWORK_ATTEMPT')
+  process.exit(99)
+}
+`)
+  try {
+    const run = await runHarness(
+      ['--golden', join(dir, 'nao-precisa-existir.jsonl'), '--modo', 'openrouter', '--out', join(dir, 'out')],
+      childEnv(),
+      preload,
+    )
+    assert.equal(run.code, 3, run.stderr)
+    assert.match(run.stderr, /falta OPENROUTER_API_KEY no ambiente/)
+    assert.doesNotMatch(run.stderr, /NETWORK_ATTEMPT/)
+    assert.doesNotMatch(run.stdout, /NETWORK_ATTEMPT/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('arquivo de resultado não guarda segredo', async () => {
+  const item = {
+    ...limpa,
+    id: 'segredo',
+    mock_resposta: {
+      blocos: [{
+        tipo: 'documentado',
+        texto: 'Texto com sk-or-v1-abc123456789 e Bearer abc.def e eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.signature e postgres://user:pass@localhost/db.',
+        entidades: ['rockefeller'],
+        relacoes: ['E005'],
+        fontes: ['S02'],
+      }],
+      sem_base: false,
+    },
+  }
+  const tmp = await tempGolden([item])
+  try {
+    const run = await runHarness(['--golden', tmp.golden, '--modo', 'mock', '--out', tmp.out])
+    assert.equal(run.code, 0, run.stderr + run.stdout)
+    const jsonPath = resultadoPath(run.stdout)
+    const mdPath = run.stdout.split('\n').find((line) => line.startsWith('resumo ')).slice('resumo '.length).trim()
+    const jsonBody = await readFile(jsonPath, 'utf8')
+    const mdBody = await readFile(mdPath, 'utf8')
+    for (const body of [jsonBody, mdBody]) {
+      assert.equal(body.includes('sk-or-'), false)
+      assert.equal(body.includes('eyJ'), false)
+      assert.equal(body.includes('Bearer'), false)
+      assert.doesNotMatch(body, /postgres(?:ql)?:\/\/\S+@/)
+    }
+    assert.match(jsonBody, /\[chave-redigida\]/)
+    assert.match(jsonBody, /\[autorizacao-redigida\]/)
+    assert.match(jsonBody, /\[jwt-redigido\]/)
+    assert.match(jsonBody, /\[dsn-redigida\]/)
+  } finally {
+    await rm(tmp.dir, { recursive: true, force: true })
+  }
+})
+
+test('rubricas, sem_ligacao e voz', () => {
+  const frase = 'citar ids inexistentes na base, como walther_moreira_salles, walter_ms ou heitor'
+  const ids = extrairIdsRubrica(frase, new Set(['walther_ms']))
+  assert.ok(ids.includes('walther_moreira_salles'))
+  assert.ok(ids.includes('walter_ms'))
+  assert.ok(ids.includes('heitor'))
+  assert.ok(!ids.includes('base'))
+  const citado = avaliarRubricas({
+    texto: 'A resposta cita o id proibido.',
+    citados: new Set(['walther_moreira_salles']),
+    deve: [],
+    naoDeve: [frase],
+    conhecidos: new Set(['walther_ms']),
+  })
+  assert.equal(citado.passa, false)
+  assert.ok(citado.sobrou.includes('walther_moreira_salles'))
+  assert.equal(citado.rubrica_manual[0].status, 'nao_avaliado_automaticamente')
+  const limpo = avaliarRubricas({
+    texto: 'A família Rockefeller aparece como coinvestidora no comunicado.',
+    citados: new Set(['rockefeller', 'E005', 'S02']),
+    deve: ['Rockefeller'],
+    naoDeve: ['bolo de cenoura', 'walther_ms'],
+    conhecidos: new Set(['rockefeller', 'walther_ms', 'E005', 'S02']),
+  })
+  assert.equal(limpo.passa, true)
+  assert.equal(limpo.rubrica_manual.length, 0)
+  const longo = avaliarRubricas({
+    texto: 'O IPES atuou na derrubada.',
+    citados: new Set(['ipes']),
+    deve: ['IPES: atuação propagandística relacionada à derrubada de Goulart (E219, Arquivo Nacional)'],
+    naoDeve: ['receita'],
+    conhecidos: new Set(['E219', 'ipes']),
+  })
+  assert.equal(longo.passa, false)
+  assert.ok(longo.faltou.includes('E219'))
+  assert.equal(longo.rubrica_manual.length, 1)
+  assert.ok(!longo.faltou.includes('alta'))
+  const arestas = [
+    { id: 'R1', origem: 'a', destino: 'x' },
+    { id: 'R2', origem: 'x', destino: 'b' },
+    { id: 'RAB', origem: 'a', destino: 'b' },
+  ]
+  const passa = avaliarSemLigacao({
+    expectativa: 'sem_ligacao',
+    texto: 'O atlas não documenta ligação direta entre A e B.',
+    bruto: { sem_base: true, blocos: [] },
+    finalData: {
+      blocos: [
+        { tipo: 'documentado', texto: 'A consta com X.', entidades: ['a', 'x'], relacoes: ['R1'], fontes: ['F'] },
+        { tipo: 'documentado', texto: 'O atlas não documenta ligação direta entre A e B.', entidades: [], relacoes: [], fontes: [] },
+      ],
+      avisos: [{ tipo: 'outro', texto: 'Resposta montada direto da base: a ligação pedida não está documentada.' }],
+    },
+    arestas,
+    entidadesEsperadas: ['a', 'b'],
+  })
+  assert.equal(passa.ok, true)
+  const via = avaliarSemLigacao({
+    expectativa: 'sem_ligacao',
+    texto: 'O atlas não documenta ligação direta entre A e B.',
+    bruto: { sem_base: false, blocos: [
+      { tipo: 'documentado', texto: 'A liga X.', relacoes: ['R1'], fontes: ['F'] },
+      { tipo: 'inferencia', texto: 'X chega em B.', base: ['R2'], justificativa: 'caminho' },
+    ] },
+    arestas,
+    entidadesEsperadas: ['a', 'b'],
+  })
+  assert.equal(via.ok, false)
+  assert.equal(via.afirma_relacao, true)
+  const direta = avaliarSemLigacao({
+    expectativa: 'sem_ligacao',
+    texto: 'Há ligação direta entre A e B.',
+    bruto: { sem_base: false, blocos: [{ tipo: 'documentado', texto: 'Há ligação direta entre A e B.', relacoes: ['RAB'], fontes: ['F'] }] },
+    arestas,
+    entidadesEsperadas: ['a', 'b'],
+  })
+  assert.equal(direta.ok, false)
+  assert.equal(direta.afirma_texto, true)
+  assert.equal(vozExigida({ categoria: 'voz_aion', pergunta: 'oi', explicita: false }), true)
+  assert.equal(vozExigida({ categoria: '', pergunta: 'Separe o que é fato do que é interpretação.', explicita: false }), true)
+  assert.equal(vozExigida({ categoria: '', pergunta: 'Quero fato, inferência e o que falta saber.', explicita: false }), true)
+  assert.equal(vozExigida({ categoria: 'documentado_tipico', pergunta: 'O que foi a CPI do IBAD?', explicita: false }), false)
+})
+
+test('seed oficial aceita entidades em objeto', async () => {
+  const raw = await readFile(new URL('./golden/seed_v0.1.jsonl', import.meta.url), 'utf8')
+  const items = parseGolden(raw, 'seed_v0.1.jsonl')
+  assert.equal(items.length, 20)
+  const primeira = items.find((item) => item.id === 'GS-001')
+  assert.equal(primeira.entidades_esperadas[0].id, 'golpe64')
+  assert.equal(primeira.entidades_esperadas[0].id_pendente, null)
+  assert.ok(primeira.conexoes_esperadas.includes('E219'))
+  assert.equal(items.filter((item) => item.expectativa === 'sem_ligacao').length, 2)
+  assert.equal(items.filter((item) => item.expectativa === 'fora_da_base').length, 3)
+  const [solto] = parseGolden(`${JSON.stringify({
+    id: 'obj',
+    pergunta: 'p',
+    expectativa: 'sem_ligacao',
+    entidades_esperadas: [{ id: 'aa_eval', id_pendente: true }, 'bb_eval'],
+    conexoes_esperadas: ['R_AA'],
+  })}\n`, 't.jsonl')
+  assert.equal(solto.entidades_esperadas[0].id_pendente, true)
+  assert.deepEqual(idsDeEntidades(solto.entidades_esperadas), ['aa_eval', 'bb_eval'])
+})
+
+test('sem_ligacao, objetos, conexões e rubrica no harness', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'aion-eval-'))
+  const fixtureSl = join(dir, 'ctx.json')
+  await writeFile(fixtureSl, JSON.stringify({
+    raizes: [
+      { id: 'aa_eval', nome: 'Aa', tipo: 'organizacao' },
+      { id: 'bb_eval', nome: 'Bb', tipo: 'organizacao' },
+    ],
+    entidades: [
+      { id: 'aa_eval', nome: 'Aa', tipo: 'organizacao' },
+      { id: 'bb_eval', nome: 'Bb', tipo: 'organizacao' },
+      { id: 'xx_eval', nome: 'Xx', tipo: 'organizacao' },
+      { id: 'yy_eval', nome: 'Yy', tipo: 'organizacao' },
+    ],
+    relacoes: [
+      { id: 'R_AA', origem: 'aa_eval', destino: 'xx_eval', afirmacao: 'Aa consta com Xx no recorte de teste.', fontes: ['F_EVAL'], estado: 'historico' },
+      { id: 'R_BB', origem: 'bb_eval', destino: 'yy_eval', afirmacao: 'Bb consta com Yy no recorte de teste.', fontes: ['F_EVAL'], estado: 'historico' },
+      { id: 'R_AB', origem: 'aa_eval', destino: 'bb_eval', afirmacao: 'Aa consta com Bb no recorte de teste.', fontes: ['F_EVAL'], estado: 'historico' },
+    ],
+    fontes: [{ id: 'F_EVAL', titulo: 'Fonte de teste' }],
+    casos: [],
+    ligacoes_entre_raizes: [],
+  }))
+  const tmp = await tempGolden([
+    {
+      id: 'sl_passa',
+      pergunta: 'A base liga Aa e Bb neste recorte de teste?',
+      expectativa: 'sem_ligacao',
+      categoria: 'sem_ligacao',
+      entidades_esperadas: [{ id: 'aa_eval' }, { id: 'bb_eval', id_pendente: false }],
+      conexoes_esperadas: ['R_AA', 'R_BB'],
+      fontes_esperadas: ['F_EVAL'],
+      deve_conter: ['não documenta ligação'],
+      nao_deve_conter: ['walther_moreira_salles'],
+      contexto_fixture: fixtureSl,
+    },
+    {
+      id: 'sl_falha',
+      pergunta: 'Existe ligação direta de Aa com Bb no teste?',
+      expectativa: 'sem_ligacao',
+      entidades_esperadas: [{ id: 'aa_eval' }, { id: 'bb_eval' }],
+      conexoes_esperadas: ['R_AB'],
+      contexto_fixture: fixtureSl,
+      mock_resposta: {
+        blocos: [{
+          tipo: 'documentado',
+          texto: 'Há ligação direta entre Aa e Bb.',
+          entidades: ['aa_eval', 'bb_eval'],
+          relacoes: ['R_AB'],
+          fontes: ['F_EVAL'],
+        }],
+        sem_base: false,
+      },
+    },
+    {
+      id: 'rubrica_id',
+      pergunta: 'O que o recorte de teste diz sobre Aa?',
+      expectativa: 'documentado',
+      entidades_esperadas: ['aa_eval'],
+      conexoes_esperadas: ['R_AA'],
+      fontes_esperadas: ['F_EVAL'],
+      nao_deve_conter: ['aa_eval'],
+      contexto_fixture: fixtureSl,
+      mock_resposta: {
+        blocos: [{
+          tipo: 'documentado',
+          texto: 'Aa consta com Xx no recorte de teste.',
+          entidades: ['aa_eval', 'xx_eval'],
+          relacoes: ['R_AA'],
+          fontes: ['F_EVAL'],
+        }],
+        sem_base: false,
+      },
+    },
+  ])
+  try {
+    const run = await runHarness([
+      '--golden', tmp.golden,
+      '--modo', 'mock',
+      '--mock-perfil', 'limpo',
+      '--juiz', 'off',
+      '--out', tmp.out,
+    ])
+    assert.equal(run.code, 0, run.stderr + run.stdout)
+    const json = JSON.parse(await readFile(resultadoPath(run.stdout), 'utf8'))
+    assert.equal(json.juiz.ativo, false)
+    assert.equal(json.juiz.status, 'desativado')
+    assert.equal(json.fora_da_base?.tp, undefined)
+    assert.equal(json.agregado.fora_da_base.fp, 0)
+    const porId = Object.fromEntries(json.perguntas.map((item) => [item.id, item]))
+    const passa = porId.sl_passa.repeticoes[0]
+    assert.equal(passa.sem_ligacao.ok, true)
+    assert.equal(passa.recall_entidades.recall, 1)
+    assert.equal(passa.recall_conexoes.recall, 1)
+    assert.equal(passa.conter.passa, true)
+    assert.equal(porId.sl_falha.repeticoes[0].sem_ligacao.ok, false)
+    assert.equal(porId.sl_falha.repeticoes[0].recall_conexoes.recall, 1)
+    const rubrica = porId.rubrica_id.repeticoes[0]
+    assert.equal(rubrica.conter.passa, false)
+    assert.ok(rubrica.conter.sobrou.includes('aa_eval'))
+    assert.equal(json.agregado.sem_ligacao.ok, 1)
+    assert.equal(json.agregado.sem_ligacao.n, 2)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+    await rm(tmp.dir, { recursive: true, force: true })
+  }
+})
+
+test('--ids-base marca id fora da referência como inválido', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'aion-eval-'))
+  const idsPath = join(dir, 'ids.json')
+  await writeFile(idsPath, JSON.stringify({
+    entidades: ['rockefeller'],
+    relacoes: ['E005'],
+    fontes: ['S02'],
+    casos: ['caso_so_na_ref'],
+    _meta: { origem: 'teste' },
+  }))
+  const tmp = await tempGolden([{
+    ...limpa,
+    id: 'fora_da_ref',
+    entidades_esperadas: [{ id: 'rockefeller' }, { id: 'id_esperado_ausente', id_pendente: true }],
+  }])
+  try {
+    const run = await runHarness([
+      '--golden', tmp.golden,
+      '--modo', 'mock',
+      '--ids-base', idsPath,
+      '--out', tmp.out,
+    ])
+    assert.equal(run.code, 1, run.stderr + run.stdout)
+    const json = JSON.parse(await readFile(resultadoPath(run.stdout), 'utf8'))
+    assert.equal(json.base_citacao, 'ids_base')
+    assert.equal(json.referencia_ids.contagens.entidades, 1)
+    assert.equal(json.referencia_ids._meta.origem, 'teste')
+    const invalidos = json.perguntas[0].repeticoes[0].citacoes.ids_invalidos
+    assert.ok(invalidos.some((item) => item.id === 'rfs'), JSON.stringify(invalidos))
+    assert.equal(json.divergencia_ids.origem, 'recorte')
+    assert.ok(json.divergencia_ids.tipos.casos.so_na_referencia.ids.includes('caso_so_na_ref'))
+    assert.ok(json.avisos_golden.some((item) => item.tipo === 'id_esperado_inexistente' && item.id === 'id_esperado_ausente'))
+    assert.equal(json.codigo_saida, 1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+    await rm(tmp.dir, { recursive: true, force: true })
+  }
+})
+
+test('id inválido separa formato_quebrado, campo_errado e inexistente', () => {
+  const base = {
+    entidades: new Set(['walther_ms', 'heitor_lyra']),
+    relacoes: new Set(['E219', 'PR3-E056', 'E005']),
+    fontes: new Set(['B10', 'S02']),
+    casos: new Set(['OP35']),
+  }
+  const invalidos = citacoesInvalidas({
+    entidades: ['Heitor Lyra · diplomata', 'id_E001', 'id', 'E219', 'walther_moreira_salles', 'walther_ms'],
+    relacoes: ['B10', 'E005'],
+    fontes: ['S02'],
+    bases: ['PR3-E056', 'B10'],
+  }, base)
+  const motivo = (campo, id) => invalidos.find((item) => item.campo === campo && item.id === id)?.motivo
+  assert.equal(motivo('entidade', 'Heitor Lyra · diplomata'), 'formato_quebrado')
+  assert.equal(motivo('entidade', 'id_E001'), 'formato_quebrado')
+  assert.equal(motivo('entidade', 'id'), 'formato_quebrado')
+  assert.equal(motivo('entidade', 'E219'), 'campo_errado')
+  assert.equal(motivo('relacao', 'B10'), 'campo_errado')
+  assert.equal(motivo('base', 'B10'), 'campo_errado')
+  assert.equal(motivo('entidade', 'walther_moreira_salles'), 'inexistente')
+  assert.equal(motivo('entidade', 'walther_ms'), undefined)
+  assert.equal(motivo('relacao', 'E005'), undefined)
+  assert.equal(motivo('fonte', 'S02'), undefined)
+  assert.equal(motivo('base', 'PR3-E056'), undefined)
+  assert.equal(invalidos.length, 7)
+})
+
+test('light e ms na prosa da rubrica não viram id', () => {
+  const conhecidos = new Set(['light', 'ms', 'atlas', 'E219', 'PR3-E056', 'walther_ms', 'base', 'fonte'])
+  const prosa = extrairIdsRubrica(
+    'A prosa cita light e ms ao falar do atlas, sem lista.',
+    conhecidos,
+  )
+  assert.ok(!prosa.includes('light'))
+  assert.ok(!prosa.includes('ms'))
+  assert.ok(!prosa.includes('atlas'))
+  assert.ok(!prosa.includes('base'))
+  const estrutural = extrairIdsRubrica('O IPES atuou (E219) e a relação PR3-E056 continua.', conhecidos)
+  assert.ok(estrutural.includes('E219'))
+  assert.ok(estrutural.includes('PR3-E056'))
+  assert.deepEqual(extrairIdsRubrica('light', conhecidos), ['light'])
+  assert.deepEqual(extrairIdsRubrica('ms', conhecidos), ['ms'])
+  const lista = extrairIdsRubrica('walther_ms, light ou ms', conhecidos)
+  assert.ok(lista.includes('walther_ms'))
+  assert.ok(lista.includes('light'))
+  assert.ok(lista.includes('ms'))
+  const ignorar = extrairIdsRubrica('citar a base e a fonte no meio da frase', conhecidos)
+  assert.ok(!ignorar.includes('base'))
+  assert.ok(!ignorar.includes('fonte'))
+})
+
+test('fora_da_base segue avaliável e json inválido não', () => {
+  assert.deepEqual(
+    classificarAvaliacao({ httpStatus: 200, erroCode: 'fora_da_base', textosModelo: [], bruto: null }),
+    { avaliavel: true, codigo: null },
+  )
+  assert.deepEqual(
+    classificarAvaliacao({ httpStatus: 503, erroCode: 'chave_recusada', textosModelo: [], bruto: null }),
+    { avaliavel: false, codigo: 'chave_recusada' },
+  )
+  assert.deepEqual(
+    classificarAvaliacao({ httpStatus: 200, erroCode: null, textosModelo: ['{nao-json'], bruto: null }),
+    { avaliavel: false, codigo: 'json_invalido' },
+  )
+  assert.deepEqual(
+    classificarAvaliacao({ httpStatus: 200, erroCode: null, textosModelo: ['{"sem_base":true}'], bruto: { sem_base: true } }),
+    { avaliavel: true, codigo: null },
+  )
+  assert.equal(
+    classificarAvaliacao({ httpStatus: 401, erroCode: 'sem_login', textosModelo: [], bruto: null }).codigo,
+    'sem_login',
+  )
+  assert.equal(
+    classificarAvaliacao({ httpStatus: 429, erroCode: 'rate_limit', textosModelo: [], bruto: null }).avaliavel,
+    false,
+  )
+})
+
+test('chave recusada em toda corrida sai 3', async () => {
+  const doc = { ...limpa, id: 'doc_503' }
+  delete doc.mock_resposta
+  const fora = {
+    ...doc,
+    id: 'fora_503',
+    expectativa: 'fora_da_base',
+    deve_conter: [],
+    nao_deve_conter: [],
+  }
+  const semLigacao = {
+    ...doc,
+    id: 'sl_503',
+    expectativa: 'sem_ligacao',
+    entidades_esperadas: ['rockefeller', 'rfs'],
+    deve_conter: [],
+    nao_deve_conter: [],
+  }
+  const tmp = await tempGolden([doc, fora, semLigacao])
+  try {
+    const run = await runHarness(
+      ['--golden', tmp.golden, '--modo', 'mock', '--out', tmp.out],
+      childEnv({ AION_EVAL_MOCK_RECUSAR_CHAVE: '1' }),
+    )
+    assert.equal(run.code, 3, run.stderr + run.stdout)
+    assert.doesNotMatch(run.stderr, /sk-or-|eyJ|Bearer [A-Za-z0-9]/)
+    const json = JSON.parse(await readFile(resultadoPath(run.stdout), 'utf8'))
+    const md = await readFile(
+      run.stdout.split('\n').find((line) => line.startsWith('resumo ')).slice('resumo '.length).trim(),
+      'utf8',
+    )
+    assert.equal(json.codigo_saida, 3)
+    assert.equal(json.agregado.avaliaveis, 0)
+    assert.equal(json.agregado.nao_avaliaveis, 3)
+    assert.equal(json.agregado.grounding_documentado, null)
+    assert.equal(json.agregado.recall_entidades_medio, null)
+    assert.equal(json.agregado.pt_br_medio, null)
+    assert.equal(json.agregado.custo.usd_medio, null)
+    assert.equal(json.agregado.custo.tokens_in, 0)
+    assert.equal(json.agregado.fora_da_base.tp + json.agregado.fora_da_base.fp + json.agregado.fora_da_base.fn + json.agregado.fora_da_base.tn, 0)
+    assert.equal(json.agregado.sem_ligacao.n, 0)
+    assert.deepEqual(
+      json.motivos_saida,
+      [
+        'doc_503: avaliacao_nao_ocorreu (chave_recusada)',
+        'fora_503: avaliacao_nao_ocorreu (chave_recusada)',
+        'sl_503: avaliacao_nao_ocorreu (chave_recusada)',
+      ],
+    )
+    for (const item of json.perguntas) {
+      const corrida = item.repeticoes[0]
+      assert.equal(corrida.http_status, 503)
+      assert.equal(corrida.erro.code, 'chave_recusada')
+      assert.equal(corrida.avaliavel, false)
+      assert.equal(corrida.recall_entidades.recall, null)
+      assert.equal(corrida.recall_fontes.recall, null)
+      assert.equal(corrida.recall_conexoes.recall, null)
+      assert.equal(corrida.pt_br, null)
+      assert.equal(corrida.voz, null)
+      assert.equal(corrida.custo, null)
+    }
+    assert.match(md, /nao_avaliado/)
+    assert.match(md, /avaliacao_nao_ocorreu \(chave_recusada\)/)
+    assert.equal(json.rede.fetches_supabase, 0)
+    assert.deepEqual(json.rede.hosts, ['127.0.0.1'])
+  } finally {
+    await rm(tmp.dir, { recursive: true, force: true })
+  }
+})
+
+test('harness grava as três classes de id inválido', async () => {
+  const tmp = await tempGolden([{
+    ...limpa,
+    id: 'classes',
+    mock_resposta: {
+      blocos: [{
+        tipo: 'documentado',
+        texto: 'A família Rockefeller aparece no recorte, com uma fonte.',
+        entidades: ['Heitor Lyra · diplomata', 'id_E001', 'id', 'E005', 'walther_moreira_salles', 'rockefeller'],
+        relacoes: ['S02'],
+        fontes: ['S02'],
+      }],
+      entidades: ['Heitor Lyra · diplomata', 'id_E001', 'id', 'E005', 'walther_moreira_salles', 'rockefeller'],
+      relacoes: ['S02'],
+      fontes: ['S02'],
+      sem_base: false,
+    },
+  }])
+  try {
+    const run = await runHarness(['--golden', tmp.golden, '--modo', 'mock', '--out', tmp.out])
+    assert.equal(run.code, 1, run.stderr + run.stdout)
+    const json = JSON.parse(await readFile(resultadoPath(run.stdout), 'utf8'))
+    const invalidos = json.perguntas[0].repeticoes[0].citacoes.ids_invalidos
+    const motivo = (id) => invalidos.find((item) => item.id === id)?.motivo
+    assert.equal(motivo('Heitor Lyra · diplomata'), 'formato_quebrado')
+    assert.equal(motivo('id_E001'), 'formato_quebrado')
+    assert.equal(motivo('id'), 'formato_quebrado')
+    assert.equal(motivo('E005'), 'campo_errado')
+    assert.equal(motivo('S02'), 'campo_errado')
+    assert.equal(motivo('walther_moreira_salles'), 'inexistente')
+    assert.equal(motivo('rockefeller'), undefined)
+    assert.equal(json.agregado.citacoes_invalidas_por_motivo.formato_quebrado, 3)
+    assert.equal(json.agregado.citacoes_invalidas_por_motivo.campo_errado, 2)
+    assert.equal(json.agregado.citacoes_invalidas_por_motivo.inexistente, 1)
+    assert.equal(json.codigo_saida, 1)
+    const md = await readFile(
+      run.stdout.split('\n').find((line) => line.startsWith('resumo ')).slice('resumo '.length).trim(),
+      'utf8',
+    )
+    assert.match(md, /formato_quebrado 3/)
+    assert.match(md, /campo_errado 2/)
+    assert.match(md, /inexistente 1/)
+  } finally {
+    await rm(tmp.dir, { recursive: true, force: true })
+  }
+})
+
+test('integração com sync SQL quando ATLAS_SYNC_SQL existe', { timeout: 180_000 }, async () => {
+  const sync = process.env.ATLAS_SYNC_SQL_TEST
+  if (!sync) {
+    console.log('SKIP integração: ATLAS_SYNC_SQL_TEST ausente')
+    return
+  }
+  const tmp = await tempGolden([{
+    id: 'walther',
+    pergunta: 'Quem foi Walther Moreira Salles?',
+    expectativa: 'documentado',
+    entidades_esperadas: ['walther_ms'],
+    notas: 'Integração: o recorte sai de public.chat_context no PGlite.',
+  }])
+  try {
+    const run = await runHarness(
+      ['--golden', tmp.golden, '--modo', 'mock', '--sync-sql', sync, '--out', tmp.out],
+      childEnv(),
+    )
+    assert.equal(run.code, 0, run.stderr + run.stdout)
+    const json = JSON.parse(await readFile(resultadoPath(run.stdout), 'utf8'))
+    assert.equal(json.base_citacao, 'sync')
+    assert.equal(json.rede.fetches_supabase, 0)
+    const raizes = json.perguntas[0].repeticoes[0].recorte.raizes
+    assert.ok(raizes.includes('walther_ms'), `raízes: ${raizes.join(',')}`)
+    assert.equal(json.perguntas[0].repeticoes[0].citacoes.ids_invalidos.length, 0)
+    assert.equal(json.perguntas[0].repeticoes[0].grounding.quebrado, false)
+  } finally {
+    await rm(tmp.dir, { recursive: true, force: true })
+  }
+})
