@@ -13,16 +13,17 @@ Nada aqui tem chave, senha ou URL de banco: tudo isso fica nos secrets da funç�
   (direto ou por um intermediário) e devolve `ligacoes_entre_raizes`.
   O número 006 foi a sincronização de dados do atlas, gerada por script; não é migration de esquema.
   Em 007, a linha do usuário liberado foi omitida de propósito.
-- `scripts/gerar_sync_atlas.py`: gera o SQL de sincronização (006) a partir de `dados/base-investigativa.json`
-  e dos dados do site. O SQL gerado (cerca de 3,7 MB) não fica no repositório, e o JSON de base também não.
+- `scripts/gerar_sync_atlas.py`: gera o SQL de sincronização (006) a partir de `pesquisa/dados/base-investigativa.json`
+  (árvore única; os caminhos partem da raiz, de qualquer diretório). Saída padrão:
+  `pesquisa/database/sync/006_sync_atlas_dataset.sql`, ignorada pelo git (cerca de 4 MB).
 
 ## Testes
 
 - Função: `deno test --allow-env --allow-read --allow-net=127.0.0.1 supabase/functions/` (ou, sem Deno,
   `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`).
 - SQL, num Postgres em memória (PGlite, offline): `npm i @electric-sql/pglite` e
-  `ATLAS_SYNC_SQL=/caminho/006_sync_atlas_dataset.sql node supabase/tests/run_pglite.mjs`.
-  O SQL de sincronização vem de `scripts/gerar_sync_atlas.py` e não fica no repositório.
+  `node supabase/tests/run_pglite.mjs` (lê a saída padrão do gerador; `ATLAS_SYNC_SQL=/caminho/006.sql` sobrepõe).
+  `python3 supabase/tests/test_layout_arvore_unica.py` gera o SQL de um cwd qualquer e roda o PGlite sem `ATLAS_SYNC_SQL`.
 
 Na v8, quando a pergunta cita dois temas sem ligação documentada e o modelo diz que não há base,
 a função responde com o que a base tem sobre cada tema e avisa que a ligação direta não está documentada.

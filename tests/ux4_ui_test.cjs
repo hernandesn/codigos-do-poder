@@ -14,7 +14,8 @@ const muralKey = 'codigos-do-poder:mural:v25';
 const draftKey = 'codigos-do-poder:chat-draft:v1';
 const draftTtl = 30 * 60 * 1000;
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const seed = JSON.parse(html.match(/<script id="research-data"[^>]*>([\s\S]*?)<\/script>/)[1]);
+const { dataRef, seedText } = require('./dados_site.cjs');
+const seed = JSON.parse(seedText(html, root));
 const question = 'Quais fontes documentam os bancos de Mauá?';
 // Fixtures sintéticas, sem credenciais reais. Nenhuma chamada sai para o Supabase.
 const fixtureConfig = { supabaseUrl: 'https://ux4-fixture.supabase.co', supabaseAnonKey: 'public-test-placeholder' };
@@ -318,7 +319,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
         const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
         if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
         const data = await fs.promises.readFile(file);
-        res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'application/octet-stream' });
+        res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : 'application/octet-stream' });
         res.end(data);
       } catch { res.writeHead(404); res.end(); }
     });
@@ -847,6 +848,27 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
   test('favicon inline evita 404 e nota técnica aparece só com debug=1', async () => {
     const { page, traffic } = await openPage();
     const generic = seed.nos.find(n => n.tipo === 'universidade').id;
+    // O modular já reconhece universidade (mapa de tipos preservado no BUILD2).
+    // Testa também esse suporte; o fallback usa um tipo realmente desconhecido.
+    await ready(page, '/?debug=1#e=' + generic);
+    await centered(page, generic);
+    assert.match(await page.locator('#inspector-content .entity-type').textContent(), /Universidade/);
+    assert.doesNotMatch(await page.locator('#inspector-content').innerText(), /Tipo sem estilo próprio/);
+    const fallbackSeed = structuredClone(seed);
+    fallbackSeed.nos.find(n => n.id === generic).tipo = 'tipo_desconhecido_fixture';
+    // BUILD4: a base vem de dados.json; o fallback troca o arquivo (e o sha256 esperado no index).
+    const fallbackBody = JSON.stringify(fallbackSeed);
+    const fallbackSha = require('node:crypto').createHash('sha256').update(fallbackBody).digest('hex');
+    const ref = dataRef(html);
+    const fallbackHtml = ref.src ? html.replace(ref.attrs, ref.attrs.replace(/data-sha256="[0-9a-f]+"/, `data-sha256="${fallbackSha}"`))
+      : html.replace(/(<script id="research-data"[^>]*>)[\s\S]*?(<\/script>)/,
+        (_match, start, end) => start + fallbackBody.replace(/<\//g, '<\\/') + end);
+    const dataPath = ref.src ? '/' + ref.src.split('?')[0] : null;
+    await page.route('**/*', route => route.request().resourceType() === 'document'
+      ? route.fulfill({ contentType: 'text/html; charset=utf-8', body: fallbackHtml })
+      : dataPath && new URL(route.request().url()).pathname === dataPath
+        ? route.fulfill({ contentType: 'application/json; charset=utf-8', body: fallbackBody })
+        : route.fallback());
     await ready(page, '/#e=' + generic);
     await centered(page, generic);
     assert.equal(await page.locator('link[rel="icon"]').getAttribute('href'), 'data:,');

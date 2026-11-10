@@ -7,7 +7,8 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const muralScript = html.match(/<script>\s*(\(\(\) => \{[\s\S]*?)<\/script>/)[1];
+const { seedText } = require('./dados_site.cjs');
+const muralScript = html.match(/<script>\s*((?:\(\(\) => \{|\(function mural\(\) \{)[\s\S]*?)<\/script>/)[1];
 const muralKey = 'codigos-do-poder:mural:v25';
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -37,7 +38,12 @@ function mountMural({ hash = '#e=maua', saved = { schema: 25, view: 'all', filte
         else if (key.startsWith('data-')) this.dataset[camel(key.slice(5))] = value;
       },
       getAttribute: key => attributes.get(key) ?? null,
-      append(...children) { for (const child of children) { child.remove(); child.parentElement = this; this.children.push(child); } },
+      // FIX8 modular agrupa paths em DocumentFragment; reproduz seu esvaziamento real.
+      get childNodes() { return this.children; },
+      append(...children) { for (const child of children) {
+        if (child.tagName === '#document-fragment') { this.append(...child.children.slice()); continue; }
+        child.remove(); child.parentElement = this; this.children.push(child);
+      } },
       appendChild(child) { this.append(child); return child; },
       prepend(...children) { this.append(...children); this.children.unshift(...this.children.splice(-children.length)); },
       replaceChildren(...children) { this.children.forEach(child => { child.parentElement = null; }); this.children = []; this.append(...children); },
@@ -59,9 +65,10 @@ function mountMural({ hash = '#e=maua', saved = { schema: 25, view: 'all', filte
     return el;
   }
   function get(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); }
-  for (const id of ['research-data', 'research-views']) get(id).textContent = html.match(new RegExp('<script id="' + id + '"[^>]*>([\\s\\S]*?)</script>'))[1];
+  get('research-data').textContent = seedText(html, path.join(__dirname, '..'));
+  get('research-views').textContent = html.match(/<script id="research-views"[^>]*>([\s\S]*?)<\/script>/)[1];
   const document = {
-    getElementById: get, createElement: element, createElementNS: (_namespace, tag) => element(tag), body: element('body'),
+    getElementById: get, createElement: element, createDocumentFragment: () => element('#document-fragment'), createElementNS: (_namespace, tag) => element(tag), body: element('body'),
     querySelector: selector => get(selector), addEventListener() {}, getElementsByTagName: () => [],
   };
   const host = {

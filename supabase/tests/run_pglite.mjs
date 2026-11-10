@@ -18,7 +18,10 @@ registerHooks({
 })
 const { boundContextJson } = await import(coreUrl)
 const db = new PGlite()
+// site/ (migrations e testes SQL) e a raiz da árvore única (SQL gerado em pesquisa/).
 const root = new URL('../../', import.meta.url)
+const repoRoot = new URL('../../../', import.meta.url)
+const DEFAULT_SYNC_SQL = new URL('pesquisa/database/sync/006_sync_atlas_dataset.sql', repoRoot)
 try {
   for (const role of ['atlas_reader', 'chat_writer', 'chat_fn', 'service_role', 'anon', 'authenticated']) {
     await db.exec(`CREATE ROLE ${role} NOLOGIN`)
@@ -33,7 +36,7 @@ try {
     await db.exec(sql)
     console.log(`APPLY ${file}`)
   }
-  await db.exec(await readFile(process.env.ATLAS_SYNC_SQL ?? new URL('dados/006_sync_atlas_dataset.sql', root), 'utf8'))
+  await db.exec(await readFile(process.env.ATLAS_SYNC_SQL ?? DEFAULT_SYNC_SQL, 'utf8'))
   console.log('APPLY 006_sync_atlas_dataset.sql')
   console.log('SKIP 007_chat_unlimited_users.sql: requires Supabase auth.users; unrelated to chat_context')
   await db.exec(`
