@@ -144,10 +144,13 @@ test('união só usa chaves da base enxuta da BUILD3 (nós, conexões, fontes, c
   const baseFile = path.join(root, '..', 'pesquisa', 'dados', 'base-investigativa.json');
   assert.ok(fs.existsSync(baseFile), 'base da pesquisa ausente: ' + baseFile);
   const base = JSON.parse(fs.readFileSync(baseFile, 'utf8'));
+  // HOTFIX-TEXT1 (c), PUB-PROPOSTA-INTERNA: fonte do tipo proposta_interna fica na base, fora do público.
+  const publicos = k => (k === 'fontes' ? base[k].filter(f => f.tipo !== 'proposta_interna') : base[k]);
   for (const k of ['nos', 'conexoes', 'fontes', 'casos']) {
     assert.ok(Array.isArray(base[k]) && base[k].length > 0, 'base sem ' + k);
-    assert.equal(data[k].length, base[k].length, 'contagem de ' + k + ' difere da base');
+    assert.equal(data[k].length, publicos(k).length, 'contagem de ' + k + ' difere da base');
   }
+  assert.ok(!data.fontes.some(f => f.tipo === 'proposta_interna'), 'fonte proposta_interna no público');
 });
 
 test('união não expõe campos privados nem caminhos locais fora de URL', () => {
