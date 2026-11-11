@@ -226,7 +226,8 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
     });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(origin + '/');
+    // UX6: a visita nova abre nos temas; o carregamento do mapa inteiro é medido no #all.
+    await page.goto(origin + '/#all');
     return { page, context, errors, nucleoAttempts, extAttempts };
   }
   const mapReady = page => page.waitForFunction(() => !!window.mural && document.querySelectorAll('#node-layer .network-node').length > 0, null, { timeout: 30000 });
