@@ -9,13 +9,13 @@ const { test } = require('node:test');
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const { seedText } = require('./dados_site.cjs');
 const muralScript = html.match(/<script>\s*((?:\(\(\) => \{|\(function mural\(\) \{)[\s\S]*?)<\/script>/)[1];
-const muralKey = 'codigos-do-poder:mural:v25';
+const muralKey = 'codigos-do-poder:mural:v26';
 const plain = value => JSON.parse(JSON.stringify(value));
 
 // Monta o script inteiro do mural, incluindo boot, handlers, desenho e persistência.
 // Só o DOM, relógio e Storage são adaptadores offline; nenhuma função do app é stub.
 // As sondas de leitura/fixture são inseridas apenas na cópia executada pelo teste.
-function mountMural({ hash = '#e=maua', saved = { schema: 25, view: 'all', filters: { historic: false } } } = {}) {
+function mountMural({ hash = '#e=maua', saved = { schema: 26, view: 'all', filters: { historic: false } } } = {}) {
   const elements = new Map(), frames = new Map(), listeners = new Map();
   const stored = new Map([[muralKey, JSON.stringify(saved)]]), writes = [];
   const current = new URL('http://127.0.0.1/' + hash);
@@ -228,5 +228,6 @@ test('reset de work inválido também descarta o ajuste temporário', () => {
   assert.equal(snapshot.temporaryFilters, null);
   assert.deepEqual(snapshot.effectiveFilters, snapshot.work.filters);
   assert.equal(ui.state().selected, null);
-  assert.equal(ui.state().view, 'all');
+  // UX6: o estado novo abre na tela de temas (schema 26).
+  assert.equal(ui.state().view, 'temas');
 });

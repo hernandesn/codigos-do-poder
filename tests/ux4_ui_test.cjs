@@ -10,7 +10,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 
 const root = path.resolve(__dirname, '..');
 const screens = path.resolve(root, '../ux4-ui-out/screens');
-const muralKey = 'codigos-do-poder:mural:v25';
+const muralKey = 'codigos-do-poder:mural:v26';
 const draftKey = 'codigos-do-poder:chat-draft:v1';
 const draftTtl = 30 * 60 * 1000;
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
@@ -110,7 +110,7 @@ test('entidade oculta é revelada com ligação e filtros temporários, sem muda
         ? { historic: false, identity: false, draft: false, strength: 5, decadeStart: 2000, decadeEnd: 2020, undated: false }
         : { ...defaults, historic: false } },
       presets: [], dateRanges: new Map(), decades: [], shownNodes: [], shownEdges: [], selected: null,
-      fresh: () => ({ filters: { ...defaults } }), clone: structuredClone, indexFilteredEdges() {},
+      fresh: () => ({ filters: { ...defaults } }), clone: structuredClone, indexFilteredEdges() {}, temaView: () => null, // UX6: sem tema aberto
       $: () => ({ hidden: false, classList: { remove() {}, add() {} } }), requestAnimationFrame: callback => callback(),
       refresh() { host.filter(); },
       select(value) { assert.ok(host.shownNodes.some(n => n.id === value.id), 'seleção precisa estar visível'); host.selected = value; host.save(); },
@@ -371,6 +371,8 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     await context.addInitScript(({ origin, muralKey, draftKey, saved, pending }) => {
       // newPage() também executa o seed no about:blank, onde Storage é indisponível.
       if (location.origin !== origin) return;
+      // UX6: o tutorial de primeiro acesso tem teste próprio; aqui a visita já o viu.
+      if (!localStorage.getItem('aion.tutorial')) localStorage.setItem('aion.tutorial', 'visto-v1');
       if (saved && !sessionStorage.getItem('ux4-seeded')) {
         localStorage.setItem(muralKey, JSON.stringify(saved));
         sessionStorage.setItem('ux4-seeded', '1');
@@ -388,8 +390,11 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     return { page, context, traffic };
   }
 
+  // UX6/L7: as ferramentas de edição só existem com ?editor=1; esta suíte cobre o modo editor.
+  // O modo público (sem os controles no DOM) é coberto em ux6_ui_test.cjs.
+  const editorUrl = suffix => suffix.includes('?') ? suffix.replace('?', '?editor=1&') : suffix.replace(/^\//, '/?editor=1');
   async function ready(page, suffix = '/') {
-    await page.goto(origin + suffix);
+    await page.goto(origin + editorUrl(suffix));
     await page.waitForFunction(() => !!window.mural && !!window.atlasAuthChat);
   }
 
@@ -472,7 +477,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   for (const width of [360, 390, 393]) test(`Legenda e barra de zoom separadas e dentro da viewport, ${width}px`, async () => {
     const { page, traffic } = await openPage({ width });
-    await ready(page);
+    await ready(page, '/#all'); // UX6: o mapa completo é a opção avançada (#all).
     const legenda = await page.locator('.legend-menu summary').boundingBox();
     const zoombar = await page.locator('.canvas-toolbar').boundingBox();
     assert.ok(legenda && zoombar, 'ambos os controles precisam estar visíveis');
@@ -607,7 +612,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   for (const width of [1440, 393]) for (const savedState of ['limpo', 'rockefeller', 'caso', 'historico-desligado', 'restritivo']) test(`hash Mauá ${savedState}, ${width}px; hashchange e id inexistente`, async () => {
     const saved = savedState === 'limpo' ? undefined : {
-      schema: 25, view: savedState === 'caso' ? 'caso:OP01' : 'linhagem_rockefeller',
+      schema: 26, view: savedState === 'caso' ? 'caso:OP01' : 'linhagem_rockefeller',
       selected: { kind: 'node', id: savedState === 'caso' ? seed.casos.find(c => c.id === 'OP01').no_mural : 'rockefeller' }, inspectorOpen: true,
       ...(savedState === 'historico-desligado' ? { filters: { historic: false } } : savedState === 'restritivo' ? { filters: { historic: false, identity: false, draft: false, strength: 5, decadeStart: 2000, decadeEnd: 2020, undated: false } } : {}),
     };
@@ -699,7 +704,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const expectedHash = view.startsWith('caso:') ? '#OP01' : '';
       assert.equal(await page.evaluate(() => location.hash), expectedHash, view);
-      assert.equal(await page.evaluate(() => location.search), '?entrada=mapa');
+      assert.equal(await page.evaluate(() => location.search), '?editor=1&entrada=mapa');
       assert.equal(await page.evaluate(() => history.length), historyLength, 'trocar mapa substitui a URL sem criar entrada');
       assert.equal(await page.evaluate(() => window.ux4HashChanges), 0, 'replaceState não inicia ciclos de hashchange');
       assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).view, muralKey), view);
@@ -830,7 +835,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     assert.equal(await page.locator('#note-preview').innerText(), 'Anotação local de teste');
     assert.equal(await page.locator('#note-readonly textarea, #note-readonly input, #note-readonly [contenteditable="true"]').count(), 0);
     const notes = await page.evaluate(() => window.mural.getState().notes);
-    await page.locator('h1').click();
+    await page.locator('#map-title').click();
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
     assert.deepEqual(await page.evaluate(() => window.mural.getState().notes), notes, 'atalho não desfaz em leitura');
     await page.reload();
