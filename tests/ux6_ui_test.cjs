@@ -17,7 +17,7 @@ const temasConfig = JSON.parse(fs.readFileSync(path.join(root, '../pesquisa/dado
 const ativos = temasDoc.temas.filter(t => temasConfig.flags?.[t.id] !== false);
 const KEY = 'codigos-do-poder:mural:v26', KEY_V25 = 'codigos-do-poder:mural:v25';
 const DOM_CAP = Math.ceil(1644 * 5) + 50;
-const fixtureConfig = { supabaseUrl: 'https://ux6-fixture.supabase.co', supabaseAnonKey: 'public-test-placeholder' };
+const fixtureConfig = { supabaseUrl: 'https://ozeiyqpbtggvuyhplisa.supabase.co', supabaseAnonKey: 'public-test-placeholder' };
 const report = { dom: {}, temas: {} };
 const reportPath = process.env.UX6_REPORT || '';
 
@@ -352,11 +352,11 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
     ({ page, errors } = await open({ saved: v25('br_bancos'), savedKey: KEY_V25, suffix: '/#rockefeller-ipes-1964' }));
     assert.equal((await st(page)).view, 'rockefeller-ipes-1964');
     ({ page, errors } = await open({ suffix: '/#all' }));
-    s = await st(page); assert.equal(s.view, 'all'); assert.equal(s.advancedMap, true); assert.equal(await page.evaluate(() => location.hash), '');
+    s = await st(page); assert.equal(s.view, 'all'); assert.equal(s.advancedMap, true); assert.equal(await page.evaluate(() => location.hash), '#all');
     await page.reload(); await page.waitForFunction(() => !!window.mural); await settle(page);
     assert.equal((await st(page)).view, 'all', 'Mapa completo escolhido continua no reload');
     ({ page, errors } = await open());
-    await page.locator('.temas-avancado').click(); await settle(page);
+    await page.locator('#map-mode [data-mapa-completo]').click(); await settle(page);
     s = await st(page); assert.equal(s.view, 'all'); assert.equal(s.advancedMap, true);
     report.dom.mapa_completo_aberto = await domCount(page);
     assert.deepEqual(errors, []);
@@ -488,11 +488,11 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
   test('B4: rodapé do celular — cada trecho é um botão que funciona', async () => {
     const { page, errors } = await open({ width: 393, height: 852 });
     const btns = page.locator('.temas-rodape button');
-    assert.equal(await btns.count(), 3);
+    assert.equal(await btns.count(), 2);
     await page.locator('.temas-rodape [data-abrir-lateral]').click(); await settle(page);
     assert.equal(await page.locator('#sidebar').evaluate(e => e.classList.contains('open')), true);
     await page.keyboard.press('Escape'); await page.evaluate(() => document.querySelector('#sidebar').classList.remove('open'));
-    await page.locator('.temas-rodape [data-mapa-completo]').click(); await page.waitForFunction(() => window.mural.getState().view === 'all');
+    await page.locator('#map-mode [data-mapa-completo]').click(); await page.waitForFunction(() => window.mural.getState().view === 'all');
     await page.goBack(); await page.waitForFunction(() => window.mural.getState().view === 'temas');
     assert.deepEqual(errors, []);
   });

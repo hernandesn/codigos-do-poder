@@ -2,7 +2,7 @@
 <html lang="pt-BR" data-theme="couro-osso">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Kz+mGllYjXGKrb6dOB6u8gXkepJ8Iw4RpPf+CnbUUTg=' 'sha256-cTppSI3i27CG5zmxGm9b7JyJX8yLs7MmkjdX96TdYKc='; style-src 'self' 'sha256-7dGbv6D0MhZuIhysJF95sF46g7hcS404Uoqv8wqvNgg='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-SBiyCPzJrlEKQKxScQRcRTHHDSCUGq8U9zS+A1QLZ5I=' 'sha256-I6A6Evfff0LcAvHHXzh6PdW64Uk7JWvCdQcn93K8J98='; style-src 'self' 'sha256-Z59WVxR0ClGmiHwC4suCru/bUNFGxcOwUTk7vp2FynA='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self';">
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
@@ -500,7 +500,7 @@ body.tema-aberto .sidebar>.sidebar-head,body.tema-aberto .sidebar>.field-label,b
 .tema-pergunta>span{color:var(--ev-hip)}
 .tema-pergunta-fonte{display:block;color:var(--ink-2);font-size:12px;margin-top:2px}
 .tema-acoes{display:flex;flex-wrap:wrap;gap:6px}
-.tema-acoes .tool-button{border:1px solid var(--border);font-size:12px}
+.tema-acoes .tool-button{border:1px solid var(--border);font-size:13px}
 .tema-lista{margin-top:8px;max-width:860px}
 .tema-lista h3{font-size:13px;margin:4px 0;color:var(--ink-2)}
 .tema-lista ul{margin:0;padding-left:18px;font-size:13px;line-height:1.45;color:var(--ink-2)}
@@ -603,8 +603,9 @@ body.tema-aberto .sidebar>.sidebar-head,body.tema-aberto .sidebar>.field-label,b
   body.tema-aberto .tema-barra{grid-area:barra;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;gap:10px;margin:0;padding:4px 14px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
   body.tema-aberto .tema-barra .tema-legenda{flex-wrap:nowrap;gap:8px;font-size:11px}
   body.tema-aberto .tema-legenda .tl{width:18px}
-  body.tema-aberto .tema-acoes{flex-wrap:nowrap;gap:5px}
+  body.tema-aberto .tema-acoes{flex-wrap:wrap;gap:5px}
   body.tema-aberto .tema-acoes .tool-button{font-size:11px;padding:4px 7px;white-space:nowrap}
+  body.tema-aberto .tema-acoes [data-tema-acao=ampliar]{flex:1 1 100%}
   body.tema-aberto .tema-acoes [data-tema-acao=enquadrar]{display:none}
   body.tema-aberto .canvas-wrap{grid-area:map;min-height:0}
   body.tema-aberto .tema-textos{grid-area:textos;overflow-y:auto;min-height:0;padding:8px 12px 10px;border-left:1px solid var(--line);background:var(--surface-2)}
@@ -618,23 +619,55 @@ body.tema-aberto .board-header{position:relative}
 @media(min-width:621px) and (max-height:500px){body.tema-aberto .toque-dica{left:auto;right:14px;bottom:auto;top:9px}}
 /* C3 deitado: o rótulo do destaque vai para o canto de cima do mapa, sem cobrir a ficha centralizada. */
 @media(min-width:621px) and (max-height:500px){body.tema-aberto .selection-toolbar{top:6px;bottom:auto;left:8px;transform:none}}
-.synthetic-banner{margin:0;padding:8px 16px;background:var(--surface-3);color:var(--blood-text);font-size:12px;border-bottom:1px solid var(--blood-thread)}
-.chat-panel{position:fixed;top:70px;right:0;bottom:0;width:min(380px,100vw);z-index:30;background:var(--surface-1);border-left:1px solid var(--line);display:flex;flex-direction:column;padding:16px 16px 12px;box-shadow:-16px 0 40px var(--shadow-soft)}
-.chat-head{display:flex;justify-content:space-between;align-items:center}
-.chat-status,.chat-context,.chat-hint,.chat-meta{color:var(--muted);font-size:11px;line-height:1.5}
-.chat-log{flex:1;overflow:auto;margin:8px 0;display:flex;flex-direction:column;gap:12px}
-.chat-turn{border-top:1px solid var(--line);padding-top:10px}
-.chat-question{color:var(--ink);font-size:12px;margin:0 0 6px}
-.chat-answer,.chat-inference{font-size:13px;line-height:1.55;margin:0 0 8px;white-space:pre-wrap}
-.chat-inference{border-left:2px solid var(--blood-thread);padding-left:8px;color:var(--ink-2)}
-.chat-sources{font-size:11px;line-height:1.5;margin:0 0 8px}
-.chat-sources h4,.chat-sources p{font-size:inherit;margin:4px 0}
-.chat-sources ul{margin:4px 0 8px;padding-left:18px}
-.chat-error{color:var(--danger);font-size:12px;margin:0}
-@media(max-width:820px){.chat-panel{top:62px}}
-@media(max-width:620px){#auth-button,#chat-open{padding:7px 8px;font-size:11px}}
-#auth-dialog .dialog-footer{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center}
-#auth-note,#auth-status{line-height:1.4}
+/* BM: o alternador usa as mesmas ações e hashes dos acessos existentes. */
+.map-mode{display:flex;width:max-content;align-self:flex-start;min-width:352px;max-width:100%;margin:0 0 10px;border-radius:9px;background:var(--surface-2);position:relative;z-index:9}
+.map-mode[hidden]{display:none!important}.map-mode button{flex:1;min-width:176px;height:48px;padding:0 12px;border:1px solid var(--border);border-radius:0;background:var(--surface-2);color:var(--ink);font-size:15px;font-weight:600;white-space:nowrap;transition:background 120ms}
+.map-mode button:first-child{border-radius:9px 0 0 9px}.map-mode button:last-child{border-radius:0 9px 9px 0}.map-mode button:hover{background:var(--surface-3)}.map-mode button[aria-current=page]{background:linear-gradient(var(--blood),var(--blood-deep));color:var(--on-blood);box-shadow:inset 0 -3px var(--blood-text)}
+body.temas-mode .map-mode [data-mapa-completo]{border:2px solid var(--blood-text)}.map-mode button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}.map-mode span{font-size:13px;font-weight:400;margin-left:3px}
+.temas-nav-avancado{flex-shrink:0;min-height:44px;padding:8px 10px;margin-top:8px;position:sticky;bottom:0;z-index:2;border:1px solid var(--border);background:var(--surface-2);color:var(--ink);font-size:13px;text-align:left}.temas-nota{font-size:13px}
+.tema-acoes [data-tema-acao=ampliar]{order:-1;min-height:44px;font-size:15px}.temas-back{min-height:44px;font-size:15px}
+@media(max-width:899px){.map-mode{position:sticky;top:0;width:100%;min-width:0}.map-mode button{min-width:0;padding:0 6px}body.temas-mode .board-header{flex-shrink:0}body.tema-aberto .tema-acoes .tool-button{min-height:44px;font-size:13px}.tema-acoes{width:100%}}
+@media(max-width:899px) and (min-height:431px){body.tema-aberto .tema-acoes{flex-wrap:wrap}.tema-acoes [data-tema-acao=ampliar]{width:100%;flex-basis:100%}.tema-barra{flex-wrap:wrap}}
+@media(max-width:379px){.map-mode span{display:none}}
+@media(max-height:430px) and (orientation:landscape){.map-mode{position:static}body.temas-mode .board-shell{overflow-y:auto}body.temas-mode .temas-screen{flex:none;overflow:visible}}
+@media(prefers-reduced-motion:reduce){.map-mode button{transition:none}}
+
+.board-header>div:first-child:has(.map-mode:not([hidden])){flex:1}
+.synthetic-banner{margin:0;padding:8px 16px;background:var(--surface-3);color:var(--blood-text);font-size:13px;border-bottom:1px solid var(--blood-thread)}
+/* Folha em coluna: cabeçalho e compositor não participam da rolagem do log. */
+.chat-panel{position:fixed;inset:var(--chat-top,70px) 0 auto auto;height:var(--chat-height,calc(100dvh - 70px));width:min(460px,100vw);z-index:30;background:var(--surface-2);border-left:1px solid var(--border);display:flex;flex-direction:column;padding:0;box-shadow:-16px 0 40px var(--shadow-soft);overflow:hidden}
+.chat-panel .spine,.chat-panel .tabf{display:none}
+.chat-panel .folder.chat{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;padding:8px 14px 0;border-radius:0;box-shadow:none;overflow:hidden}
+.chat-panel .chat-head{display:flex;justify-content:space-between;align-items:center;flex-shrink:0;min-height:44px;padding:0;margin:0;border-bottom:1px solid var(--line)}
+.chat-panel .eyebrow{font-size:13px;letter-spacing:0}
+#chat-close{width:44px;height:44px}
+.chat-status,.chat-context,.chat-hint,.chat-meta,.chat-tip{color:var(--ink-3);font-size:13px;line-height:1.4;overflow-wrap:anywhere}
+.chat-status{margin:4px 0;flex-shrink:0}.chat-status:empty{display:none}
+.chat-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding-bottom:12px;margin:4px 0 0;display:flex;flex-direction:column;gap:12px;overflow-wrap:anywhere}
+.chat-turn{flex-shrink:0;min-width:0;border-top:1px solid var(--line);padding-top:10px}
+.chat-question{background:var(--surface-3);color:var(--ink);border-left:4px solid var(--blood-text);font-size:16px;line-height:1.55;margin:0 0 8px;padding:8px 10px;transform:none;box-shadow:none}
+.chat-question::before{content:"Você perguntou";display:block;font:400 13px var(--font-body);color:var(--ink-3);margin-bottom:4px}
+.chat-question-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;overflow:hidden;white-space:pre-wrap}.chat-question[data-expanded=true] .chat-question-text{-webkit-line-clamp:unset;display:block}
+.chat-more{display:block;min-height:44px;font-size:14px;color:var(--blood-text);text-decoration:underline}
+.chat-answer,.chat-inference,.chat-hypothesis{font-size:16px;line-height:1.55;margin:0 0 8px;white-space:pre-wrap;border:1px solid var(--ev-fato);border-left-width:5px;border-radius:3px;padding:8px 10px;color:var(--ink);background:var(--surface-2)}
+.chat-answer::before,.chat-inference::before,.chat-hypothesis::before{display:block;font:600 13px var(--font-body);color:var(--ink);margin-bottom:4px}
+.chat-answer::before{content:"■ Fato"}.chat-inference{border-color:var(--ev-inf);border-style:dashed;border-left-style:solid}.chat-inference::before{content:"◆ Inferência"}
+.chat-hypothesis{border-color:var(--ev-hip);border-style:dotted;border-left-style:solid;color:var(--ink-2)}.chat-hypothesis::before{content:"○ Hipótese / lacuna"}.chat-hypothesis::after{content:"Não comprovado na base";display:block;font-size:13px;margin-top:6px}
+.chat-sources{font-size:14px;line-height:1.5;margin:0 0 8px}.chat-sources summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--ink)}
+.chat-sources h4,.chat-sources p{font-size:inherit;margin:4px 0}.chat-sources ul{margin:4px 0 8px;padding-left:18px}.chat-sources li{scroll-margin-top:8px}.chat-sources a{display:inline-flex;align-items:center;min-height:44px}
+.chat-citation{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;color:var(--blood-text);font-size:14px;text-decoration:underline}
+.chat-error,.chat-error[data-code=fora_da_base]{color:var(--ink);font-size:15px;margin:0 0 8px}
+#chat-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;flex-shrink:0;margin:0;padding:6px 0 max(8px,env(safe-area-inset-bottom));border-top:1px solid var(--border)}#chat-form input,#chat-form select,#chat-form textarea{font-size:16px}
+.chat-models{display:flex;gap:8px;grid-column:1/-1}.chat-model-chip{display:flex;align-items:center;min-height:44px;padding:0 10px;border:1px solid var(--border);border-radius:22px;font-size:14px;color:var(--ink);background:var(--surface-3);cursor:pointer}.chat-model-chip:has(:checked){border-color:var(--blood-text);box-shadow:inset 0 -3px var(--blood-text)}.chat-model-chip input{margin:0 6px 0 0;accent-color:var(--blood-text)}
+.chat-model-select{display:none}.chat-input{display:block;min-width:0}#chat-mensagem{display:block;width:100%;height:44px;min-height:44px;max-height:clamp(44px,calc(var(--chat-visible-height,100dvh) - 500px),96px);resize:none;font-size:16px;line-height:24px;padding:9px 10px;overflow-y:auto;border-color:var(--border)}
+#chat-form .dialog-footer{margin:0;padding:0;border:0;display:flex;align-items:flex-end;gap:4px}#chat-send{width:44px;min-width:44px;height:44px;padding:0;font-size:24px}#chat-cancel{min-height:44px;padding:4px;font-size:13px}
+#chat-context{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.chat-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.chat-status[data-thinking=true]::after{content:"";display:block;height:2px;width:30%;margin-top:3px;background:var(--border);animation:chat-search 1.2s ease-in-out infinite alternate}@keyframes chat-search{to{transform:translateX(180%)}}
+@media(prefers-reduced-motion:reduce){.chat-status[data-thinking=true]::after{animation:none}}
+@media(min-width:900px){.chat-answer,.chat-inference,.chat-hypothesis{font-size:15px}}
+@media(max-width:899px){.chat-panel{inset:var(--chat-top,62px) 0 auto 0;width:100%;height:var(--chat-height,calc(100dvh - 62px));border-left:0}.chat-panel .folder.chat{padding:8px 14px 0}.chat-log{min-height:calc(var(--chat-visible-height,100dvh)*.4)}}
+@media(max-height:430px) and (orientation:landscape){.chat-panel .folder.chat{padding-top:0}.chat-panel .chat-head{min-height:40px;height:40px}#chat-close{height:44px}.chat-panel .chat-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.chat-models{display:none}.chat-model-select{display:block;min-width:0}#chat-modelo{height:44px;font-size:16px;padding:0 26px 0 8px;border-color:var(--border);width:100%}#chat-form{grid-template-columns:minmax(170px,13em) minmax(0,1fr) auto;align-items:end}.chat-log{min-height:160px}#chat-mensagem{max-height:44px}}
+#auth-dialog .dialog-footer{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center}#auth-note,#auth-status{line-height:1.4}
 .data-status{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;font-size:13px;color:var(--ink-2);background:var(--bg)}.data-status[data-state=error] .data-status-text{color:var(--danger);max-width:340px;line-height:1.6}
 </style>
 </head>
@@ -691,7 +724,7 @@ body.tema-aberto .board-header{position:relative}
     </aside>
     <main class="board-shell" id="board-shell">
       <section class="temas-screen" id="temas-screen" aria-labelledby="temas-title" hidden></section>
-      <div class="board-header"><div><div class="map-title-row"><button class="tool-button temas-back" id="temas-back" type="button" hidden>← Temas</button><h1 id="map-title">Mapa completo</h1></div><p id="map-subtitle">Carregando…</p><div class="map-search"><label class="search-box"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Buscar na base" aria-label="Buscar na base" autocomplete="off"><kbd>⌘ K</kbd></label><div id="search-results" class="search-results" aria-live="polite" hidden></div></div><p id="map-note" class="map-note" role="status" hidden></p><div id="trail-nav" class="trail-nav" hidden></div></div>
+      <div class="board-header"><div><nav id="map-mode" class="map-mode" aria-label="Modo do mapa" hidden><button type="button" data-modo-temas>Temas</button><button type="button" data-mapa-completo>Mapa completo <span id="map-mode-count"></span></button></nav><div class="map-title-row"><button class="tool-button temas-back" id="temas-back" type="button" hidden>← Temas</button><h1 id="map-title">Mapa completo</h1></div><p id="map-subtitle">Carregando…</p><div class="map-search"><label class="search-box"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Buscar na base" aria-label="Buscar na base" autocomplete="off"><kbd>⌘ K</kbd></label><div id="search-results" class="search-results" aria-live="polite" hidden></div></div><p id="map-note" class="map-note" role="status" hidden></p><div id="trail-nav" class="trail-nav" hidden></div></div>
         <div class="board-actions draft-only"><button class="button" id="add-node">＋ Entidade</button><button class="button primary" id="add-edge">⌁ Conectar</button></div>
       </div>
       <section class="tema-intro" id="tema-intro" aria-label="Sobre este tema" hidden></section>
@@ -751,11 +784,11 @@ body.tema-aberto .board-header{position:relative}
       <button class="button primary" id="chat-login" type="button">Entrar</button>
     </section>
     <form id="chat-form" hidden>
-      <label class="editor-field">Modelo<select id="chat-modelo"><option value="basico">Básico · 1 crédito</option><option value="avancado">Avançado · 8 créditos</option></select></label>
+      <div class="chat-models" role="group" aria-label="Modelo e custo em créditos"><label class="chat-model-chip"><input type="radio" name="chat-model-chip" value="basico" checked>Básico · 1 crédito</label><label class="chat-model-chip"><input type="radio" name="chat-model-chip" value="avancado">Avançado · 8 créditos</label></div>
+      <label class="chat-model-select"><span class="chat-sr">Modelo e custo em créditos</span><select id="chat-modelo"><option value="basico">Básico · 1 crédito</option><option value="avancado">Avançado · 8 créditos</option></select></label>
       <p id="chat-context" class="chat-context"></p>
-      <label class="editor-field" for="chat-mensagem">Pergunta<textarea id="chat-mensagem" maxlength="2000" rows="4" placeholder="Pergunta sobre o recorte visível…"></textarea></label>
-      <p class="chat-hint">O servidor reserva o crédito e o teto diário antes de chamar o modelo. Visitante sem sessão não envia a pergunta.</p>
-      <div class="dialog-footer"><button type="button" class="button" id="chat-cancel" hidden>Cancelar</button><button type="submit" class="button primary" id="chat-send">Enviar</button></div>
+      <label class="chat-input" for="chat-mensagem"><span class="chat-sr">Pergunta</span><textarea id="chat-mensagem" maxlength="2000" rows="1" placeholder="Pergunta sobre o recorte visível…"></textarea></label>
+      <div class="dialog-footer"><button type="button" class="button" id="chat-cancel" hidden>Cancelar</button><button type="submit" class="button primary" id="chat-send" aria-label="Enviar pergunta"><span aria-hidden="true">↑</span></button></div>
     </form>
     </div>
   </aside>
@@ -2292,7 +2325,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
   $('open-cases').onclick=()=>{if(work.view.startsWith('caso:'))select({kind:'node',id:(model.casos||[]).find(c=>c.id===work.view.slice(5))?.no_mural});else changeView('caso:OP01');};
   // ── UX6 · tooltip de ligação (L1), tela de temas (L5/A-01), tema aberto e tutorial (T-01–T-06) ──
   function temaCount(v){return `${v.ids.length} fichas · ${(v.ligacoes||[]).length} ligações · ${(v.fontes||[]).length} fontes`;}
-  function openAdvanced(focusId,fromUi){if(fromUi&&TEMAS_ON)pushNav({ux6:'mapa'},location.pathname+location.search);work.advancedMap=true;changeView('all');if(focusId)reveal(focusId);}
+  function openAdvanced(focusId,fromUi){if(fromUi&&TEMAS_ON)pushNav({ux6:'mapa'},location.pathname+location.search+'#all');work.advancedMap=true;changeView('all');if(focusId)reveal(focusId);}
   // A3: abrir tema ou Mapa completo pela UI cria entrada no histórico; a lista ganha estado para o Voltar.
   function pushNav(state,href){try{if(work.view==='temas')window.history.replaceState({ux6:'lista'},'',location.href);else if(temaView()&&!window.history.state)window.history.replaceState({ux6:'tema',id:work.view},'',location.href);window.history.pushState(state,'',href);}catch{}}
   function openTema(id){if(!temaView(id))return;select(null);if(work.view!==id)pushNav({ux6:'tema',id,from:work.view==='temas'?'lista':'outro'},location.pathname+location.search+'#'+encodeURIComponent(id));changeView(id);}
@@ -2302,13 +2335,14 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
     if(!TEMAS_ON)return;
     const first=TEMAS.filter(v=>v.secao==='primeira_tela'),side=TEMAS.filter(v=>v.secao!=='todos_os_recortes'),rest=TEMAS.filter(v=>v.secao==='todos_os_recortes');
     const perguntas=['A Time-Life financiou a TV Globo?','O que o IPES fez antes de 1964?','Rothschild emprestou ao Império?'];
-    $('temas-screen').innerHTML=`<div class="temas-inner"><p class="temas-eyebrow">Atlas documental de famílias, capital e instituições</p><h1 id="temas-title">Por onde começar?</h1><p class="temas-lead">Escolha um tema pronto. Cada um abre um mapa pequeno, com as ligações que a base documenta e as fontes de cada uma.</p><div class="temas-perguntas" role="group" aria-label="Perguntas de exemplo">${perguntas.map(q=>`<button type="button" class="temas-pergunta" data-pergunta="${esc(q)}">“${esc(q)}”</button>`).join('')}</div><ol class="temas-grid">${first.map(v=>`<li class="tema-card" data-tema-card="${esc(v.id)}"><h2>${esc(v.label)}</h2><p class="tema-resumo">${esc(v.resumo)}</p><div class="tema-card-foot"><span>${esc(temaCount(v))}</span><button type="button" class="tema-abrir" data-tema="${esc(v.id)}" aria-label="Abrir o tema ${esc(v.label)}">Abrir →</button></div></li>`).join('')}</ol><p class="temas-nota">Mais ${side.length-first.length} temas e «Todos os recortes» na lateral · as perguntas acima abrem o chat (só com login).</p><button type="button" class="temas-avancado" data-mapa-completo>Mapa completo (${nodes.size.toLocaleString('pt-BR')} fichas) · avançado</button></div><nav class="temas-rodape" aria-label="Mais opções"><span>Role para ver os ${first.length} temas</span> · <button type="button" data-abrir-lateral>+ ${side.length-first.length} temas</button> · <button type="button" data-ver-recortes>Todos os recortes</button> · <button type="button" data-mapa-completo>Mapa completo (avançado)</button></nav>`;
+    $('temas-screen').innerHTML=`<div class="temas-inner"><p class="temas-eyebrow">Atlas documental de famílias, capital e instituições</p><h1 id="temas-title">Por onde começar?</h1><p class="temas-lead">Escolha um tema pronto. Cada um abre um mapa pequeno, com as ligações que a base documenta e as fontes de cada uma.</p><div class="temas-perguntas" role="group" aria-label="Perguntas de exemplo">${perguntas.map(q=>`<button type="button" class="temas-pergunta" data-pergunta="${esc(q)}">“${esc(q)}”</button>`).join('')}</div><ol class="temas-grid">${first.map(v=>`<li class="tema-card" data-tema-card="${esc(v.id)}"><h2>${esc(v.label)}</h2><p class="tema-resumo">${esc(v.resumo)}</p><div class="tema-card-foot"><span>${esc(temaCount(v))}</span><button type="button" class="tema-abrir" data-tema="${esc(v.id)}" aria-label="Abrir o tema ${esc(v.label)}">Abrir →</button></div></li>`).join('')}</ol><p class="temas-nota">Mapa completo: as ${nodes.size.toLocaleString('pt-BR')} fichas de uma vez, mais denso. Na primeira vez, comece por um tema. As perguntas acima abrem o chat (só com login).</p></div><nav class="temas-rodape" aria-label="Mais opções"><span>Role para ver os ${first.length} temas</span> · <button type="button" data-abrir-lateral>+ ${side.length-first.length} temas</button> · <button type="button" data-ver-recortes>Todos os recortes</button></nav>`;
     $('temas-nav').innerHTML=`<p class="temas-nav-head">Comece por um tema</p><ol class="temas-nav-list">${side.map((v,i)=>`<li><button type="button" data-tema="${esc(v.id)}"><span class="tema-n">${String(i+1).padStart(2,'0')}</span><span class="tema-t">${esc(v.label)}<small>${v.ids.length} fichas · ${(v.fontes||[]).length} fontes</small></span></button></li>`).join('')}</ol><p class="temas-nav-head">Todos os recortes</p><ul class="temas-nav-list">${rest.map(v=>`<li><button type="button" data-tema="${esc(v.id)}"><span class="tema-n">··</span><span class="tema-t">${esc(v.label)}<small>${v.ids.length} fichas · ${(v.fontes||[]).length} fontes</small></span></button></li>`).join('')}<li><button type="button" id="temas-ver-recortes"><span class="tema-n">··</span><span class="tema-t">Ver todos os ${temasRecortes()} recortes →</span></button></li></ul><button type="button" class="temas-nav-avancado" data-mapa-completo>Mapa completo (${nodes.size.toLocaleString('pt-BR')} fichas) →</button>`;
     $('temas-nav').hidden=false;
-    for(const root of [$('temas-screen'),$('temas-nav')])root.addEventListener('click',ev=>{const b=ev.target.closest('[data-tema],[data-mapa-completo],[data-pergunta],#temas-ver-recortes,[data-ver-recortes],[data-abrir-lateral],[data-tema-card]');if(!b)return;
+    for(const root of [$('temas-screen'),$('temas-nav'),$('map-mode')])root.addEventListener('click',ev=>{const b=ev.target.closest('[data-modo-temas],[data-tema],[data-mapa-completo],[data-pergunta],#temas-ver-recortes,[data-ver-recortes],[data-abrir-lateral],[data-tema-card]');if(!b)return;
+      if(b.hasAttribute('data-modo-temas')){if(work.view!=='temas'){pushNav({ux6:'lista'},location.pathname+location.search);select(null);changeView('temas');}return;}
       if(b.dataset.abrirLateral!==undefined){$('sidebar').classList.add('open');$('temas-nav').querySelector('[data-tema]')?.focus();return;}
       if(b.id==='temas-ver-recortes'||b.dataset.verRecortes!==undefined){document.body.classList.add('recortes-open');$('sidebar').classList.add('open');$('map-select').focus();return;}
-      if(b.hasAttribute('data-mapa-completo')){$('sidebar').classList.remove('open');openAdvanced(undefined,true);return;}
+      if(b.hasAttribute('data-mapa-completo')){if(work.view==='all')return;$('sidebar').classList.remove('open');openAdvanced(undefined,true);return;}
       if(b.dataset.pergunta){$('chat-open').click();const box=$('chat-mensagem');if(box){box.value=b.dataset.pergunta;box.dispatchEvent(new Event('input',{bubbles:true}));}return;}
       const id=b.dataset.tema||b.dataset.temaCard;if(id&&temaView(id)){$('sidebar').classList.remove('open');openTema(id);}});
     $('temas-back').onclick=()=>{const st=window.history.state;if(st?.ux6==='tema'&&st.from==='lista'){window.history.back();return;}select(null);try{const u=new URL(location.href);u.hash='';window.history.replaceState({ux6:'lista'},'',u.href);}catch{}changeView('temas');};
@@ -2330,14 +2364,14 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
   function syncTemas(){
     if(!TEMAS_ON)return;const isTemas=work.view==='temas',tv=temaView();
     document.body.classList.toggle('temas-mode',isTemas);document.body.classList.toggle('tema-aberto',!!tv);if(!isTemas)document.body.classList.remove('recortes-open');
-    $('temas-screen').hidden=!isTemas;$('temas-back').hidden=isTemas;$('map-title').title=tv?tv.label:'';
+    $('temas-screen').hidden=!isTemas;$('temas-back').hidden=!tv;const mode=$('map-mode');mode.hidden=!(isTemas||work.view==='all');$('map-mode-count').textContent=nodes.size.toLocaleString('pt-BR');for(const b of mode.querySelectorAll('button')){if(b.hasAttribute(isTemas?'data-modo-temas':'data-mapa-completo'))b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}$('map-title').title=tv?tv.label:'';
     for(const b of $('temas-nav').querySelectorAll('[data-tema]'))b.classList.toggle('active',b.dataset.tema===work.view);
     const intro=$('tema-intro');
     if(!tv){intro.hidden=true;intro.replaceChildren();intro.dataset.tema='';if(typeof hideTouchHint==='function')hideTouchHint();return;}
     if(intro.dataset.tema===tv.id&&!intro.hidden)return;
     intro.dataset.tema=tv.id;intro.hidden=false;intro.scrollTop=0;if(typeof touchHint==='function')touchHint();
     const conf=tv.pergunta_confianca?` · confiança ${esc(tv.pergunta_confianca)}`:'',fonte=tv.pergunta_fonte?`<small class="tema-pergunta-fonte">Fonte exibida: ${esc(tv.pergunta_fonte)}${conf}</small>`:'';
-    intro.innerHTML=`<div class="tema-barra"><div class="tema-legenda" aria-label="Legenda das linhas"><span><i class="tl cheia"></i>confiança alta</span><span><i class="tl tracejada"></i>média</span><span><i class="tl pontilhada"></i>baixa ou pista</span><span class="tema-legenda-nota">o nome da ligação aparece ao passar o mouse ou tocar na linha</span></div><div class="tema-acoes"><button type="button" class="tool-button" data-tema-acao="enquadrar">Enquadrar</button><button type="button" class="tool-button" data-tema-acao="lista" aria-expanded="false" aria-controls="tema-lista">Ver como lista</button><button type="button" class="tool-button" data-tema-acao="fontes" aria-expanded="false" aria-controls="tema-lista">Fontes (${(tv.fontes||[]).length})</button><button type="button" class="tool-button" data-tema-acao="ampliar">Ampliar no mapa completo</button></div></div>${tv.pergunta?'<button type="button" class="tema-pergunta-atalho" data-tema-acao="pergunta" aria-controls="tema-pergunta"><span aria-hidden="true">○</span> Pergunta em aberto ↓</button>':''}<div class="tema-textos"><p class="tema-abertura"><span class="tema-selo">O que a base documenta</span>${esc(tv.abertura)}</p>${tv.pergunta?`<p class="tema-pergunta" id="tema-pergunta" tabindex="-1"><span aria-hidden="true">○</span> <em>${esc(tv.pergunta)}</em>${fonte}</p>`:''}</div><div id="tema-lista" class="tema-lista" hidden></div>`;
+    intro.innerHTML=`<div class="tema-barra"><div class="tema-legenda" aria-label="Legenda das linhas"><span><i class="tl cheia"></i>confiança alta</span><span><i class="tl tracejada"></i>média</span><span><i class="tl pontilhada"></i>baixa ou pista</span><span class="tema-legenda-nota">o nome da ligação aparece ao passar o mouse ou tocar na linha</span></div></div><div class="tema-acoes"><button type="button" class="tool-button" data-tema-acao="enquadrar">Enquadrar</button><button type="button" class="tool-button" data-tema-acao="lista" aria-expanded="false" aria-controls="tema-lista">Ver como lista</button><button type="button" class="tool-button" data-tema-acao="fontes" aria-expanded="false" aria-controls="tema-lista">Fontes (${(tv.fontes||[]).length})</button><button type="button" class="button primary" data-tema-acao="ampliar">Ampliar no mapa completo ▸</button></div>${tv.pergunta?'<button type="button" class="tema-pergunta-atalho" data-tema-acao="pergunta" aria-controls="tema-pergunta"><span aria-hidden="true">○</span> Pergunta em aberto ↓</button>':''}<div class="tema-textos"><p class="tema-abertura"><span class="tema-selo">O que a base documenta</span>${esc(tv.abertura)}</p>${tv.pergunta?`<p class="tema-pergunta" id="tema-pergunta" tabindex="-1"><span aria-hidden="true">○</span> <em>${esc(tv.pergunta)}</em>${fonte}</p>`:''}</div><div id="tema-lista" class="tema-lista" hidden></div>`;
   }
   // C3: na 1ª abertura de tema no celular, uma dica curta sobre a linha de contagem do cabeçalho
   // (não cobre fichas nem a folha); some no 1º toque no mapa ou em 6 s. Chave aion.dica-toque.
@@ -2388,7 +2422,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
     let requestedHash;try{requestedHash=decodeURIComponent(location.hash.slice(1));}catch{return;}
     if(requestedHash.startsWith('e=')){reveal(requestedHash.slice(2));return;}
     if(temporaryFilters){temporaryFilters=null;refresh();}
-    if(requestedHash==='all'){openAdvanced();try{const u=new URL(location.href);u.hash='';window.history.replaceState(window.history.state,'',u.href);}catch{}return;}
+    if(requestedHash==='all'){if(work.view!=='all')openAdvanced();return;}
     if((model.casos||[]).some(c=>c.id===requestedHash))changeView('caso:'+requestedHash);
     else if(presets.some(v=>v.id===requestedHash)&&!(typeof temaView==='function'&&temaView(requestedHash)&&work.view===requestedHash))changeView(requestedHash);
   }
@@ -2853,6 +2887,8 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
     const config = parsePublicConfig(deps.config);
     let conversaId = '';
     let inflight = null;
+    let exchangeNumber = 0;
+    const view = deps.window || documentRef.defaultView || (typeof window !== 'undefined' ? window : null);
     let draftStorage = null;
     let pendingChat = null;
     let draftInMemory = false;
@@ -2942,14 +2978,52 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
       item.className = 'chat-turn';
       const ask = documentRef.createElement('p');
       ask.className = 'chat-question';
-      ask.textContent = question;
+      const questionText = documentRef.createElement('span');
+      questionText.className = 'chat-question-text';
+      questionText.textContent = question;
+      ask.appendChild(questionText);
+      const more = documentRef.createElement('button');
+      more.type = 'button'; more.className = 'chat-more'; more.textContent = 'ver mais'; more.hidden = true;
+      more.setAttribute('aria-expanded', 'false');
+      more.addEventListener('click', () => {
+        const expanded = ask.dataset.expanded !== 'true';
+        ask.dataset.expanded = String(expanded);
+        more.setAttribute('aria-expanded', String(expanded));
+        more.textContent = expanded ? 'ver menos' : 'ver mais';
+      });
+      ask.appendChild(more);
       item.appendChild(ask);
       if (result.ok && result.final) {
+        for (const aviso of result.final.avisos || []) {
+          if (!aviso || typeof aviso.texto !== 'string') continue;
+          const notice = documentRef.createElement('p'); notice.className = 'chat-meta'; notice.textContent = aviso.texto; item.appendChild(notice);
+        }
         const blocos = Array.isArray(result.final.blocos) ? result.final.blocos : [];
+        const sourceIds = [...new Set((Array.isArray(result.final.fontes) && result.final.fontes.length
+          ? result.final.fontes : blocos.flatMap((bloco) => Array.isArray(bloco.fontes) ? bloco.fontes : []))
+          .filter((id) => typeof id === 'string' && id))];
+        const sourcePrefix = `chat-source-${++exchangeNumber}-`;
+        const sources = documentRef.createElement(sourceIds.length ? 'details' : 'div');
+        sources.open = !(view?.matchMedia?.('(max-width:899px)').matches);
+        sources.className = 'chat-sources';
         for (const bloco of blocos) {
           const p = documentRef.createElement('p');
-          p.className = bloco.tipo === 'inferencia' ? 'chat-inference' : 'chat-answer';
+          p.className = bloco.tipo === 'hipotese' ? 'chat-hypothesis' : bloco.tipo === 'inferencia' ? 'chat-inference' : 'chat-answer';
           p.textContent = typeof bloco.texto === 'string' ? bloco.texto : '';
+          for (const id of Array.isArray(bloco.fontes) ? bloco.fontes : []) {
+            const index = sourceIds.indexOf(id);
+            if (index < 0) continue;
+            const chip = documentRef.createElement('button');
+            chip.type = 'button'; chip.className = 'chat-citation'; chip.textContent = `[${index + 1}]`;
+            chip.setAttribute('aria-label', `Ver fonte ${id}`);
+            chip.setAttribute('aria-controls', sourcePrefix + index);
+            chip.addEventListener('click', () => {
+              sources.open = true;
+              const target = $(sourcePrefix + index);
+              if (target?.getBoundingClientRect && log.getBoundingClientRect) log.scrollTop += target.getBoundingClientRect().top - log.getBoundingClientRect().top;
+            });
+            p.appendChild(chip);
+          }
           item.appendChild(p);
         }
         if (!blocos.length) {
@@ -2958,19 +3032,14 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
           p.textContent = MESSAGES.incompleto;
           item.appendChild(p);
         }
-        const sourceIds = [...new Set((Array.isArray(result.final.fontes) && result.final.fontes.length
-          ? result.final.fontes : blocos.flatMap((bloco) => Array.isArray(bloco.fontes) ? bloco.fontes : []))
-          .filter((id) => typeof id === 'string' && id))];
         const relationIds = [...new Set(blocos.flatMap((bloco) => {
           const ids = bloco.tipo === 'inferencia' ? bloco.base : bloco.tipo === 'documentado' ? bloco.relacoes : [];
           return Array.isArray(ids) ? ids : [];
         }).filter((id) => typeof id === 'string' && id))].slice(0, 12);
-        const sources = documentRef.createElement('div');
-        sources.className = 'chat-sources';
         const list = documentRef.createElement('ul');
         if (sourceIds.length) {
-          const sourceHeading = documentRef.createElement('h4');
-          sourceHeading.textContent = 'Fontes citadas';
+          const sourceHeading = documentRef.createElement('summary');
+          sourceHeading.textContent = `Fontes (${sourceIds.length}) ▾`;
           sources.appendChild(sourceHeading);
         }
         for (const id of sourceIds) {
@@ -2982,6 +3051,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
             if (parsed.protocol === 'http:' || parsed.protocol === 'https:') url = parsed.href;
           } catch {}
           const li = documentRef.createElement('li');
+          li.id = sourcePrefix + sourceIds.indexOf(id);
           if (url) {
             const link = documentRef.createElement('a');
             link.setAttribute('href', url);
@@ -3028,7 +3098,9 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
         }
       }
       log.appendChild(item);
-      log.scrollTop = log.scrollHeight;
+      if (questionText.scrollHeight > questionText.clientHeight + 1) more.hidden = false;
+      const start = item.children[1] || item;
+      if (start.getBoundingClientRect && log.getBoundingClientRect) log.scrollTop += start.getBoundingClientRect().top - log.getBoundingClientRect().top;
     }
 
     async function onAsk(event) {
@@ -3043,7 +3115,8 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
       clearChatDraft();
       inflight = controller;
       renderSession();
-      setStatus('Consultando a base…');
+      setStatus('Procurando na base…');
+      if ($('chat-status')) $('chat-status').dataset.thinking = 'true';
       const cancel = $('chat-cancel');
       if (cancel) cancel.hidden = false;
       const result = await client.ask({
@@ -3055,8 +3128,9 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
         signal: controller ? controller.signal : undefined,
       });
       inflight = null;
+      if ($('chat-status')) delete $('chat-status').dataset.thinking;
       if (cancel) cancel.hidden = true;
-      if (result.ok) { clearChatDraft(); if (message) message.value = ''; }
+      if (result.ok) { clearChatDraft(); if (message) message.value = ''; resizeMessage(); }
       appendExchange(text, result);
       renderSession();
       if (!result.ok) setStatus(result.message);
@@ -3159,12 +3233,43 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
       const panel = $('chat-panel');
       if (panel) panel.hidden = false;
       renderSession();
+      resizeViewport();
+      resizeMessage();
     });
     const close = $('chat-close');
     if (close) close.addEventListener('click', () => {
       const panel = $('chat-panel');
       if (panel) panel.hidden = true;
     });
+    function resizeMessage() {
+      const field = $('chat-mensagem');
+      if (!field?.style) return;
+      field.style.height = '44px';
+      field.style.height = `${Math.min(96, Math.max(44, field.scrollHeight))}px`;
+    }
+    function resizeViewport() {
+      const panel = $('chat-panel');
+      if (!panel?.style || !view) return;
+      const viewport = view.visualViewport;
+      const height = viewport?.height || view.innerHeight;
+      const offset = viewport?.offsetTop || 0;
+      const header = view.innerWidth <= 820 ? 62 : 70;
+      const top = Math.max(header, offset);
+      panel.style.setProperty('--chat-top', `${top}px`);
+      panel.style.setProperty('--chat-height', `${Math.max(0, height - (top - offset))}px`);
+      panel.style.setProperty('--chat-visible-height', `${height}px`);
+    }
+    $('chat-mensagem')?.addEventListener?.('input', resizeMessage);
+    const viewport = view && view.visualViewport;
+    if (viewport && typeof viewport.addEventListener === 'function') {
+      viewport.addEventListener('resize', resizeViewport);
+      viewport.addEventListener('scroll', resizeViewport);
+    }
+    if (view && typeof view.addEventListener === 'function') view.addEventListener('resize', resizeViewport);
+    const chips = documentRef.querySelectorAll?.('input[name="chat-model-chip"]') || [];
+    for (const chip of chips) chip.addEventListener('change', () => { if (chip.checked && $('chat-modelo')) $('chat-modelo').value = chip.value; });
+    $('chat-modelo')?.addEventListener('change', () => { for (const chip of chips) chip.checked = chip.value === $('chat-modelo').value; });
+    resizeViewport();
     const form = $('chat-form');
     if (form) form.addEventListener('submit', onAsk);
     const cancel = $('chat-cancel');

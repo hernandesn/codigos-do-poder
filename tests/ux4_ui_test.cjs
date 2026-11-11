@@ -18,7 +18,7 @@ const { dataRef, seedText } = require('./dados_site.cjs');
 const seed = JSON.parse(seedText(html, root));
 const question = 'Quais fontes documentam os bancos de Mauá?';
 // Fixtures sintéticas, sem credenciais reais. Nenhuma chamada sai para o Supabase.
-const fixtureConfig = { supabaseUrl: 'https://ux4-fixture.supabase.co', supabaseAnonKey: 'public-test-placeholder' };
+const fixtureConfig = { supabaseUrl: 'https://ozeiyqpbtggvuyhplisa.supabase.co', supabaseAnonKey: 'public-test-placeholder' };
 const fixtureToken = (now = Date.now(), seconds = 3600) => ['fixture', Buffer.from(JSON.stringify({ exp: Math.floor(now / 1000) + seconds })).toString('base64url'), 'fixture'].join('.');
 const tokenResponse = (now = Date.now(), seconds = 3600) => ({ access_token: fixtureToken(now, seconds), refresh_token: 'fixture', expires_in: seconds });
 
