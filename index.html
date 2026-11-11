@@ -1580,30 +1580,102 @@ const extSrc=dataHolder&&dataHolder.dataset&&dataHolder.dataset.extSrc,extWant=d
       return;
     }
     if(temaView()){const src=mobile()&&v.positions_compact?v.positions_compact:v.positions||{};for(const n of shownNodes){const point=src[n.id];if(point)l.positions[n.id]={x:point[0],y:point[1]};}return;}
-    const missing=shownNodes.filter(n=>!l.positions[n.id]);if(!force&&!missing.length)return;
+    const missing=shownNodes.filter(n=>!l.positions[n.id]);if(!force&&!missing.length&&(work.view!=='all'||l.autoRev===3))return;
     if(work.view==='all'){
-      const map=pilarMap(),centers=new Map(),groupIndex=new Map(map.groups.map((g,i)=>[g.id,i])),compact=window.matchMedia('(max-width: 820px)').matches;
-      map.groups.forEach((g,i)=>{let x,y;if(i===0){x=0;y=0;}else if(i===1){x=compact?-420:-800;y=0;}else if(i===2){x=compact?1400:800;y=0;}else{const rank=i-3,ring=1+Math.floor(rank/8),angle=-Math.PI/2+2*Math.PI*(rank%8)/8;x=Math.cos(angle)*(1900+ring*1250);y=Math.sin(angle)*(1400+ring*900);}centers.set(g.id,{x,y});});
-      for(const g of map.groups){const c=centers.get(g.id),anchors=g.anchors.filter(id=>nodes.has(id));anchors.forEach((id,i)=>{l.positions[id]={x:c.x+(i-(anchors.length-1)/2)*198,y:c.y-165};});
-        const members=[...nodes.values()].filter(n=>!map.rootIds.has(n.id)&&!map.bridgeIds.has(n.id)&&map.owner.get(n.id)===g.id).sort((a,b)=>(map.distance.get(a.id)??Infinity)-(map.distance.get(b.id)??Infinity)||degree(b.id)-degree(a.id)||a.nome.localeCompare(b.nome,'pt-BR'));
-        const first=members.filter(n=>(map.distance.get(n.id)??Infinity)<=1),later=members.filter(n=>(map.distance.get(n.id)??Infinity)>1),opening=compact?first.slice(0,4):first,overflow=compact?first.slice(4):[];
-        for(const [items,startY,columns] of [[opening,c.y-35,compact?2:4],[overflow,c.y+1300,5],[later,c.y+(compact?2400:600),5]])items.forEach((n,i)=>{const col=i%columns,row=Math.floor(i/columns);l.positions[n.id]={x:c.x+(col-(columns-1)/2)*205,y:startY+row*112};});
+      const map=pilarMap(),compact=window.matchMedia('(max-width: 820px)').matches,previous=l.positions,previousAuto=l.autoPositions;
+      // Reconstitui o layout antigo para reconhecer arrastes v26 sem mudar o schema.
+      // A referência automática também preserva arrastes quando faltarem fichas numa próxima carga.
+      const place=compact=>{
+        l.positions={};const centers=new Map(),fixed=new Set(map.rootIds),groupIndex=new Map(map.groups.map((g,i)=>[g.id,i]));
+        map.groups.forEach((g,i)=>{let x,y;if(i===0){x=0;y=0;}else if(i===1){x=compact?-420:-800;y=0;}else if(i===2){x=compact?1400:800;y=0;}else{const rank=i-3,ring=1+Math.floor(rank/8),angle=-Math.PI/2+2*Math.PI*(rank%8)/8;x=Math.cos(angle)*(1900+ring*1250);y=Math.sin(angle)*(1400+ring*900);}centers.set(g.id,{x,y});});
+        for(const g of map.groups){const c=centers.get(g.id),anchors=g.anchors.filter(id=>nodes.has(id));anchors.forEach((id,i)=>{l.positions[id]={x:c.x+(i-(anchors.length-1)/2)*198,y:c.y-165};});
+          const members=[...nodes.values()].filter(n=>!map.rootIds.has(n.id)&&!map.bridgeIds.has(n.id)&&map.owner.get(n.id)===g.id).sort((a,b)=>(map.distance.get(a.id)??Infinity)-(map.distance.get(b.id)??Infinity)||degree(b.id)-degree(a.id)||a.nome.localeCompare(b.nome,'pt-BR'));
+          const first=members.filter(n=>(map.distance.get(n.id)??Infinity)<=1),later=members.filter(n=>(map.distance.get(n.id)??Infinity)>1),opening=compact?first.slice(0,4):first,overflow=compact?first.slice(4):[];
+          for(const [items,startY,columns] of [[opening,c.y-35,compact?2:4],[overflow,c.y+1300,5],[later,c.y+(compact?2400:600),5]])items.forEach((n,i)=>{const col=i%columns,row=Math.floor(i/columns);l.positions[n.id]={x:c.x+(col-(columns-1)/2)*205,y:startY+row*112};});
+        }
+        const directBridgeGroups=new Map();for(const g of map.groups)for(const anchor of g.anchors)for(const e of edges.values()){const other=e.origem===anchor?e.destino:e.destino===anchor?e.origem:null;if(other&&map.bridgeIds.has(other)){if(!directBridgeGroups.has(other))directBridgeGroups.set(other,new Set());directBridgeGroups.get(other).add(g.id);}}
+        const bridges=[...map.bridgeIds].sort((a,b)=>map.bridgeMeta.get(a).rank-map.bridgeMeta.get(b).rank||nodes.get(a).nome.localeCompare(nodes.get(b).nome,'pt-BR')),coreBridgeIndex=new Map(bridges.filter(id=>[...(directBridgeGroups.get(id)||[])].some(fid=>(groupIndex.get(fid)??Infinity)<2)).map((id,i)=>[id,i]));
+        bridges.forEach((id,i)=>{const meta=map.bridgeMeta.get(id),linked=[...(directBridgeGroups.get(id)||[])],coreLinks=linked.filter(fid=>(groupIndex.get(fid)??Infinity)<2),cs=(coreLinks.length?coreLinks:linked.length?linked:meta.families).map(fid=>centers.get(fid)).filter(Boolean);const avg=cs.length?cs.reduce((a,c)=>({x:a.x+c.x/cs.length,y:a.y+c.y/cs.length}),{x:0,y:0}):{x:0,y:0},slot=coreBridgeIndex.get(id)??i,col=slot%5,row=Math.floor(slot/5);if(compact&&!coreLinks.length){const angle=-Math.PI/2+2*Math.PI*(i%24)/24,ring=Math.floor(i/24);l.positions[id]={x:Math.cos(angle)*(7600+ring*500),y:Math.sin(angle)*(5700+ring*380)};}else l.positions[id]={x:avg.x+(col-2)*205,y:avg.y+(compact?1300:430)+row*112};});
+        const rest=[...nodes.values()].filter(n=>!l.positions[n.id]).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));rest.forEach((n,i)=>{const ring=Math.floor(i/24),slot=i%24,angle=-Math.PI/2+2*Math.PI*slot/24;l.positions[n.id]={x:Math.cos(angle)*(9200+ring*500),y:Math.sin(angle)*(6900+ring*380)};});
+        if(compact){const c=centers.get('rothschild')||{x:-420,y:0},at=(id,dx,dy)=>{if(nodes.has(id)){l.positions[id]={x:c.x+dx,y:c.y+dy};fixed.add(id);}};[['mayer_amschel',-360],['nathan_r_1777',-270],['lionel_r_1808',-180],['natty_r_1840',-90],['charles_r_1877',0],['victor_r_1910',90],['jacob_r',180],['rit',270],['helios_towers',360]].forEach(([id,y])=>at(id,100,y));at('sfm',320,360);at('george_soros',540,360);at('st_james_place_capital',-120,180);at('nils_taube',-120,270);at('quantum_fund_nv',-120,360);}
+        if(!compact){const c=centers.get('rothschild')||{x:-800,y:0},at=(id,dx,dy)=>{if(nodes.has(id)){l.positions[id]={x:c.x+dx,y:c.y+dy};fixed.add(id);}};
+          // Keep the documented family tree together, then show the Soros/Rothschild bridges in one readable corridor.
+          at('mayer_amschel',-450,1540);at('rothschild',-450,1810);
+          [['amschel_mayer',1380],['salomon_mayer',1550],['nathan_r_1777',1720],['carl_mayer',1890],['james_r',2060]].forEach(([id,y])=>at(id,-120,y));
+          [['house_frankfurt',1410],['house_vienna',1580],['nm',1750],['house_naples',1920],['house_paris',2090]].forEach(([id,y])=>at(id,220,y));
+          at('lionel_r_1808',500,1720);at('natty_r_1840',830,1720);at('charles_r_1877',1160,1720);at('victor_r_1910',1490,1720);at('jacob_r',1820,1720);at('rit',2150,1720);at('helios_towers',2480,1720);at('sfm',2810,1720);at('george_soros',3140,1720);
+          at('st_james_place_capital',2150,1410);at('nils_taube',2480,1410);at('quantum_fund_nv',2810,1410);at('richard_katz',3140,1410);at('rothschild_italia',3470,1410);
+          [['ssp_2009',830],['quantum_lp_2014',1160],['quantum_ltd_2016',1490],['rit_familia_2014',1820]].forEach(([id,x])=>at(id,x,2590));
+          [['simon_pitcher',500],['david_wassong',2150],['waldemar_szlezak',2480]].forEach(([id,x])=>at(id,x,2820));
+        }
+        return {positions:l.positions,centers,fixed};
+      };
+      const current=place(compact),automatic=current.positions,{centers,fixed}=current;
+      // Mesmo quadro de draw(), a partir do ponto fixo, antes de aplicar arrastes.
+      const mayer=automatic.mayer_amschel,corridor=mayer?{left:mayer.x-(compact?170:145),top:mayer.y-(compact?385:150),width:compact?430:3000,height:compact?790:1450}:null;
+      const inCorridor=p=>corridor&&p.x+95>corridor.left&&p.x-95<corridor.left+corridor.width&&p.y+40>corridor.top&&p.y-40<corridor.top+corridor.height;
+      // A base já contém outras fichas no quadro; só impedimos entradas novas.
+      const alreadyInside=new Set(Object.keys(automatic).filter(id=>inCorridor(automatic[id])));
+      const legacy=!previousAuto&&Object.keys(previous).length?place(!compact).positions:null;
+      l.positions=automatic;
+      // A marca persiste nas regenerações, mesmo quando o arraste coincide com uma referência automática.
+      const EPS=1e-6;
+      const personal=new Map(),personalBase=new Map(),dragged=l.dragged||(l.dragged={}),same=(a,b)=>a&&b&&Math.abs(a.x-b.x)<=EPS&&Math.abs(a.y-b.y)<=EPS;
+      for(const [id,p] of Object.entries(previous)){
+        if(!nodes.has(id))continue;
+        if(dragged[id]||!force&&!same(p,previousAuto?previousAuto[id]:automatic[id])&&(!legacy||!same(p,legacy[id]))){personal.set(id,p);dragged[id]=true;}
       }
-      const directBridgeGroups=new Map();for(const g of map.groups)for(const anchor of g.anchors)for(const e of edges.values()){const other=e.origem===anchor?e.destino:e.destino===anchor?e.origem:null;if(other&&map.bridgeIds.has(other)){if(!directBridgeGroups.has(other))directBridgeGroups.set(other,new Set());directBridgeGroups.get(other).add(g.id);}}
-      const bridges=[...map.bridgeIds].sort((a,b)=>map.bridgeMeta.get(a).rank-map.bridgeMeta.get(b).rank||nodes.get(a).nome.localeCompare(nodes.get(b).nome,'pt-BR')),coreBridgeIndex=new Map(bridges.filter(id=>[...(directBridgeGroups.get(id)||[])].some(fid=>(groupIndex.get(fid)??Infinity)<2)).map((id,i)=>[id,i]));
-      bridges.forEach((id,i)=>{const meta=map.bridgeMeta.get(id),linked=[...(directBridgeGroups.get(id)||[])],coreLinks=linked.filter(fid=>(groupIndex.get(fid)??Infinity)<2),cs=(coreLinks.length?coreLinks:linked.length?linked:meta.families).map(fid=>centers.get(fid)).filter(Boolean);const avg=cs.length?cs.reduce((a,c)=>({x:a.x+c.x/cs.length,y:a.y+c.y/cs.length}),{x:0,y:0}):{x:0,y:0},slot=coreBridgeIndex.get(id)??i,col=slot%5,row=Math.floor(slot/5);if(compact&&!coreLinks.length){const angle=-Math.PI/2+2*Math.PI*(i%24)/24,ring=Math.floor(i/24);l.positions[id]={x:Math.cos(angle)*(7600+ring*500),y:Math.sin(angle)*(5700+ring*380)};}else l.positions[id]={x:avg.x+(col-2)*205,y:avg.y+(compact?1300:430)+row*112};});
-      const rest=[...nodes.values()].filter(n=>!l.positions[n.id]).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));rest.forEach((n,i)=>{const ring=Math.floor(i/24),slot=i%24,angle=-Math.PI/2+2*Math.PI*slot/24;l.positions[n.id]={x:Math.cos(angle)*(9200+ring*500),y:Math.sin(angle)*(6900+ring*380)};});
-      if(compact){const c=centers.get('rothschild')||{x:-420,y:0},at=(id,dx,dy)=>{if(nodes.has(id))l.positions[id]={x:c.x+dx,y:c.y+dy};};[['mayer_amschel',-360],['nathan_r_1777',-270],['lionel_r_1808',-180],['natty_r_1840',-90],['charles_r_1877',0],['victor_r_1910',90],['jacob_r',180],['rit',270],['helios_towers',360]].forEach(([id,y])=>at(id,100,y));at('sfm',320,360);at('george_soros',540,360);at('st_james_place_capital',-120,180);at('nils_taube',-120,270);at('quantum_fund_nv',-120,360);}
-      if(!compact){const c=centers.get('rothschild')||{x:-800,y:0},at=(id,dx,dy)=>{if(nodes.has(id))l.positions[id]={x:c.x+dx,y:c.y+dy};};
-        // Keep the documented family tree together, then show the Soros/Rothschild bridges in one readable corridor.
-        at('mayer_amschel',-450,1540);at('rothschild',-450,1810);
-        [['amschel_mayer',1380],['salomon_mayer',1550],['nathan_r_1777',1720],['carl_mayer',1890],['james_r',2060]].forEach(([id,y])=>at(id,-120,y));
-        [['house_frankfurt',1410],['house_vienna',1580],['nm',1750],['house_naples',1920],['house_paris',2090]].forEach(([id,y])=>at(id,220,y));
-        at('lionel_r_1808',500,1720);at('natty_r_1840',830,1720);at('charles_r_1877',1160,1720);at('victor_r_1910',1490,1720);at('jacob_r',1820,1720);at('rit',2150,1720);at('helios_towers',2480,1720);at('sfm',2810,1720);at('george_soros',3140,1720);
-        at('st_james_place_capital',2150,1410);at('nils_taube',2480,1410);at('quantum_fund_nv',2810,1410);at('richard_katz',3140,1410);at('rothschild_italia',3470,1410);
-        [['ssp_2009',830],['quantum_lp_2014',1160],['quantum_ltd_2016',1490],['rit_familia_2014',1820]].forEach(([id,x])=>at(id,x,2590));
-        [['simon_pitcher',500],['david_wassong',2150],['waldemar_szlezak',2480]].forEach(([id,x])=>at(id,x,2820));
+      for(const [id,p] of personal){personalBase.set(id,previousAuto?.[id]||l.positions[id]);l.positions[id]=p;fixed.add(id);}
+      // Uma passada por id: fixas primeiro; móveis procuram o contato livre mais próximo.
+      // Grade espacial limita as consultas a nove células, com caixa 225×117 + 12 px.
+      const {floor,abs,round:nearest,ceil,sqrt,max}=Math,W=237,H=129,grid=new Map(),ids=Object.keys(l.positions).sort(),round=v=>nearest(v*100)/100;
+      const insert=p=>{const cx=floor(p.x/W),cy=floor(p.y/H);let column=grid.get(cx);if(!column)grid.set(cx,column=new Map());if(!column.has(cy))column.set(cy,[]);column.get(cy).push(p);};
+      const hits=(p,first=false)=>{
+        const found=first?null:[],cx=floor(p.x/W),cy=floor(p.y/H);
+        for(let dx=-1;dx<=1;dx++){
+          const column=grid.get(cx+dx);if(!column)continue;
+          for(let dy=-1;dy<=1;dy++)for(const q of column.get(cy+dy)||[]){
+            if(abs(p.x-q.x)<W&&abs(p.y-q.y)<H){if(first)return true;found.push(q);}
+          }
+        }
+        return first?false:found;
+      };
+      for(const id of ids)if(fixed.has(id))insert(l.positions[id]);
+      for(const id of ids){
+        if(fixed.has(id))continue;
+        const origin=l.positions[id],center=centers.get(map.owner.get(id))||origin,avoidCorridor=!alreadyInside.has(id),queue=[],seen=new Set();
+        const compare=(a,b)=>a.d-b.d||a.column-b.column||a.inward-b.inward||a.x-b.x||a.y-b.y;
+        const offer=(x,y)=>{
+          x=round(x);y=round(y);const key=x+','+y;if(seen.has(key))return;seen.add(key);
+          const dx=x-origin.x,dy=y-origin.y,p={x,y,d:dx*dx+dy*dy,column:abs(dx),inward:-(dx*(origin.x-center.x)+dy*(origin.y-center.y))};
+          let lo=0,hi=queue.length;while(lo<hi){const mid=(lo+hi)>>>1;if(compare(queue[mid],p)<=0)lo=mid+1;else hi=mid;}queue.splice(lo,0,p);
+        };
+        offer(origin.x,origin.y);let point=null;
+        for(let attempt=0;attempt<64&&queue.length;attempt++){
+          const p=queue.shift(),blocked=hits(p),inBox=avoidCorridor&&inCorridor(p);if(!blocked.length&&!inBox){point=p;break;}
+          for(const q of blocked){offer(q.x-W-.01,p.y);offer(q.x+W+.01,p.y);offer(p.x,q.y-H-.01);offer(p.x,q.y+H+.01);}
+          if(inBox){offer(corridor.left-95-.01,p.y);offer(corridor.left+corridor.width+95+.01,p.y);offer(p.x,corridor.top-40-.01);offer(p.x,corridor.top+corridor.height+40+.01);}
+        }
+        // Busca limitada e determinística para blocos densos: cada obstáculo cobre no
+        // máximo quatro pontos desta malha; o quadro cobre até 14×13. Este raio contém uma vaga.
+        if(!point){
+          const limit=ceil(sqrt(ids.length))+1;
+          for(let radius=1;radius<=limit;radius++){
+            const candidates=[];
+            for(let dx=-radius;dx<=radius;dx++)for(let dy=-radius;dy<=radius;dy++){
+              if(max(abs(dx),abs(dy))!==radius)continue;
+              const p={x:round(origin.x+dx*(W+.01)),y:round(origin.y+dy*(H+.01))};
+              if((!avoidCorridor||!inCorridor(p))&&!hits(p,true))candidates.push(p);
+            }
+            if(candidates.length){candidates.sort((a,b)=>(a.x-origin.x)**2+(a.y-origin.y)**2-((b.x-origin.x)**2+(b.y-origin.y)**2)||abs(a.x-origin.x)-abs(b.x-origin.x)||a.x-b.x||a.y-b.y);point=candidates[0];break;}
+          }
+        }
+        l.positions[id]={x:point.x,y:point.y};insert(l.positions[id]);
       }
+      l.autoPositions=clone(l.positions);
+      // Uma posição pessoal não se torna automática ao ser usada como obstáculo.
+      for(const [id,p] of personalBase)l.autoPositions[id]=p;
+      l.autoRev=3;
       return;
     }
     if(v?.layout==='ranking'){
@@ -2167,7 +2239,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
   initSheet();
   function setPanMode(on){$('board-hint').hidden=true;panMode=on;$('pan-mode').setAttribute('aria-pressed',String(on));$('pan-mode').classList.toggle('active',on);network.classList.toggle('pan-mode',on||panKey);}
   network.addEventListener('pointerdown',ev=>{cancelCenter();clearTimeout(hoverTimer);hovered=null;scheduleFocus();readNetworkRect();$('board-hint').hidden=true;if(ev.pointerType==='mouse'&&ev.button!==0&&ev.button!==1)return;const n=ev.target.closest?.('[data-node-id]'),e=ev.target.closest?.('[data-edge-id]'),forcePan=!draftMode||ev.button===1||panMode||panKey||ev.pointerType==='touch';pointers.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});if(pointers.size===2){for(const id of pointers.keys())try{network.setPointerCapture(id);}catch{}}if(pointers.size===2){const p=[...pointers.values()],r=networkRect;pinch={distance:Math.hypot(p[1].x-p[0].x,p[1].y-p[0].y),x:(p[0].x+p[1].x)/2-r.left,y:(p[0].y+p[1].y)/2-r.top,camera:{...camera()}};nodeEls.get(drag?.id)?.classList.remove('dragging');drag=null;return;}const id=n?.dataset.nodeId,edgeId=e?.dataset.edgeId,kind=forcePan?'pan':id?'node':edgeId?'edge':'pan';drag={pointer:ev.pointerId,kind,id:id||edgeId,hitNodeId:id,hitEdgeId:edgeId,x:ev.clientX,y:ev.clientY,camera:{...camera()},pos:id?{...layout().positions[id]}:null,moved:false,captured:false,touch:ev.pointerType==='touch',before:kind==='node'?JSON.stringify(work):null};network.classList.add('grabbing');if(kind==='node')n?.classList.add('dragging');});
-  network.addEventListener('pointermove',ev=>{if(pointers.has(ev.pointerId))pointers.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});if(pinch&&pointers.size===2){const ps=[...pointers.values()],r=networkRect,d=Math.hypot(ps[1].x-ps[0].x,ps[1].y-ps[0].y),x=(ps[0].x+ps[1].x)/2-r.left,y=(ps[0].y+ps[1].y)/2-r.top,c=pinch.camera,k=Math.max(.04,Math.min(3,c.k*d/Math.max(1,pinch.distance)));layout().camera={k,x:x-(pinch.x-c.x)*k/c.k,y:y-(pinch.y-c.y)*k/c.k};scheduleCameraApply();return;}if(!drag||ev.pointerId!==drag.pointer)return;const dx=ev.clientX-drag.x,dy=ev.clientY-drag.y;if(Math.hypot(dx,dy)>4)drag.moved=true;if(drag.moved&&!drag.captured){try{network.setPointerCapture(drag.pointer);drag.captured=true;}catch{}}if(drag.kind==='edge'&&drag.moved)drag.kind='pan';if(drag.kind==='node'&&drag.moved){const p={x:drag.pos.x+dx/camera().k,y:drag.pos.y+dy/camera().k};layout().positions[drag.id]=p;nodeEls.get(drag.id)?.setAttribute('transform',`translate(${p.x} ${p.y})`);updatePaths(drag.id);}else if(drag.kind==='pan'&&drag.moved){layout().camera={...drag.camera,x:drag.camera.x+dx,y:drag.camera.y+dy};scheduleCameraApply();}});
+  network.addEventListener('pointermove',ev=>{if(pointers.has(ev.pointerId))pointers.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});if(pinch&&pointers.size===2){const ps=[...pointers.values()],r=networkRect,d=Math.hypot(ps[1].x-ps[0].x,ps[1].y-ps[0].y),x=(ps[0].x+ps[1].x)/2-r.left,y=(ps[0].y+ps[1].y)/2-r.top,c=pinch.camera,k=Math.max(.04,Math.min(3,c.k*d/Math.max(1,pinch.distance)));layout().camera={k,x:x-(pinch.x-c.x)*k/c.k,y:y-(pinch.y-c.y)*k/c.k};scheduleCameraApply();return;}if(!drag||ev.pointerId!==drag.pointer)return;const dx=ev.clientX-drag.x,dy=ev.clientY-drag.y;if(Math.hypot(dx,dy)>4)drag.moved=true;if(drag.moved&&!drag.captured){try{network.setPointerCapture(drag.pointer);drag.captured=true;}catch{}}if(drag.kind==='edge'&&drag.moved)drag.kind='pan';if(drag.kind==='node'&&drag.moved){const p={x:drag.pos.x+dx/camera().k,y:drag.pos.y+dy/camera().k};layout().positions[drag.id]=p;if(work.view==='all')(layout().dragged??={})[drag.id]=true;nodeEls.get(drag.id)?.setAttribute('transform',`translate(${p.x} ${p.y})`);updatePaths(drag.id);}else if(drag.kind==='pan'&&drag.moved){layout().camera={...drag.camera,x:drag.camera.x+dx,y:drag.camera.y+dy};scheduleCameraApply();}});
   // A captura só começa no arrasto, para o duplo clique parado continuar no cartão.
   // Se o dblclick ainda cair no fundo, vale o cartão do clique que não se moveu.
   // Dois pointerup no mesmo cartão, em menos de 500 ms, expandem mesmo sem o evento dblclick.
