@@ -213,7 +213,7 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.origin !== origin) return route.abort();
-      if (url.pathname === '/config.js') return route.fulfill({ contentType: 'text/javascript', body: 'globalThis.ATLAS_PUBLIC_CONFIG={supabaseUrl:"https://fixture.supabase.co",supabaseAnonKey:"public-test-placeholder"};' });
+      if (url.pathname === '/config.js') return route.fulfill({ contentType: 'text/javascript', body: 'globalThis.ATLAS_PUBLIC_CONFIG={supabaseUrl:"https://ozeiyqpbtggvuyhplisa.supabase.co",supabaseAnonKey:"public-test-placeholder"};' });
       if (url.pathname === '/dados-nucleo.json') {
         nucleoAttempts.push(url.search);
         if (routes.nucleo) return routes.nucleo(route, nucleoAttempts.length);

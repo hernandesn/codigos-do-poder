@@ -117,9 +117,9 @@ test('cited sources render safe HTTP(S) links and literal titles/locators before
   const lines = ui.nodes['chat-log'].children[0].children;
   assert.equal(lines[1].className, 'chat-answer');
   const sources = lines[2];
-  assert.equal(sources.tagName, 'div');
+  assert.equal(sources.tagName, 'details');
   assert.equal(sources.className, 'chat-sources');
-  assert.equal(sources.children[0].textContent, 'Fontes citadas');
+  assert.equal(sources.children[0].textContent, 'Fontes (2) ▾');
   const list = sources.children[1];
   assert.equal(list.tagName, 'ul');
   assert.equal(list.children.length, 2);
