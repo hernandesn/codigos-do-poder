@@ -1,0 +1,12 @@
+{
+  "grounding_documentado": 0.95,
+  "fora_da_base_revocacao": 0.90,
+  "fora_da_base_precisao": 0.90,
+  "entidades": 0.85,
+  "fontes": 0.80,
+  "pt_br": 0.95,
+  "p95_ms": 8000,
+  "p50_ms": 3000,
+  "custo_medio_usd": 0.002,
+  "sem_ligacao": 1.0
+}

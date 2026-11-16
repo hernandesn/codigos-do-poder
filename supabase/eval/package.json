@@ -1,0 +1,12 @@
+{
+  "name": "aion-eval-harness",
+  "private": true,
+  "type": "module",
+  "description": "Harness offline de avaliação do chat AION (Fase 0). Não entra no caminho de produção.",
+  "scripts": {
+    "test": "node --experimental-strip-types --test harness_test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16"
+  }
+}
