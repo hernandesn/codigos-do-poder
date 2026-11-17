@@ -39,6 +39,61 @@ function sobreposicao(page) {
   });
 }
 
+function lerSetas() {
+  function dif(a, b) {
+    let d = Math.abs(a - b) % 360;
+    if (d > 180) d = 360 - d;
+    return d;
+  }
+  const svg = document.getElementById('mapa');
+  const ctm = svg.getScreenCTM();
+  function para(x, y) {
+    const p = new DOMPoint(x, y).matrixTransform(ctm);
+    return [p.x, p.y];
+  }
+  return [...document.querySelectorAll('#mm-fora .fora')].map(el => {
+    const box = el.getBoundingClientRect();
+    const seta = el.querySelector('path.seta');
+    const m = seta.getScreenCTM();
+    const marcada = (seta.getAttribute('data-ponta') || '').split(',').map(Number);
+    const okMarca = marcada.length === 2 && marcada.every(n => Number.isFinite(n));
+    let ponta = null;
+    let centro = null;
+    if (okMarca) {
+      const p = new DOMPoint(marcada[0], marcada[1]).matrixTransform(m);
+      ponta = [p.x, p.y];
+      const bb = seta.getBBox();
+      const c = new DOMPoint(bb.x + bb.width / 2, bb.y + bb.height / 2).matrixTransform(m);
+      centro = [c.x, c.y];
+    }
+    const iso = el.getAttribute('data-iso');
+    const resto = (el.getAttribute('data-resto') || '').split(',').filter(Boolean);
+    const alvos = iso && iso !== '+' ? [iso] : resto;
+    let sx = 0, sy = 0, n = 0;
+    alvos.forEach(id => {
+      const q = window.__mapa.ponto(id);
+      if (!q) return;
+      const s = para(q[0], q[1]);
+      sx += s[0];
+      sy += s[1];
+      n++;
+    });
+    const meioX = box.left + box.width / 2;
+    const meioY = box.top + box.height / 2;
+    const ang = ponta && centro ? Math.atan2(ponta[1] - centro[1], ponta[0] - centro[0]) * 180 / Math.PI : null;
+    const real = n ? Math.atan2(sy / n - meioY, sx / n - meioX) * 180 / Math.PI : null;
+    const coincide = !!(ponta && centro && Math.hypot(ponta[0] - centro[0], ponta[1] - centro[1]) > 1);
+    return {
+      nome: el.querySelector('text') ? el.querySelector('text').textContent : '',
+      iso,
+      ang: ang == null ? null : Math.round(ang * 10) / 10,
+      real: real == null ? null : Math.round(real * 10) / 10,
+      delta: ang == null || real == null ? null : Math.round(dif(ang, real) * 10) / 10,
+      coincide
+    };
+  });
+}
+
 function ordemPainel(page) {
   return page.evaluate(() => {
     const kids = [...document.querySelectorAll('#mm-conteudo > *')];
@@ -600,6 +655,12 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
           assert.equal(f.nota, false, JSON.stringify(f));
           assert.equal(f.folha, false, JSON.stringify(f));
         }
+        const setas = await page.evaluate(lerSetas);
+        assert.ok(setas.length > 0, iso + ' sem indicador');
+        for (const f of setas) {
+          assert.equal(f.coincide, true, JSON.stringify(f));
+          assert.ok(f.delta != null && f.delta < 30, JSON.stringify(f));
+        }
         for (let i = 0; i < caixaPais.fora.length; i++) {
           for (let j = i + 1; j < caixaPais.fora.length; j++) {
             const a = caixaPais.fora[i].box;
@@ -624,7 +685,6 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       const ordemMeia = await ordemPainel(page);
       assert.ok(ordemMeia.nome < ordemMeia.resumo && ordemMeia.resumo < ordemMeia.lista && ordemMeia.lista < ordemMeia.hist && ordemMeia.hist < ordemMeia.leg && ordemMeia.leg === ordemMeia.n - 1, JSON.stringify(ordemMeia));
       assert.deepEqual(await sobreposicao(page), []);
-      await page.screenshot({ path: path.join(prints, 'mob-393-brasil.png') });
       await page.locator('#alca').click();
       await page.waitForFunction(() => document.body.classList.contains('folha-cheia'));
       const listaVisivel = await page.evaluate(() => {
@@ -645,6 +705,34 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       assert.deepEqual(pequenos, []);
       assert.equal(proibir.test(await page.locator('#mapa-mundi-tela').innerText()), false);
       assert.deepEqual(await page.evaluate(() => window.__csp), []);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+
+    // Coluna dos chips, 3×, só o recorte.
+    {
+      const { context, page, errors } = await contexto({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
+      await page.goto(origin + '/#mapa-mundi/BR');
+      await page.waitForSelector('#mm-fora .fora');
+      await page.waitForTimeout(200);
+      const clip = await page.evaluate(() => {
+        const boxes = [...document.querySelectorAll('#mm-fora .fora')].map(el => el.getBoundingClientRect());
+        const left = Math.min(...boxes.map(b => b.left));
+        const top = Math.min(...boxes.map(b => b.top));
+        const right = Math.max(...boxes.map(b => b.right));
+        const bottom = Math.max(...boxes.map(b => b.bottom));
+        const pad = 6;
+        const x = Math.max(0, Math.floor(left - pad));
+        const y = Math.max(0, Math.floor(top - pad));
+        return {
+          x,
+          y,
+          width: Math.min(innerWidth - x, Math.ceil(right + pad) - x),
+          height: Math.min(innerHeight - y, Math.ceil(bottom + pad) - y)
+        };
+      });
+      await page.screenshot({ path: path.join(prints, 'mob-393-brasil.png'), clip });
+      await page.screenshot({ path: path.join(prints, 'mob-393-chips-zoom.png'), clip });
       assert.deepEqual(errors, []);
       await context.close();
     }
@@ -674,6 +762,18 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       assert.equal(geo.legPainel, true);
       assert.equal(geo.sobre, false);
       assert.equal(geo.scroll, true);
+      for (const iso of ['BR', 'US', 'VA']) {
+        await page.evaluate(a => window.__mapa.escolher(a), iso);
+        await page.waitForFunction(a => location.hash === '#mapa-mundi/' + a, iso);
+        await page.waitForTimeout(150);
+        const setas = await page.evaluate(lerSetas);
+        for (const f of setas) {
+          assert.equal(f.coincide, true, JSON.stringify(f));
+          assert.ok(f.delta != null && f.delta < 30, 'paisagem ' + JSON.stringify(f));
+        }
+      }
+      await page.evaluate(() => window.__mapa.escolher('BR'));
+      await page.waitForFunction(() => location.hash === '#mapa-mundi/BR');
       const ordemDeitada = await ordemPainel(page);
       assert.ok(ordemDeitada.nome < ordemDeitada.resumo && ordemDeitada.resumo < ordemDeitada.lista && ordemDeitada.lista < ordemDeitada.hist && ordemDeitada.hist < ordemDeitada.leg && ordemDeitada.leg === ordemDeitada.n - 1, JSON.stringify(ordemDeitada));
       assert.deepEqual(await sobreposicao(page), [], 'paisagem');
