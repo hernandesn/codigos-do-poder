@@ -113,6 +113,8 @@
     promessa = css(raiz + 'mapa-mundi.css').then(function () {
       return script(raiz + 'vendor/d3-mapa.min.js');
     }).then(function () {
+      return script(raiz + 'rotulos-pt.js');
+    }).then(function () {
       return script(raiz + 'mapa-mundi.js');
     }).then(function () {
       return Promise.all([

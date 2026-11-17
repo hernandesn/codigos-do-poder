@@ -59,12 +59,31 @@ test('MM-02 e MM-05: derivação, JSON público e tamanhos', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'));
   assert.ok(html.length < 400000, 'index ' + html.length);
   assert.ok(gzip9('index.html') < 120000, 'index gzip');
-  const mods = ['mapa-mundi/mapa-mundi.js', 'mapa-mundi/mapa-mundi.css', 'mapa-mundi/vendor/d3-mapa.min.js', 'mapa-mundi/vendor/countries-110m.json', 'mapa-mundi/dados-mundo.json'];
+  const mods = ['mapa-mundi/mapa-mundi.js', 'mapa-mundi/mapa-mundi.css', 'mapa-mundi/rotulos-pt.js', 'mapa-mundi/vendor/d3-mapa.min.js', 'mapa-mundi/vendor/countries-110m.json', 'mapa-mundi/dados-mundo.json'];
   const soma = mods.reduce((n, f) => n + gzip9(f), 0);
   assert.ok(soma <= 150000, 'módulo gzip ' + soma);
   const texto = html.toString('utf8');
   assert.equal(texto.match(/mapa-mundi\/carregar\.js/g).length, 1);
   assert.equal((texto.match(/<script src="mapa-mundi\/carregar\.js" defer><\/script>/g) || []).length, 1);
+});
+
+test('rótulos pt-BR cobrem cada valor exibido e o JSON público continua cru', () => {
+  const vm = require('node:vm');
+  const lista = JSON.parse(execFileSync('python3', ['mapa-mundi/listar_rotulos.py'], { cwd: root, encoding: 'utf8' }));
+  const ctx = { window: {} };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(root, 'mapa-mundi/rotulos-pt.js'), 'utf8'), ctx);
+  const mapa = ctx.window.ROTULOS_PT;
+  const faltam = lista.filter(k => !Object.prototype.hasOwnProperty.call(mapa, k));
+  assert.deepEqual(faltam, []);
+  assert.equal(lista.length, Object.keys(mapa).length);
+  const outra = JSON.parse(execFileSync('python3', ['mapa-mundi/listar_rotulos.py'], { cwd: root, encoding: 'utf8' }));
+  assert.deepEqual(outra, lista);
+  const pub = fs.readFileSync(path.join(root, 'mapa-mundi/dados-mundo.json'), 'utf8');
+  assert.ok(pub.includes('relacoes_diplomaticas'));
+  assert.ok(pub.includes('orgao_que_emite_decisao'));
+  assert.ok(pub.includes('participacao_sindicato_bancario'));
+  assert.equal(pub.includes('relações diplomáticas'), false);
 });
 
 function contentType(file) {
@@ -180,7 +199,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       await page.waitForFunction(() => window.mural);
       await page.locator('#inspector').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#mapa-mundi-tela:not([hidden])').count(), 0);
-      const vazou = pedidos.filter(u => u.includes('mapa-mundi/vendor/') || u.includes('dados-mundo.json') || u.includes('mapa-mundi.css') || u.includes('mapa-mundi.js'));
+      const vazou = pedidos.filter(u => u.includes('mapa-mundi/vendor/') || u.includes('dados-mundo.json') || u.includes('mapa-mundi.css') || u.includes('mapa-mundi.js') || u.includes('rotulos-pt.js'));
       assert.deepEqual(vazou, []);
       assert.ok(pedidos.some(u => u.includes('mapa-mundi/carregar.js')));
       assert.deepEqual(await page.evaluate(() => window.__csp), []);
@@ -274,6 +293,16 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       const vazio = await page.evaluate(() => document.querySelector('#paises path:not(.tem)')?.getAttribute('fill'));
       assert.equal(vazio, '#1c1612');
       await page.screenshot({ path: path.join(prints, 'desk-1440-brasil.png') });
+      const crus = ['cao ', 'coes', 'orgao', 'diplomatic', 'participacao'];
+      for (const iso of ['BR', 'US', 'VA']) {
+        await page.evaluate(a => window.__mapa.escolher(a), iso);
+        await page.waitForFunction(a => location.hash === '#mapa-mundi/' + a, iso);
+        const vis = await page.locator('#mm-conteudo').innerText();
+        for (const cru of crus) assert.equal(vis.includes(cru), false, iso + ' contém ' + JSON.stringify(cru));
+      }
+      assert.match(await page.evaluate(() => { window.__mapa.escolher('BR'); return document.getElementById('mm-conteudo').innerText; }), /relações diplomáticas/);
+      assert.match(await page.locator('#mm-conteudo').innerText(), /órgão que emite a decisão/);
+      assert.match(await page.locator('#mm-conteudo').innerText(), /participação em sindicato bancário/);
       const pequenos = await page.evaluate(() => [...document.querySelectorAll('#mapa-mundi-tela button, #mapa-mundi-tela a, #map-mode button')].filter(e => {
         if (e.closest('.fichas')) return false;
         const r = e.getBoundingClientRect();

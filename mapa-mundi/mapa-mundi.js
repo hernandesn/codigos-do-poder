@@ -13,7 +13,13 @@
   function $(id) { return document.getElementById(id); }
   function fmt(n) { return Number(n || 0).toLocaleString('pt-BR'); }
   function pl(n, a, b) { return n === 1 ? a : b; }
-  function tipo(t) { return String(t || '').replace(/_/g, ' '); }
+  function rotulo(t) {
+    var s = String(t || '');
+    if (!s) return '';
+    var mapa = window.ROTULOS_PT;
+    if (mapa && Object.prototype.hasOwnProperty.call(mapa, s)) return mapa[s];
+    return s.replace(/_/g, ' ');
+  }
   function cor(n) {
     if (!n) return '#1c1612';
     if (n < 3) return '#4d3d2f';
@@ -308,7 +314,7 @@
           el('span', { text: P[b] ? P[b].nome : b }),
           el('b', { text: String(v.s + v.t + v.p) })
         ), tipos);
-        if (v.ex && v.ex[0]) li.append(el('p', { class: 'ex', text: v.ex[0][0] + ' · ' + tipo(v.ex[0][1]) + ' · ' + v.ex[0][2] }));
+        if (v.ex && v.ex[0]) li.append(el('p', { class: 'ex', text: v.ex[0][0] + ' · ' + rotulo(v.ex[0][1]) + ' · ' + v.ex[0][2] }));
         ulL.append(li);
       });
       conteudo.append(ulL);
@@ -317,7 +323,7 @@
       conteudo.append(el('h3', { text: 'Famílias e instituições ligadas' }));
       var ulE = el('ul', { class: 'ligadas' });
       p.ligadas.forEach(function (x) {
-        ulE.append(el('li', null, linkFicha(x[0], x[1]), document.createTextNode(' '), el('small', { text: tipo(x[2]) + ' · ' + x[3] + ' lig.' })));
+        ulE.append(el('li', null, linkFicha(x[0], x[1]), document.createTextNode(' '), el('small', { text: rotulo(x[2]) + ' · ' + x[3] + ' lig.' })));
       });
       conteudo.append(ulE);
     }
@@ -332,7 +338,7 @@
     conteudo.append(el('h3', { text: 'Fichas (' + fmt(p.fichas.length) + ')' }));
     var ulF = el('ul', { class: 'fichas' });
     p.fichas.slice(0, 60).forEach(function (e) {
-      var extra = tipo(e[2]) + (e[3] ? ' · ' + e[3] : '');
+      var extra = rotulo(e[2]) + (e[3] ? ' · ' + e[3] : '');
       ulF.append(el('li', null, linkFicha(e[0], e[1]), document.createTextNode(' '), el('small', { text: extra })));
     });
     conteudo.append(ulF);
