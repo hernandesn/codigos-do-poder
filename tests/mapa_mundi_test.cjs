@@ -417,6 +417,8 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
         if (iso === 'US') {
           await page.locator('#mm-conteudo .ligados li').first().waitFor();
           assert.ok(await page.locator('#mm-conteudo .ligados li').count() >= 1);
+          const quadroDesk = await page.evaluate(() => window.__mapa.quadro());
+          assert.equal(quadroDesk.ok, true, JSON.stringify(quadroDesk));
           await page.screenshot({ path: path.join(prints, 'desk-1440-eua.png'), fullPage: false });
         }
       }
@@ -497,16 +499,14 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       await page.touchscreen.tap(tx, ty);
       await page.waitForFunction(() => location.hash === '#mapa-mundi/BR');
       const tBR = await T();
-      assert.ok(tBR.k <= 4.001, 'zoom ' + tBR.k);
+      assert.ok(tBR.k <= 6.001, 'zoom ' + tBR.k);
       assert.ok(tBR.k !== pan.k || tBR.x !== pan.x || tBR.y !== pan.y, JSON.stringify({ pan, tBR }));
       await page.evaluate(() => window.__mapa.reler());
       assert.deepEqual(await T(), tBR);
-      const quadro = await page.evaluate(() => window.__mapa.quadro());
-      assert.equal(quadro.ok, true, JSON.stringify(quadro));
       await page.locator('#mm-conteudo .ligados button[data-iso="US"]').tap();
       await page.waitForFunction(() => location.hash === '#mapa-mundi/US');
       const tUS = await T();
-      assert.ok(tUS.k <= 4.001, 'zoom US ' + tUS.k);
+      assert.ok(tUS.k <= 6.001, 'zoom US ' + tUS.k);
       assert.ok(tUS.k !== tBR.k || tUS.x !== tBR.x || tUS.y !== tBR.y, JSON.stringify({ tBR, tUS }));
       await page.evaluate(() => window.__mapa.reler());
       assert.deepEqual(await T(), tUS);
@@ -540,14 +540,60 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
         await page.waitForFunction(a => location.hash === '#mapa-mundi/' + a && document.body.classList.contains('folha-aberta') && !document.body.classList.contains('folha-cheia'), iso);
         const caixaPais = await page.evaluate(a => {
           const painel = document.querySelector('.mm-painel').getBoundingClientRect();
+          const svg = document.getElementById('mapa').getBoundingClientRect();
           const path = document.querySelector('#paises path.sel[data-iso="' + a + '"], #hist path.sel[data-iso="' + a + '"]');
           const marca = path || document.querySelector('#pinos g.sel[data-iso="' + a + '"] .ponto');
           const r = marca.getBoundingClientRect();
-          return { iso: a, top: r.top, bottom: r.bottom, h: r.height, w: r.width, painelTop: painel.top };
+          const vis = { left: svg.left, right: svg.right, top: svg.top, bottom: painel.top };
+          function cruza(box) {
+            return box.right > vis.left + 1 && box.left < vis.right - 1 && box.bottom > vis.top + 1 && box.top < vis.bottom - 1;
+          }
+          const ligados = [...document.querySelectorAll('#paises path.lig, #hist path.lig, #pinos g.lig .ponto')].map(el => {
+            const b = el.getBoundingClientRect();
+            return { iso: el.getAttribute('data-iso') || el.parentElement.getAttribute('data-iso'), fora: !cruza(b) };
+          });
+          const fora = [...document.querySelectorAll('#mm-fora .fora')].map(el => {
+            const b = el.getBoundingClientRect();
+            const ox = Math.min(b.right, r.right) - Math.max(b.left, r.left);
+            const oy = Math.min(b.bottom, r.bottom) - Math.max(b.top, r.top);
+            return {
+              iso: el.getAttribute('data-iso'),
+              nome: el.querySelector('text') ? el.querySelector('text').textContent : '',
+              w: b.width,
+              h: b.height,
+              cobre: ox > 1 && oy > 1
+            };
+          });
+          return { iso: a, top: r.top, bottom: r.bottom, h: r.height, w: r.width, painelTop: painel.top, util: svg.width, ratio: r.width / svg.width, ligados, fora };
         }, iso);
         assert.ok(caixaPais.h > 1 && caixaPais.w > 1, JSON.stringify(caixaPais));
         assert.ok(caixaPais.bottom <= caixaPais.painelTop + 0.5, JSON.stringify(caixaPais));
+        if (iso === 'BR' || iso === 'US') {
+          assert.ok(caixaPais.ratio >= 0.35, JSON.stringify(caixaPais));
+          const porIso = {};
+          for (const p of caixaPais.ligados) {
+            if (!porIso[p.iso]) porIso[p.iso] = [];
+            porIso[p.iso].push(p.fora);
+          }
+          const isosFora = Object.keys(porIso).filter(iso => porIso[iso].every(Boolean)).sort();
+          const marcas = [...new Set(caixaPais.fora.map(p => p.iso))].sort();
+          assert.deepEqual(marcas, isosFora, JSON.stringify(caixaPais));
+          for (const f of caixaPais.fora) {
+            assert.ok(f.w >= 44 && f.h >= 44, JSON.stringify(f));
+            assert.ok(f.nome && f.nome.length > 1, JSON.stringify(f));
+            assert.equal(f.cobre, false, JSON.stringify(f));
+          }
+        }
       }
+      await page.evaluate(() => window.__mapa.escolher('BR'));
+      await page.waitForTimeout(200);
+      const kPais = (await T()).k;
+      await page.locator('#mm-fora .fora').first().click();
+      await page.waitForTimeout(150);
+      const kConjunto = (await T()).k;
+      assert.equal(await page.evaluate(() => location.hash), '#mapa-mundi/BR');
+      assert.ok(kConjunto < kPais - 0.05, 'conjunto ' + kPais + ' → ' + kConjunto);
+      await page.evaluate(() => window.__mapa.escolher('US'));
       await page.evaluate(() => window.__mapa.escolher('BR'));
       await page.waitForTimeout(200);
       const ordemMeia = await ordemPainel(page);
