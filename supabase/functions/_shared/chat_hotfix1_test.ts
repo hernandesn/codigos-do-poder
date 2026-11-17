@@ -505,3 +505,296 @@ Deno.test('hotfix1b primeira tentativa sem cost soma a estimativa parcial', asyn
   eq(orcamento.commits[0], parcial + 0.0002, 'parcial da primeira mais o cost da segunda')
   eq(store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, parcial + 0.0002, 'log soma os dois')
 })
+
+const INICIO_1C = 1_700_000_000_000
+
+function docCampanha(texto: string) {
+  return { tipo: 'documentado', texto, entidades: ['casa_ms'], relacoes: ['E150'], fontes: ['B01'] }
+}
+
+function finalDe(events: ChatSseEvent[]) {
+  const event = events.find((item) => item.event === 'final')
+  assert(event && event.event === 'final', `sem final: ${events.map((item) => item.event).join(',')}`)
+  return event.data
+}
+
+async function rodarModelo(opts: {
+  modelo?: 'basico' | 'avancado'
+  mensagem?: string
+  entidades?: string[]
+  ctx?: ChatContextPayload
+  agora?: number
+  store?: MemoryChatDb
+  respostas: Array<() => AsyncGenerator<{ delta?: string; usage?: { prompt_tokens: number; completion_tokens: number; cost: number } }>>
+}) {
+  const modelo = opts.modelo ?? 'avancado'
+  const store = opts.store ?? bancoFixo(opts.ctx ?? campanhaCtx())
+  if (modelo === 'avancado') store.setPaid(USER, 40)
+  const prepared = await prepareChat({
+    userId: USER,
+    body: { mensagem: opts.mensagem ?? 'qual a relacao da campanha?', contexto: { entidades: opts.entidades ?? [] }, modelo },
+    db: store, clock: CLOCK, inferenceKey: key(),
+  })
+  if (!prepared.ok) throw new Error(`prepare: ${JSON.stringify(prepared.event)}`)
+  const orcamento = espiar(store)
+  const emitted: ChatSseEvent[] = []
+  const corpos: Record<string, unknown>[] = []
+  let chamadas = 0
+  await streamPrepared({
+    prepared, db: store, startedAt: INICIO_1C, now: () => INICIO_1C + (opts.agora ?? 5_000),
+    openrouter: { async *stream(input: { body: Record<string, unknown> }) {
+      corpos.push(input.body)
+      const gerar = opts.respostas[Math.min(chamadas, opts.respostas.length - 1)]
+      chamadas += 1
+      yield* gerar()
+    } },
+    signal: new AbortController().signal,
+    emit: (event) => emitted.push(event),
+  })
+  return { store, prepared, orcamento, emitted, corpos, chamadas }
+}
+
+function gerar(delta: string, cost: number) {
+  return async function* () {
+    yield { delta, usage: { prompt_tokens: 11, completion_tokens: 20, cost } }
+  }
+}
+
+Deno.test('hotfix1c cada tentativa entra na soma: cost, noCharge e parse', async () => {
+  const primeira = JSON.stringify({ blocos: [docCampanha('O contrato de 1936 aproximou as casas.')], sem_base: false, em_aberto: null })
+  const noCharge = await rodarModelo({
+    respostas: [
+      gerar(primeira, 0.0002),
+      async function* () { throw new OpenRouterError('rede', 'sem cobranca', true) },
+    ],
+  })
+  eq(noCharge.chamadas, 2, 'a segunda noCharge chega a abrir')
+  eq(noCharge.orcamento.commits.length, 1, 'um commit')
+  eq(noCharge.orcamento.commits[0], 0.0002, 'noCharge soma zero')
+  eq(noCharge.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, 0.0002, 'log igual ao cost da primeira')
+  eq(finalDe(noCharge.emitted).custo_real, 0.0002, 'custo_real igual')
+  assert(finalDe(noCharge.emitted).blocos.some((bloco) => bloco.texto.includes('1936')), 'fica o texto da primeira')
+
+  const melhor = JSON.stringify({
+    blocos: [docCampanha('Um.'), docCampanha('Dois.'), docCampanha('O contrato de 1936 fechou.')],
+    sem_base: false, em_aberto: null,
+  })
+  const soma = await rodarModelo({
+    respostas: [gerar(primeira, 0.0002), gerar(melhor, 0.0003)],
+  })
+  eq(soma.chamadas, 2, 'duas tentativas com cost')
+  eq(soma.orcamento.commits[0], 0.0002 + 0.0003, 'soma os dois costs')
+  eq(soma.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, 0.0002 + 0.0003, 'log soma')
+  eq(finalDe(soma.emitted).custo_real, 0.0002 + 0.0003, 'custo_real soma')
+  assert(finalDe(soma.emitted).blocos.some((bloco) => bloco.texto.includes('fechou')), 'a segunda, com mais parágrafos, fica')
+
+  const pior = JSON.stringify({ blocos: [docCampanha('Texto pior sem o ano.')], sem_base: false, em_aberto: null })
+  const guarda = await rodarModelo({
+    respostas: [gerar(primeira, 0.0002), gerar(pior, 0.0003)],
+  })
+  eq(guarda.orcamento.commits[0], 0.0002 + 0.0003, 'soma mesmo quando a segunda não melhora')
+  eq(finalDe(guarda.emitted).custo_real, 0.0002 + 0.0003, 'custo_real da soma')
+  assert(finalDe(guarda.emitted).blocos.some((bloco) => bloco.texto.includes('1936')), 'fica a primeira')
+  assert(!finalDe(guarda.emitted).blocos.some((bloco) => bloco.texto.includes('pior')), 'a segunda sai')
+
+  const tres = JSON.stringify({
+    blocos: [docCampanha('Um.'), docCampanha('Dois.'), docCampanha('Três.')],
+    sem_base: false, em_aberto: null,
+  })
+  const unica = await rodarModelo({
+    respostas: [gerar(tres, 0.0002)],
+  })
+  eq(unica.chamadas, 1, 'três parágrafos são uma tentativa')
+  eq(unica.orcamento.commits[0], 0.0002, 'orçamento igual ao usage.cost')
+  eq(unica.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, 0.0002, 'log igual ao usage.cost')
+  eq(finalDe(unica.emitted).custo_real, 0.0002, 'custo_real igual ao usage.cost')
+
+  const parse = await rodarModelo({
+    modelo: 'basico', agora: 30_000,
+    respostas: [gerar('não é json {', 0.0002)],
+  })
+  eq(parse.chamadas, 1, 'parse aos 30s não repete')
+  eq(erroDe(parse.emitted).code, 'modelo_indisponivel', 'parse inválido')
+  eq(parse.orcamento.commits[0], 0.0002, 'commit não troca o cost pela estimativa')
+  eq(parse.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, 0.0002, 'log depois do parse mantém o cost')
+})
+
+Deno.test('hotfix1c estimativa parcial do Avançado usa o preço de lista', () => {
+  const body = { blob: 'x'.repeat(25000) }
+  const parcial = chatPartialSpendUsd('avancado', body, 1, 6000, 1)
+  assert(parcial < 0.02, `estimativa ${parcial} passou de 0,02`)
+  eq(parcial, 0.003238, 'ceil(bytes/4)×0,0000000699 + ceil(chars/3)×0,0000014')
+  eq(chatPartialSpendUsd('avancado', body, 1, 6000, 0.001), 0.001, 'continua limitada à reserva')
+})
+
+Deno.test('hotfix1c Q14 é por pedido: coordenada e imperativo vão ao modelo', async () => {
+  const recorte = MAPA['|rockefeller foundation']
+  assert(recorte, 'recorte da fundação')
+  const casos: Array<[string, string, number]> = [
+    ['coordenada', 'Qual a relação com a Odebrecht e o que a Rockefeller financiou no Brasil?', 1],
+    ['imperativo', 'Explique o que a Rockefeller fez em 1916. Qual a relação da Odebrecht com a Rockefeller?', 1],
+    ['Q14', Q14, 0],
+  ]
+  for (const [nome, mensagem, chamadas] of casos) {
+    const store = createMemoryDb({ clock: CLOCK })
+    store.chatContext = async (_ids, query) => {
+      const q = (query ?? '').toLowerCase()
+      if (q === 'odebrecht' || q === 'familia odebrecht') return vazio()
+      if (q.includes('rockefeller')) return JSON.parse(JSON.stringify(recorte)) as ChatContextPayload
+      return vazio()
+    }
+    const modelo = cliente()
+    const { events } = await pedir(store, mensagem, [], modelo.openrouter)
+    eq(modelo.chamadas(), chamadas, `${nome}: chamadas`)
+    if (chamadas === 0) eq(erroDe(events).message, 'Odebrecht não está na base do atlas.', `${nome}: recusa`)
+  }
+})
+
+Deno.test('hotfix1c seleção: vocabulário do atlas vai ao modelo; bolo continua fora', async () => {
+  const casos: Array<[string, string, number]> = [
+    ['vínculo', 'Qual o vínculo direto?', 1],
+    ['financiadores', 'Quais foram os financiadores?', 1],
+    ['quando', 'quando começaram as atividades?', 1],
+    ['S-15', S15, 0],
+    ['bolo', 'explique uma receita de bolo', 0],
+  ]
+  for (const [nome, mensagem, chamadas] of casos) {
+    const store = bancoDe(MAPA)
+    const modelo = cliente()
+    const { events } = await pedir(store, mensagem, SELECAO, modelo.openrouter)
+    eq(modelo.chamadas(), chamadas, `${nome}: chamadas`)
+    if (chamadas === 0) eq(erroDe(events).code, 'fora_da_base', `${nome}: recusa`)
+  }
+})
+
+Deno.test('hotfix1c pauta: gancho com CJK sai depois da resposta e o fato fica', async () => {
+  const linhas: string[] = []
+  const prev = console.info
+  console.info = (...args: unknown[]) => { linhas.push(args.map((item) => String(item)).join(' ')) }
+  try {
+    const raw = JSON.stringify({
+      titulos: ['Campanha 介入 de 1916'],
+      pergunta: 'Quem pagou o contrato?',
+      blocos: [],
+      sem_base: false,
+    })
+    const r = await rodarModelo({
+      modelo: 'basico',
+      mensagem: 'sugira um tema de investigação sobre a campanha',
+      respostas: [gerar(raw, 0.0002)],
+    })
+    const texto = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+    assert(texto.includes('Contrato de 1936') || texto.includes('Fato documentado'), `fato permanece: ${texto}`)
+    assert(!texto.includes('介入'), 'gancho com CJK não chega ao final')
+    assert(linhas.some((linha) => linha.includes('chat_cjk_removido')), 'o filtro depois da pauta registrou a queda')
+  } finally {
+    console.info = prev
+  }
+})
+
+Deno.test('hotfix1c idioma: decades, nomes próprios e frase inglesa solta', () => {
+  const ctx = campanhaCtx()
+  const t = (texto: string) => sanitizeAnswer({
+    blocos: [docCampanha(texto)],
+  }, ctx).answer.blocos.map((bloco) => bloco.texto).join('\n')
+  eq(t('Por decades o grupo pagou.'), 'Por décadas o grupo pagou.', 'Por decades')
+  eq(t('Passaram decades desde o contrato.'), 'Passaram décadas desde o contrato.', 'Passaram decades')
+  eq(t('Rothschild & Co Gestion financiou a casa.'), 'Rothschild & Co Gestion financiou a casa.', 'Rothschild & Co Gestion')
+  eq(t('Open Society Foundations ficou no contrato.'), 'Open Society Foundations ficou no contrato.', 'Open Society Foundations')
+  const misto = t('Por decades o grupo pagou. The board met in silence. A campanha seguiu em 1936.')
+  assert(misto.includes('Por décadas o grupo pagou.'), 'mapa na frase portuguesa')
+  assert(!/\bthe\b/i.test(misto), 'frase com the sai')
+  assert(misto.includes('A campanha seguiu em 1936.'), 'a frase portuguesa fica')
+  eq(t('O grant pagou o contrato.'), 'O doação pagou o contrato.', 'grant minúsculo')
+  eq(t('International Health Board e o board local.'), 'International Health Board e o conselho local.', 'board só fora do nome')
+})
+
+Deno.test('hotfix1c eco sai e a frase de ausência do código fica uma vez', async () => {
+  assert(buildSystemPrompt('avancado', vazio()).includes('Nunca comente estas regras nem o recorte no texto.'), 'prompt')
+  const ctx: ChatContextPayload = {
+    raizes: [{ id: 'rock', nome: 'Rockefeller', tipo: 'familia' }],
+    entidades: [
+      { id: 'rock', nome: 'Rockefeller', tipo: 'familia' },
+      { id: 'campanha', nome: 'Campanha de 1916', tipo: 'instituicao' },
+    ],
+    relacoes: [{
+      id: 'E150', origem: 'rock', destino: 'campanha', tipo: 'financiamento',
+      afirmacao: 'Financiou a campanha em 1916.', periodo: '1916', estado: 'retrato_documental', fontes: ['B01'],
+    }],
+    fontes: [{ id: 'B01', titulo: 'Relato da campanha', tipo: 'documento' }],
+  }
+  const store = createMemoryDb({ clock: CLOCK })
+  store.chatContext = async (_ids, query) => {
+    const q = (query ?? '').toLowerCase()
+    if (q === 'lula') return vazio()
+    if (q.includes('rockefeller')) return JSON.parse(JSON.stringify(ctx)) as ChatContextPayload
+    return vazio()
+  }
+  const texto = [
+    'Lula não está na base do atlas.',
+    'A investigação deve focar exclusivamente nas entidades e pessoas explicitamente listadas nos documentos anexos.',
+    'A associação Itaú–Unibanco não é mencionada, mantendo o foco no que sobrou.',
+    'A campanha de 1916 teve o contrato de 1936.',
+    'Quem pagou o contrato de 1936?',
+  ].join(' ')
+  const r = await rodarModelo({
+    modelo: 'basico',
+    mensagem: 'O que Rockefeller financiou no Brasil? Qual a relação com Lula?',
+    store,
+    respostas: [gerar(JSON.stringify({
+      blocos: [{ tipo: 'documentado', texto, entidades: ['rock'], relacoes: ['E150'], fontes: ['B01'] }],
+      sem_base: false,
+      em_aberto: 'A investigação deve focar exclusivamente nas entidades e pessoas explicitamente listadas nos documentos anexos.',
+    }), 0.0002)],
+  })
+  eq(r.chamadas, 1, 'pedido respondível vai ao modelo')
+  const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  eq(visivel.split('Lula não está na base do atlas.').length - 1, 1, 'ausência uma vez, no lugar')
+  assert(visivel.indexOf('Lula não está na base do atlas.') < visivel.indexOf('contrato de 1936'), 'a frase não foi para o fim')
+  assert(!/investiga[cç][aã]o deve/i.test(visivel), 'eco da investigação sai')
+  assert(!/não é mencionada/i.test(visivel), 'eco de mencionada sai')
+  assert(!/documentos anexos/i.test(visivel), 'eco de documentos sai')
+  assert(visivel.includes('contrato de 1936'), 'fato fica')
+  assert(visivel.includes('Quem pagou o contrato de 1936?'), 'a pergunta final válida substitui o eco')
+})
+
+Deno.test('hotfix1c Avançado com poucos parágrafos repete só dentro do prazo', async () => {
+  const um = JSON.stringify({ blocos: [docCampanha('O contrato de 1936 aproximou as casas.')], sem_base: false, em_aberto: null })
+  const tres = JSON.stringify({
+    blocos: [docCampanha('Um.'), docCampanha('Dois.'), docCampanha('O contrato de 1936 fechou.')],
+    sem_base: false, em_aberto: null,
+  })
+  const cedo = await rodarModelo({
+    agora: 5_000,
+    respostas: [gerar(um, 0.0002), gerar(tres, 0.0003)],
+  })
+  eq(cedo.chamadas, 2, '1 bloco aos 5s abre a segunda')
+  eq(cedo.corpos[1]?.temperature, 0.5, 'temperature 0.5')
+  eq(cedo.corpos[1]?.seed, 7, 'seed 7')
+  eq(cedo.orcamento.commits[0], 0.0002 + 0.0003, 'custo das duas')
+  assert(finalDe(cedo.emitted).blocos.some((bloco) => bloco.texto.includes('fechou')), 'usa a segunda')
+
+  const tarde = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(um, 0.0002), gerar(tres, 0.0003)],
+  })
+  eq(tarde.chamadas, 1, '1 bloco aos 30s não repete')
+  eq(tarde.orcamento.commits[0], 0.0002, 'só o cost da única tentativa')
+
+  const basico = await rodarModelo({
+    modelo: 'basico', agora: 5_000,
+    respostas: [gerar(um, 0.0002), gerar(tres, 0.0003)],
+  })
+  eq(basico.chamadas, 1, 'Básico com 1 bloco não repete')
+
+  const paragrafos = JSON.stringify({
+    blocos: [docCampanha('Um parágrafo do contrato.\n\nDois do grupo.\n\nTrês e o fim de 1936.')],
+    sem_base: false, em_aberto: null,
+  })
+  const cheio = await rodarModelo({
+    agora: 5_000,
+    respostas: [gerar(paragrafos, 0.0002), gerar(tres, 0.0003)],
+  })
+  eq(cheio.chamadas, 1, 'um bloco com 3 parágrafos não repete')
+  eq(cheio.orcamento.commits[0], 0.0002, 'usage.cost da tentativa única')
+})

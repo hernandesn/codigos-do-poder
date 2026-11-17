@@ -79,9 +79,20 @@ export function chatSpendCeilingUsd(modelo: Modelo, body: Record<string, unknown
 }
 
 /**
- * Custo quando usage.cost não chegou e houve texto: a parte de entrada do teto
- * (2 × tokens de prompt × preço) vezes as tentativas HTTP enviadas, mais o preço
- * de saída × ceil(caracteres/3). Arredonda para cima em 1e-6 e não passa da reserva.
+ * Preço de lista USD/token, o mesmo que chat_core_test.ts cita para provar o
+ * catálogo: Qwen no Básico (prompt 0.00000003, completion 0.00000013) e GLM no
+ * Avançado (prompt 0.0000000699, completion 0.0000014). Não é o teto.
+ */
+export const CHAT_MODEL_PRICE_USD_PER_TOKEN = {
+  basico: { prompt: 0.00000003, completion: 0.00000013 },
+  avancado: { prompt: 0.0000000699, completion: 0.0000014 },
+} as const
+
+/**
+ * Estimativa parcial de uma tentativa sem usage.cost que gerou texto.
+ * Entrada ≈ ceil(bytes UTF-8 do body / 4) × tentativas × preço de lista de entrada.
+ * Saída ≈ ceil(caracteres / 3) × preço de lista de saída.
+ * Arredonda para cima em 1e-6 e não passa da reserva. tentativas 0 e sem texto = 0.
  */
 export function chatPartialSpendUsd(
   modelo: Modelo,
@@ -90,9 +101,11 @@ export function chatPartialSpendUsd(
   caracteres: number,
   teto: number,
 ): number {
-  const price = CHAT_OUTPUT_USD_PER_TOKEN[modelo]
-  const inputTokens = new TextEncoder().encode(JSON.stringify(body)).byteLength + CHAT_TEMPLATE_TOKEN_ALLOWANCE
-  const bruto = (2 * inputTokens * Math.max(0, tentativas) + Math.ceil(Math.max(0, caracteres) / 3)) * price
+  const price = CHAT_MODEL_PRICE_USD_PER_TOKEN[modelo]
+  const bytes = new TextEncoder().encode(JSON.stringify(body)).byteLength
+  const inputTokens = Math.ceil(bytes / 4) * Math.max(0, tentativas)
+  const outputTokens = Math.ceil(Math.max(0, caracteres) / 3)
+  const bruto = inputTokens * price.prompt + outputTokens * price.completion
   const arred = Math.ceil(bruto * 1_000_000) / 1_000_000
   return Math.min(teto, arred)
 }
@@ -1326,7 +1339,7 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Você é o promotor e jornalista de denúncia do Atlas Códigos do Poder. Escreva só em português do Brasil, sem caracteres de outros alfabetos e sem palavras em inglês. Acusa com os fatos.',
     'Um JSON no schema pedido. Sem markdown.',
     'Formato: 5 a 8 blocos, cada bloco = 1 parágrafo de 3 a 6 frases. Use bloco documentado { tipo, texto, entidades, relacoes, fontes } para todos os parágrafos; cite em relacoes e fontes o que sustenta os fatos do parágrafo (no máximo 5 relações e 5 fontes por bloco; não repita ids).',
-    'Voz de denúncia com frases completas, bem encadeadas e claras: cada ligação é explicada por inteiro (quem, quando, como e por que isso importa). Nada de frases picadas. A agressividade vem do conteúdo: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, a tese e o veredito. Diga sem rodeio quem ganhou, quem mandou e quem pagou a conta. Proibido o vocabulário morno e acadêmico: "teia complexa", "espaço de diálogo", "cooperação", "remonta", "fundamental", "ecossistema", "arquitetura", "sinergia", "parece", "possivelmente", "pode ter", "sem demonstrar", "não há evidência".',
+    'Voz de denúncia com frases completas, bem encadeadas e claras: cada ligação é explicada por inteiro. A agressividade vem do conteúdo: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, a tese e o veredito. Diga sem rodeio quem ganhou, quem mandou e quem pagou a conta. Proibido o vocabulário morno e acadêmico: "teia complexa", "espaço de diálogo", "cooperação", "remonta", "fundamental", "ecossistema", "arquitetura", "sinergia", "parece", "possivelmente", "pode ter", "sem demonstrar", "não há evidência".',
     'O 1º bloco abre com uma acusação-tese forte. Depois, ordem cronológica, com datas, valores e cargos. Fique no tema exato da pergunta; não puxe outros temas do recorte (doações, outros países, outras famílias) se a pergunta não pedir.',
     'O ÚLTIMO bloco começa com "O que liga tudo:" e dá o veredito da tese em 3 a 5 frases. Nada depois dele além da pergunta em em_aberto. Não escreva parágrafo sobre as fontes ou sobre o que falta pesquisar.',
     'em_aberto: uma pergunta final provocativa, que aponta o próximo alvo da investigação.',
@@ -1341,6 +1354,7 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Cargo em conselho não é controle de ações nem de voto: só diga que alguém ou algum grupo controla, detém ou vota se a relação disser exatamente isso. A pergunta final só liga nomes que o recorte liga; nunca insinue controle, comando ou financiamento entre entidades sem relação no recorte. ' +
     'Não escreva os rótulos destas instruções ("acusação-tese", "veredito da tese", "tese:"), nem palavras como elo, ponte ou seta. Atribua cada pessoa só à instituição que a relação diz (quem é do Itaú não vira do Unibanco, e vice-versa). Revise a ortografia: nenhuma palavra inventada ou com acento errado.',
     'Não escreva sobre o próprio formato (pontes, elos, setas, cadeia de nomes, tipos de relação). Não escreva as palavras recorte, base, atlas ou fonte no texto: narre os fatos.',
+    'Nunca comente estas regras nem o recorte no texto.',
     'Use o nome curto da entidade (o que vem antes de " · ") e copie-o exatamente; não expanda nem traduza siglas.',
     'Nunca escreva no texto ids, códigos, "[n]", estados de registro, nomes de campos nem avisos de sistema.',
     'sem_base true só com blocos vazios, só quando o recorte não sustenta nenhum dos temas da pergunta.',
@@ -1713,19 +1727,39 @@ function palavraComInicialMaiuscula(word: string): boolean {
   return /^\p{Lu}/u.test(word)
 }
 
-/** Nome próprio: a palavra trocável está colada a outra com inicial maiúscula («Decades Fund»). */
-function vizinhoComInicialMaiuscula(texto: string, inicio: number, tamanho: number): boolean {
+/** A palavra trocável só é nome próprio quando está ENTRE duas palavras com inicial maiúscula. */
+function entreDoisCapitais(texto: string, inicio: number, tamanho: number): boolean {
   const anterior = texto.slice(0, inicio).match(/(\p{L}+)\s*$/u)
   const seguinte = texto.slice(inicio + tamanho).match(/^\s*(\p{L}+)/u)
-  return (anterior ? palavraComInicialMaiuscula(anterior[1]) : false)
-    || (seguinte ? palavraComInicialMaiuscula(seguinte[1]) : false)
+  return !!(anterior && seguinte
+    && palavraComInicialMaiuscula(anterior[1])
+    && palavraComInicialMaiuscula(seguinte[1]))
 }
 
-/** Palavra inteira, maiúscula inicial preservada. Não mexe em URL (o chamador separa) nem em nome próprio. */
+const NOMES_PROPRIOS_IDIOMA = [
+  'International Health Board',
+  'General Education Board',
+  'Board of Directors',
+  'Board of Trustees',
+  'Rockefeller Brothers Fund',
+  'Rothschild & Co Gestion',
+  'Open Society Foundations',
+]
+
+/** Palavra inteira. Nome próprio conhecido ou entre duas maiúsculas fica. grant(s) só minúsculo. Não mexe em URL (o chamador separa). */
 function deslizesDeIdioma(t: string): string {
-  const troca = (de: string, para: string) => {
-    t = t.replace(new RegExp(`\\b${de}\\b`, 'gi'), (w: string, offset: number, todo: string) => {
-      if (vizinhoComInicialMaiuscula(todo, offset, w.length)) return w
+  const mascaras: string[] = []
+  const mascara = (literal: string) => {
+    if (!t.includes(literal)) return
+    const token = `\u0000${mascaras.length}\u0000`
+    mascaras.push(literal)
+    t = t.split(literal).join(token)
+  }
+  for (const nome of NOMES_PROPRIOS_IDIOMA) mascara(nome)
+  const troca = (de: string, para: string, soMinusculo = false) => {
+    t = t.replace(new RegExp(`\\b${de}\\b`, soMinusculo ? 'g' : 'gi'), (w: string, offset: number, todo: string) => {
+      if (entreDoisCapitais(todo, offset, w.length)) return w
+      if (soMinusculo) return para
       return palavraComInicialMaiuscula(w) ? para[0].toUpperCase() + para.slice(1) : para
     })
   }
@@ -1734,8 +1768,151 @@ function deslizesDeIdioma(t: string): string {
   troca('centuries', 'séculos')
   troca('century', 'século')
   troca('members', 'membros')
+  troca('member', 'membro')
   troca('voting', 'votação')
-  return t.replace(/\bhav[aã]o\b/g, 'haviam').replace(/(?<!\p{L})(é|era|foi) member (d[aoe]s?)\b/gu, '$1 membro $2')
+  troca('sharply', 'fortemente')
+  troca('however', 'porém')
+  troca('although', 'embora')
+  troca('meanwhile', 'enquanto isso')
+  troca('chairman', 'presidente do conselho')
+  troca('shareholders', 'acionistas')
+  troca('shareholder', 'acionista')
+  troca('funding', 'financiamento')
+  troca('grants', 'doações', true)
+  troca('grant', 'doação', true)
+  troca('board', 'conselho')
+  troca('stake', 'participação')
+  t = t.replace(/\bhav[aã]o\b/g, 'haviam').replace(/(?<!\p{L})(é|era|foi) member (d[aoe]s?)\b/gu, '$1 membro $2')
+  return t.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => mascaras[Number(i)] ?? '')
+}
+
+const MARCADOR_INGLES = /\b(?:the|and|which|with|from|that|this|these|between|through|during|after|before|while|would|could|should|been|have|has|their|there|where|when|also|into|over|under|against|because|about|were|they|them|its|than|then|those|being|since|until)\b/gi
+
+function spansProtegidos(texto: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = []
+  const aspas = /"[^"]*"|«[^»]*»|“[^”]*”/g
+  const nomes = /\p{Lu}[\p{L}\p{N}'’.-]*(?:(?:\s+[&-]\s+|\s*&\s*|\s+)+\p{Lu}[\p{L}\p{N}'’.-]*)+/gu
+  for (const re of [aspas, nomes]) {
+    let m: RegExpExecArray | null
+    while ((m = re.exec(texto))) spans.push([m.index, m.index + m[0].length])
+  }
+  return spans
+}
+
+function dentroDeSpan(spans: Array<[number, number]>, index: number): boolean {
+  return spans.some(([ini, fim]) => index >= ini && index < fim)
+}
+
+/** Frase que ainda tem marcador inglês solto, fora de aspas, URL e nome de 2+ maiúsculas. */
+function fraseInglesSolta(frase: string): boolean {
+  const spans = spansProtegidos(frase)
+  const re = new RegExp(MARCADOR_INGLES.source, 'gi')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(frase))) {
+    if (!dentroDeSpan(spans, m.index)) return true
+  }
+  return false
+}
+
+const ECO_PADROES = [
+  /n[aã]o\s+(?:é|e)\s+mencionad[ao]/i,
+  /n[aã]o\s+s[aã]o\s+mencionad/i,
+  /n[aã]o\s+consta(?:m)?\s+(?:no|nos)\s+(?:recorte|documentos?(?:\s+anexos?)?|dados\s+fornecidos|material)\b/i,
+  /a\s+investiga[cç][aã]o\s+deve/i,
+  /deve\s+focar/i,
+  /documentos\s+anexos/i,
+  /dados\s+fornecidos/i,
+  /material\s+dispon[ií]vel/i,
+  /limites\s+estritos\s+deste\s+material/i,
+  /(?:n[aã]o\s+)?est(?:á|a|ão|ao)\s+na\s+base(?:\s+do\s+atlas)?/i,
+]
+
+function fraseEco(frase: string): boolean {
+  return ECO_PADROES.some((re) => re.test(frase))
+}
+
+/** Texto exato de fraseAusentes (um nome ou «A e B» / «A, B e C»). Eco mais longo continua caindo. */
+function fraseAusenciaExata(frase: string): boolean {
+  return /^[\p{L}\p{N}][\p{L}\p{N} &,-]{0,80} não est(?:á|ão) na base do atlas\.$/u.test(frase.trim())
+}
+
+function tirarTrechosEco(texto: string): string {
+  let t = texto
+  for (const re of ECO_PADROES) t = t.replace(new RegExp(re.source, 'gi'), '')
+  return t.replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:!?])/g, '$1').replace(/^[,\s;:]+/g, '').trim()
+}
+
+const CODIGO_FICHA = 'OP\\d+_R\\d+|OP\\d+|BR\\d+_H\\d+|PR\\d+-(?:E|NF)\\d+|AP_E\\d+'
+
+/** Tira código de ficha/caso e o «na ficha» / «da ficha» que o apresenta, sem deixar buraco. */
+function semCodigosDeFicha(t: string): string {
+  const partes = t.split(/(https?:\/\/\S+)/g).map((parte, i) => {
+    if (i % 2 === 1) return parte
+    return parte
+      .replace(new RegExp(`\\s*\\b(?:na|da)\\s+ficha\\s+(?:${CODIGO_FICHA})\\b`, 'gi'), '')
+      .replace(new RegExp(`\\b(?:${CODIGO_FICHA})\\b`, 'gi'), '')
+  })
+  return partes.join('')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\(\s*\)/g, '')
+    .trim()
+}
+
+function frasesDe(t: string): string[] {
+  const out: string[] = []
+  let ini = 0
+  const re = /[.!?]+(?=\s+["«(]?\p{Lu})/gu
+  let m: RegExpExecArray | null
+  while ((m = re.exec(t))) {
+    const antes = t.slice(Math.max(0, m.index - 4), m.index)
+    if (/(?:\b\p{Lu}|\bCo|\bInc|\bLtd|\bS\.A|\bSr|\bDr|\bSt)$/u.test(antes)) continue
+    out.push(t.slice(ini, m.index + m[0].length))
+    ini = m.index + m[0].length
+  }
+  out.push(t.slice(ini))
+  return out.filter((f) => f.trim())
+}
+
+/**
+ * CJK, mapa de idioma, frase inglesa solta, eco de regra e código de ficha.
+ * Por linha, para o gancho da pauta não colar no fato. `preservar` é a frase
+ * exata de ausência (fraseAusentes): essa frase fica, o resto do eco sai.
+ */
+function filtrarProsaVisivel(texto: string, preservar = ''): string {
+  const alvo = preservar ? foldName(preservar) : ''
+  const linhas = texto.split('\n').map((linha) => {
+    const comIdioma = linha.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1 ? parte : deslizesDeIdioma(parte)).join('')
+    const frases = frasesDe(comIdioma)
+    let tirouCjk = 0
+    const kept = frases.filter((f) => {
+      if (fraseAusenciaExata(f) || (alvo && foldName(f) === alvo)) return true
+      if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return false }
+      if (fraseInglesSolta(f) || fraseEco(f)) return false
+      return true
+    })
+    if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
+    return semCodigosDeFicha(kept.map((f) => f.trim()).join(' ').trim())
+  }).filter((linha) => linha.trim())
+  return linhas.join('\n').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.;:!?])/g, '$1').trim()
+}
+
+function ultimaPerguntaValida(blocos: readonly { texto: string }[]): string {
+  const frases = blocos.flatMap((bloco) => frasesDe(bloco.texto))
+  for (let i = frases.length - 1; i >= 0; i--) {
+    const f = frases[i].trim()
+    if (/\?\s*$/.test(f) && !fraseEco(f) && !fraseInglesSolta(f) && !CJK_VISIVEL.test(f)) return f
+  }
+  return ''
+}
+
+function limparPergunta(texto: string, blocos: readonly { texto: string }[]): string {
+  const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto))
+  if (/\?/.test(filtrada)) return filtrada.slice(0, 300)
+  const anterior = ultimaPerguntaValida(blocos)
+  if (anterior) return anterior.slice(0, 300)
+  return filtrada.slice(0, 300)
 }
 
 export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer: SanitizedAnswer; removed: boolean } {
@@ -1820,31 +1997,32 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
     if (/\b(?:ate hoje|de hoje|ainda hoje|ate os dias de hoje)\b/.test(g) && !/\b202[5-6]\b/.test(f)) return true
     return false
   }
-  const frasesDe = (t: string) => {
-    // Não corta em abreviações (Co., Inc., S.A., iniciais "A.").
-    const out: string[] = []; let ini = 0
-    const re = /[.!?]+(?=\s+["«(]?\p{Lu})/gu
-    let m: RegExpExecArray | null
-    while ((m = re.exec(t))) {
-      const antes = t.slice(Math.max(0, m.index - 4), m.index)
-      if (/(?:\b\p{Lu}|\bCo|\bInc|\bLtd|\bS\.A|\bSr|\bDr|\bSt)$/u.test(antes)) continue
-      out.push(t.slice(ini, m.index + m[0].length)); ini = m.index + m[0].length
-    }
-    out.push(t.slice(ini))
-    return out.filter((f) => f.trim())
+  const semForaDaBase = (t: string, pergunta = false) => {
+    // Parágrafos (linha em branco) sobrevivem ao saneamento: a repetição do Avançado conta esses parágrafos.
+    let tirouFora = 0
+    let tirouCjk = 0
+    const saida = t.split(/\n\s*\n/).map((paragrafo) => {
+      // Na pergunta final, "de hoje / até hoje" sem data atual sai da frase em vez de derrubar a pergunta inteira.
+      const frases = frasesDe(paragrafo).map((f) => /\?\s*$/.test(f) && !/\b202[5-6]\b/.test(f)
+        ? f.replace(/(?:,\s*)?\b(?:até|ate) os dias de hoje\b|(?:,\s*)?\b(?:até|ate|ainda) hoje\b|\s+de hoje\b/gi, '')
+        : f)
+      const kept = frases.filter((f) => !supera(f) && !FORA.some((re, i) => re.test(fold1(f)) && (i < FORA_SEMPRE || !re.test(ctxTexto))))
+      tirouFora += frases.length - kept.length
+      const semCjk = kept.filter((f) => !CJK_VISIVEL.test(f))
+      tirouCjk += kept.length - semCjk.length
+      const semIngles = semCjk.filter((f) => !fraseInglesSolta(f))
+      // Na pergunta, o eco perde só o trecho: a frase com "?" continua. No bloco, a frase sai.
+      // A frase exata de ausência fica no lugar; o código não a reinsere depois.
+      const semEco = pergunta
+        ? semIngles.map((f) => fraseEco(f) && !fraseAusenciaExata(f) ? tirarTrechosEco(f) : f).filter((f) => f.trim())
+        : semIngles.filter((f) => fraseAusenciaExata(f) || !fraseEco(f))
+      return semEco.map((f) => f.trim()).filter(Boolean).join(' ')
+    }).filter((paragrafo) => paragrafo.trim())
+    if (tirouFora) console.info(JSON.stringify({ evento: 'chat_frase_fora_da_base', n: tirouFora }))
+    if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
+    return semCodigosDeFicha(saida.join('\n\n'))
   }
-  const semForaDaBase = (t: string) => {
-    // Na pergunta final, "de hoje / até hoje" sem data atual sai da frase em vez de derrubar a pergunta inteira.
-    const frases = frasesDe(t).map((f) => /\?\s*$/.test(f) && !/\b202[5-6]\b/.test(f)
-      ? f.replace(/(?:,\s*)?\b(?:até|ate) os dias de hoje\b|(?:,\s*)?\b(?:até|ate|ainda) hoje\b|\s+de hoje\b/gi, '')
-      : f)
-    const kept = frases.filter((f) => !supera(f) && !FORA.some((re, i) => re.test(fold1(f)) && (i < FORA_SEMPRE || !re.test(ctxTexto))))
-    if (kept.length < frases.length) console.info(JSON.stringify({ evento: 'chat_frase_fora_da_base', n: frases.length - kept.length }))
-    const semCjk = kept.filter((f) => !CJK_VISIVEL.test(f))
-    if (semCjk.length < kept.length) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: kept.length - semCjk.length }))
-    return semCjk.map((f) => f.trim()).join(' ').trim()
-  }
-  const visivel = (value: string) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))))
+  const visivel = (value: string, pergunta = false) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))), pergunta)
   const allowedEntities = new Set<string>()
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
     if (item?.id) allowedEntities.add(item.id)
@@ -2034,7 +2212,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       fontes_detalhe,
       avisos,
       sem_base: record.sem_base === true,
-      ...(typeof record.em_aberto === 'string' && record.em_aberto.trim() ? { em_aberto: visivel(record.em_aberto.trim()).slice(0, 300) } : {}),
+      ...(typeof record.em_aberto === 'string' && record.em_aberto.trim() ? { em_aberto: visivel(record.em_aberto.trim(), true).slice(0, 300) } : {}),
     },
   }
 }
@@ -2086,18 +2264,42 @@ function oracoesDaMensagem(mensagem: string): Array<{ texto: string; interrogati
   return out
 }
 
+const CORTE_COORDENADO = /\s+e\s+(?:o\s+que|qual|quem|como|quando)\b|,\s*o\s+que\b/i
+
+function fatiasDePedido(texto: string): string[] {
+  return texto.split(CORTE_COORDENADO).map((parte) => parte.trim()).filter(Boolean)
+}
+
+function temImperativo(texto: string): boolean {
+  return /\b(?:explique|fale|diga|liste|mostre|conte|resuma)\b/.test(normalizeQuery(texto))
+}
+
+/** Pedidos: interrogativas, cortes coordenados e imperativos. Declarativa solta não entra. */
+function pedidosDaMensagem(mensagem: string): string[] {
+  const out: string[] = []
+  for (const oracao of oracoesDaMensagem(mensagem)) {
+    const fatias = fatiasDePedido(oracao.texto)
+    if (oracao.interrogativa) {
+      out.push(...fatias)
+      continue
+    }
+    for (const fatia of fatias) if (temImperativo(fatia)) out.push(fatia)
+  }
+  return out
+}
+
 /**
- * Recusa só quando toda oração interrogativa é pergunta de ligação e cita um ausente.
- * Oração interrogativa respondível (não é ligação, ou não cita o ausente) manda ao modelo.
+ * Recusa só quando todo pedido é pergunta de ligação e cita um ausente.
+ * Pedido respondível (não é ligação, ou não cita o ausente) manda ao modelo.
  */
 function soLigacaoComAusente(mensagem: string, ausentes: readonly string[]): boolean {
   if (!ausentes.length) return false
-  const interrogativas = oracoesDaMensagem(mensagem).filter((oracao) => oracao.interrogativa)
-  if (!interrogativas.length) return false
-  return interrogativas.every((oracao) => {
-    const hay = foldName(oracao.texto)
+  const pedidos = pedidosDaMensagem(mensagem)
+  if (!pedidos.length) return false
+  return pedidos.every((pedido) => {
+    const hay = foldName(pedido)
     const cita = ausentes.some((nome) => containsWhole(hay, foldName(nome)))
-    return cita && perguntaDeLigacao(oracao.texto)
+    return cita && perguntaDeLigacao(pedido)
   })
 }
 
@@ -2126,16 +2328,25 @@ function termoNoRecorte(termo: string, ctx: ChatContextPayload): boolean {
   return casaRadical(termo, radicaisDe(partes.join(' ')))
 }
 
+/** Vocabulário do atlas: com um destes termos o escopo não é claramente externo. */
+function temVocabularioAtlas(mensagem: string): boolean {
+  const q = normalizeQuery(mensagem)
+  if (/\bpor\s+que\b/.test(q)) return true
+  return /\b(?:vinculo|ligacao|relacao|conexao|financi\w*|doac\w*|patrocin\w*|pagamento|contribu\w*|controle|controlad\w*|acionist\w*|socio|conselho|cargo|fundador|fundou|empresa|banco|governo|golpe|campanha|saude|vacina|familia|herdeiro|papel|influencia|origem|historico|data|ano|quando|quem|onde|como|porque|quanto)\b/.test(q)
+}
+
 /**
- * Seleção preenchida, busca por texto da pergunta vazia, e a pergunta não fala
- * do recorte nem aponta para a seleção. Mensagem com no máximo 1 termo não entra.
+ * Seleção preenchida e busca por texto vazia. Só recusa quando o escopo é
+ * claramente externo: 2+ termos de conteúdo sem casamento no recorte e nenhum
+ * termo do vocabulário do atlas. Dêixis e um termo só continuam no modelo.
  */
 function selecaoForaDaPergunta(mensagem: string, ctx: ChatContextPayload, textoVazio: boolean, entityIds: readonly string[]): boolean {
   if (entityIds.length === 0 || !textoVazio) return false
+  if (referenciaSelecao(mensagem) || temVocabularioAtlas(mensagem)) return false
   const termos = contextSearchTokens(mensagem)
   if (termos.length <= 1) return false
-  if (referenciaSelecao(mensagem)) return false
-  return !termos.some((termo) => termoNoRecorte(radicalSimples(termo), ctx))
+  const semCasamento = termos.filter((termo) => !termoNoRecorte(radicalSimples(termo), ctx))
+  return semCasamento.length >= 2
 }
 
 /** Responde sobre os temas documentados sem inventar uma ligação entre eles. */
@@ -2675,26 +2886,49 @@ async function streamPreparedInner(input: {
   let possiblyCharged = false
   let unknownPreviousAttempt = false
   let tentativasEnviadas = 0
-  let charsGerados = 0
+  let charsTentativa = 0
+  let somaAnteriores = 0
   const finish = (event: ChatSseEvent) => {
     if (terminal) return
     terminal = true
     emit(event)
   }
   const generatedNow = () => produced || usage !== undefined
-  let custoTentativaAnterior = 0
-  const custoConhecido = () => typeof usage?.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0
-    ? custoTentativaAnterior + usage.cost + (unknownPreviousAttempt ? Math.ceil(prepared.estimate / CHAT_MAX_ATTEMPTS * 1_000_000) / 1_000_000 : 0)
-    : null
-  // Sucesso sem usage.cost continua no teto (SEC-01). O catch com texto usa a estimativa limitada.
-  const costNow = () => custoConhecido() ?? prepared.estimate
-  const custoNoCatch = (err: unknown) => {
-    const conhecido = custoConhecido()
-    if (conhecido !== null) return conhecido
-    const noCharge = err instanceof OpenRouterError && err.noCharge
-    if (!produced && usage === undefined && noCharge && !unknownPreviousAttempt) return 0
-    if (charsGerados > 0) return chatPartialSpendUsd(prepared.modelo, prepared.requestBody, tentativasEnviadas, charsGerados, prepared.estimate)
+  const metadeDesconhecida = () => unknownPreviousAttempt
+    ? Math.ceil(prepared.estimate / CHAT_MAX_ATTEMPTS * 1_000_000) / 1_000_000
+    : 0
+  const custoAtual = () => typeof usage?.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null
+  const parcialDesta = () => charsTentativa > 0
+    ? chatPartialSpendUsd(prepared.modelo, requestBody, 1, charsTentativa, prepared.estimate)
+    : 0
+  const temGasto = () => somaAnteriores > 0 || custoAtual() !== null || charsTentativa > 0
+  // Sucesso sem usage.cost e sem tentativa anterior continua no teto (SEC-01).
+  // Custo conhecido de outra tentativa não é trocado pelo teto.
+  const costNow = () => {
+    const atual = custoAtual()
+    const metade = metadeDesconhecida()
+    if (atual !== null) return somaAnteriores + atual + metade
+    if (somaAnteriores > 0) return somaAnteriores + (charsTentativa > 0 ? parcialDesta() : 0) + metade
     return prepared.estimate
+  }
+  const custoNoCatch = (err: unknown) => {
+    const atual = custoAtual()
+    const metade = metadeDesconhecida()
+    if (atual !== null) return somaAnteriores + atual + metade
+    const noCharge = err instanceof OpenRouterError && err.noCharge
+    if (charsTentativa === 0 && noCharge) return somaAnteriores + metade
+    if (charsTentativa > 0) return somaAnteriores + parcialDesta() + metade
+    if (somaAnteriores > 0) return somaAnteriores + metade
+    return prepared.estimate
+  }
+  const fecharTentativa = () => {
+    const atual = custoAtual()
+    if (atual !== null) somaAnteriores += atual
+    else if (charsTentativa > 0) somaAnteriores += parcialDesta()
+    usage = undefined
+    text = ''
+    charsTentativa = 0
+    produced = false
   }
   const releaseCredits = async () => {
     if (!creditsOpen) return
@@ -2713,7 +2947,7 @@ async function streamPreparedInner(input: {
     await db.commitBudget(prepared.reservation.pedidoId, cost)
   }
   const unwind = async (cost = costNow()) => {
-    const generated = generatedNow() || possiblyCharged || unknownPreviousAttempt
+    const generated = generatedNow() || possiblyCharged || unknownPreviousAttempt || temGasto()
     await runIsolated([
       { run: releaseCredits, label: 'chat_release_failed', detail: releaseFailureDetail(prepared.reservation) },
       {
@@ -2739,9 +2973,22 @@ async function streamPreparedInner(input: {
   let requestBody = prepared.requestBody
   let tentativasHttp = 0
   let emLaco = false
+  let textoGuardado: string | null = null
+  let blocosGuardados = 0
+  const contarBlocos = (bruto: string) => {
+    try {
+      const cru = jsonCompleto(bruto) ? parseModelJson(bruto) : parseModelJson(repararJsonTruncado(bruto))
+      return sanearModelo(cru, prepared.context, prepared.apelidos).answer.blocos.reduce((n, bloco) => {
+        return n + bloco.texto.split(/\n\s*\n/).map((parte) => parte.trim()).filter(Boolean).length
+      }, 0)
+    } catch {
+      return 0
+    }
+  }
   try {
    for (let qualidade = 0; ; qualidade++) {
     emLaco = false
+    let falhaGuardada = false
     for (let attempt = 0; ; attempt++) {
       tentativasHttp += 1
       input.signal.throwIfAborted()
@@ -2759,7 +3006,7 @@ async function streamPreparedInner(input: {
           if (chunk.delta) {
             produced = true
             text += chunk.delta
-            charsGerados += chunk.delta.length
+            charsTentativa += chunk.delta.length
             if (!prepared.pauta && !prepared.pressure) emit({ event: 'delta', data: { text: chunk.delta } })
             if (saidaEmLaco(text)) { emLaco = true; break }
           }
@@ -2767,26 +3014,61 @@ async function streamPreparedInner(input: {
         break
       } catch (err) {
         if (err instanceof OpenRouterError && err.noCharge && !generatedNow()) possiblyCharged = false
-        if (attempt !== 0 || produced || usage || input.signal.aborted
-          || !(err instanceof OpenRouterError) || err.kind !== 'modelo_ocupado') throw err
-        unknownPreviousAttempt = possiblyCharged
-        // O mesmo sinal mantém o prazo total de 60s do handler, incluindo a espera.
-        await waitForRetry(input.retryDelayMs ?? 1500, input.signal)
+        if (attempt === 0 && !produced && !usage && !input.signal.aborted
+          && err instanceof OpenRouterError && err.kind === 'modelo_ocupado') {
+          unknownPreviousAttempt = possiblyCharged
+          // O mesmo sinal mantém o prazo total de 60s do handler, incluindo a espera.
+          await waitForRetry(input.retryDelayMs ?? 1500, input.signal)
+          continue
+        }
+        if (textoGuardado) {
+          const noCharge = err instanceof OpenRouterError && err.noCharge
+          const atual = custoAtual()
+          if (atual !== null) somaAnteriores += atual
+          else if (charsTentativa > 0) somaAnteriores += parcialDesta()
+          else if (!noCharge && charsTentativa === 0 && custoAtual() === null && !unknownPreviousAttempt) {
+            // Pedido aceito sem texto e sem noCharge: pode ter gerado. A parcial com 0 caracteres é só a entrada.
+            somaAnteriores += chatPartialSpendUsd(prepared.modelo, requestBody, 1, 0, prepared.estimate)
+          }
+          usage = undefined
+          charsTentativa = 0
+          produced = true
+          text = textoGuardado
+          falhaGuardada = true
+          break
+        }
+        throw err
       }
     }
+    if (falhaGuardada) break
     const truncada = typeof usage?.completion_tokens === 'number' && usage.completion_tokens >= CHAT_MAX_TOKENS[prepared.modelo]
     const legivel = jsonCompleto(text) || jsonPodeReparar(text)
-    // Repete só laço ou JSON irrecuperável. Truncada reparável segue com repararJsonTruncado.
-    const precisaRepetir = emLaco || !legivel
     const decorrido = (input.now ?? Date.now)() - started
-    // Uma repetição só, dentro do prazo, e só se o 429 não gastou a segunda tentativa coberta pela reserva.
-    if (!precisaRepetir || qualidade >= 1 || tentativasHttp >= CHAT_MAX_ATTEMPTS || input.signal.aborted || decorrido > CHAT_RETRY_DEADLINE_MS) break
-    console.info(JSON.stringify({ evento: 'chat_saida_repetida', motivo: emLaco ? 'laco' : truncada ? 'truncada' : 'json' }))
-    if (typeof usage?.cost === 'number') custoTentativaAnterior += usage.cost
-    else custoTentativaAnterior += chatPartialSpendUsd(prepared.modelo, requestBody, tentativasEnviadas, charsGerados, prepared.estimate)
-    usage = undefined
-    text = ''
-    requestBody = { ...prepared.requestBody, temperature: 0.5, seed: 7 }
+    const podeRepetir = qualidade < 1 && tentativasHttp < CHAT_MAX_ATTEMPTS && !input.signal.aborted && decorrido <= CHAT_RETRY_DEADLINE_MS
+    // Repete laço ou JSON irrecuperável. Truncada reparável segue com repararJsonTruncado.
+    const precisaRepetir = emLaco || !legivel
+    if (precisaRepetir) {
+      if (!podeRepetir) break
+      console.info(JSON.stringify({ evento: 'chat_saida_repetida', motivo: emLaco ? 'laco' : truncada ? 'truncada' : 'json' }))
+      fecharTentativa()
+      requestBody = { ...prepared.requestBody, temperature: 0.5, seed: 7 }
+      continue
+    }
+    // Avançado curto: uma segunda tentativa, com o mesmo corpo, se ainda couber no prazo.
+    // Abaixo de 1s o stream foi instantâneo (SPEC4): continua uma tentativa e o usage.cost não dobra.
+    if (!textoGuardado && prepared.modelo === 'avancado' && !prepared.pauta && !prepared.pressure && podeRepetir && decorrido >= 1_000) {
+      const nBlocos = contarBlocos(text)
+      if (nBlocos >= 1 && nBlocos < 3) {
+        textoGuardado = text
+        blocosGuardados = nBlocos
+        console.info(JSON.stringify({ evento: 'chat_saida_repetida', motivo: 'blocos', n: nBlocos }))
+        fecharTentativa()
+        requestBody = { ...prepared.requestBody, temperature: 0.5, seed: 7 }
+        continue
+      }
+    }
+    if (textoGuardado && contarBlocos(text) <= blocosGuardados) text = textoGuardado
+    break
    }
     emitMeta()
     if (input.signal.aborted) {
@@ -2804,8 +3086,8 @@ async function streamPreparedInner(input: {
     const custoErro = custoNoCatch(err)
     await unwind(custoErro)
     finish(errorEvent(code, chatErrorMessage(code)))
-    if (generatedNow() || code === 'modelo_ocupado') {
-      await safeLog(db, logRow(prepared, { ...usage, cost: possiblyCharged || unknownPreviousAttempt || generatedNow() ? custoErro : 0 }, code, started))
+    if (generatedNow() || code === 'modelo_ocupado' || temGasto()) {
+      await safeLog(db, logRow(prepared, { ...usage, cost: possiblyCharged || unknownPreviousAttempt || generatedNow() || temGasto() ? custoErro : 0 }, code, started))
     }
     if (!sentMeta && (code === 'modelo_indisponivel' || code === 'modelo_ocupado')) return 503
     return 200
@@ -2815,9 +3097,10 @@ async function streamPreparedInner(input: {
   try {
     try { parsed = parseModelJson(text) } catch { parsed = parseModelJson(repararJsonTruncado(text)); console.info(JSON.stringify({ evento: 'chat_json_reparado' })) }
   } catch {
-    await unwind()
+    const custoParse = costNow()
+    await unwind(custoParse)
     finish(errorEvent('modelo_indisponivel', chatErrorMessage('modelo_indisponivel')))
-    await safeLog(db, logRow(prepared, usage, 'modelo_indisponivel', started))
+    await safeLog(db, logRow(prepared, { ...usage, cost: custoParse }, 'modelo_indisponivel', started))
     return sentMeta ? 200 : 503
   }
 
@@ -2840,9 +3123,10 @@ async function streamPreparedInner(input: {
   if (semConteudo) {
     const fallback = null as SanitizedAnswer | null
     if (!fallback) {
-      await unwind()
+      const custoFora = costNow()
+      await unwind(custoFora)
       finish(errorEvent('fora_da_base', mensagemForaDaBase(prepared.ausentes)))
-      await safeLog(db, logRow(prepared, usage, 'fora_da_base', started))
+      await safeLog(db, logRow(prepared, { ...usage, cost: custoFora }, 'fora_da_base', started))
       return sentMeta ? 200 : CHAT_ERROR_STATUS.fora_da_base
     }
     answer = fallback
@@ -2896,7 +3180,22 @@ async function streamPreparedInner(input: {
     answer.blocos.push({ tipo: 'documentado', texto: lacuna ?? '', entidades: [], relacoes: [], fontes: [] })
     console.info(JSON.stringify({ evento: 'lacuna_canonica' }))
   }
-  const avisoAusente = fraseAusentes(prepared.ausentes)
+  // CJK, idioma, eco e código de ficha, depois da pauta e antes da frase de ausência.
+  const avisoPrevisto = fraseAusentes(prepared.ausentes)
+  answer = {
+    ...answer,
+    blocos: answer.blocos.map((bloco) => {
+      const texto = filtrarProsaVisivel(bloco.texto, avisoPrevisto)
+      if (bloco.tipo === 'documentado') return { ...bloco, texto }
+      return { ...bloco, texto, justificativa: filtrarProsaVisivel(bloco.justificativa, avisoPrevisto) }
+    }).filter((bloco) => bloco.texto.trim()),
+  }
+  if (answer.em_aberto !== undefined) {
+    const pergunta = limparPergunta(answer.em_aberto, answer.blocos)
+    if (pergunta.trim()) answer.em_aberto = pergunta
+    else delete answer.em_aberto
+  }
+  const avisoAusente = avisoPrevisto
   if (avisoAusente && !answer.blocos.some((bloco) => foldName(bloco.texto).includes('nao esta na base'))) {
     answer.blocos.push({ tipo: 'documentado', texto: avisoAusente, entidades: [], relacoes: [], fontes: [] })
   }

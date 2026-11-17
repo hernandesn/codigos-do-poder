@@ -112,7 +112,7 @@ function semVazamento(final: ChatFinal, onde: string) {
 }
 
 const SUJO = [
-  { tipo: 'documentado', texto: 'Em_aberto: Se o IBEC financiou a campanha de 1916. Em aberto: o contrato segue. Justificativa: o acordo de 1936 permanece. A acusação é direta: tudo indica que o Itaú · grupo anterior à associação e a American Coffee Company · empresa se cruzaram no recorte, elo por elo, pela ponte de 1936 [2] (E150, B01) com estado retrato_documental.', entidades: ['itau_legado', 'american_coffee'], relacoes: ['E150'], fontes: ['B01'] },
+  { tipo: 'documentado', texto: 'Em_aberto: Se o IBEC financiou a campanha de 1916. Em aberto: o contrato segue. Justificativa: o acordo de 1936 permanece. A acusação é direta: tudo indica que o Itaú · grupo anterior à associação e a American Coffee Company · empresa se cruzaram no recorte, elo por elo, pela ponte de 1936 [2] (E150, B01) com estado retrato_documental. O acordo consta na ficha OP16 e no caso OP16_R2, além de BR12_H3, PR1-E4 e AP_E2.', entidades: ['itau_legado', 'american_coffee'], relacoes: ['E150'], fontes: ['B01'] },
   { tipo: 'hipotese', texto: 'A hipótese é que a Casa Bancária Moreira Salles negociou com o grupo Rockefeller, e a ordem veio de Nova York. Era o maior banco do país.', base: ['E150', 'E149'] },
   { tipo: 'inferencia', texto: 'O padrão denuncia que, na hipótese desta tese, o capital atravessou mais de um século, de 1936 a 2008. O veredito da tese é claro.', base: ['brasil_2026'], justificativa: 'Relação E166 está como rascunho.' },
   { tipo: 'documentado', texto: 'O que liga tudo: o contrato de 1936 e a associação de 2008 contam a mesma história de poder. A pergunta final é: quem pagou?', entidades: ['casa_ms', 'itau_legado'], relacoes: ['E150', 'E166'], fontes: ['B01', 'B07'] },
@@ -129,6 +129,9 @@ Deno.test('R2 vazamento: texto sujo do modelo sai limpo no Básico e no Avançad
     assert(texto.includes('o acordo de 1936 permanece.'), `${modelo}: rótulo justificativa sai`)
     assert(!/em[\s_]*aberto\s*:/i.test(texto), `${modelo}: sem rótulo em_aberto`)
     assert(!/\p{L}_\p{L}/u.test(texto), `${modelo}: sem token com underscore entre letras`)
+    assert(!/OP\d+/.test(texto), `${modelo}: sem código OP`)
+    assert(!/\b(?:na|da) ficha\b/i.test(texto), `${modelo}: sem «na ficha» ou «da ficha»`)
+    assert(!/BR\d+_H\d+|PR\d+-(?:E|NF)\d+|AP_E\d+/.test(texto), `${modelo}: sem código de ficha`)
     assert(final.blocos.length >= 3, `${modelo}: prosa preservada (${final.blocos.length} blocos)`)
     assert(final.blocos.every((b) => b.tipo === 'documentado'), `${modelo}: hipótese/inferência viram parágrafo`)
     assert(final.blocos.at(-1)!.texto.includes('\n\nQuem'), `${modelo}: pergunta final em parágrafo próprio`)

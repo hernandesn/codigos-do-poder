@@ -174,3 +174,95 @@ Teste: `chat_hotfix1_test.ts:472` (`hotfix1b primeira tentativa sem cost soma a 
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **142 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos do Hotfix1.
+
+## Hotfix1c
+
+Correção da 2ª revisão e da simulação local, sobre `be9d9ea`. Na função só muda `chat_core.ts`. Auth, CORS, SQL, limites, tetos (`CHAT_OUTPUT_USD_PER_TOKEN` / `max_price`) e slugs não mudam (`BASICO_MODEL_SLUG` continua `qwen/qwen3.7-flash`). A asserção do SPEC4 (`custo da API preservado` = `0.0002`) não foi alterada.
+
+### 1. Custo de cada tentativa
+
+`costNow` (`chat_core.ts:2907-2912`), `custoNoCatch` (`2914-2922`) e `fecharTentativa` (`2924`). Cada tentativa entra na soma que vai para `commitBudget`, para o log e para `custo_real`:
+
+- com `usage.cost` finito e ≥ 0: esse valor;
+- erro `noCharge` sem delta: 0;
+- sem `usage.cost`, mas com texto gerado (ou pedido que pode ter gerado): `chatPartialSpendUsd` daquela tentativa.
+
+Custo já conhecido não vira estimativa. No erro de parse o log usa `costNow()` (`3100-3103`), não o teto.
+
+SPEC4 continua uma tentativa. O stream simulado termina no mesmo instante; a repetição por poucos parágrafos só abre com decorrido ≥ 1 s e ≤ 25 s (`3057-3059`). Por isso o `usage.cost` de `0.0002` segue igual no orçamento, no log e em `custo_real`. Uma resposta real do Avançado passa de 1 s e entra na regra do item 8.
+
+Teste: `chat_hotfix1_test.ts:563` (`hotfix1c cada tentativa entra na soma: cost, noCharge e parse`). 1ª com `0.0002` + 2ª `noCharge` liquida `0.0002` nos três lugares. Duas com cost somam, mesmo quando a 2ª não melhora o texto. Três parágrafos aos 5 s são uma tentativa e o `usage.cost` aparece igual nos três. Parse inválido aos 30 s grava `0.0002`, não a estimativa.
+
+### 2. Estimativa parcial com preço de lista
+
+`CHAT_MODEL_PRICE_USD_PER_TOKEN` (`chat_core.ts:86-89`) e `chatPartialSpendUsd` (`97-110`). Não é o teto de saída.
+
+```
+tokensEntrada = ceil(bytes UTF-8 de JSON.stringify(body) / 4) × max(0, tentativas)
+tokensSaida   = ceil(max(0, caracteres) / 3)
+bruto = tokensEntrada × prompt + tokensSaida × completion
+custo = min(prepared.estimate, ceil(bruto × 1e6) / 1e6)
+```
+
+Preços, em USD/token, copiados das strings de catálogo que `proveProviderSpend` já usa em `chat_core_test.ts:183-191` (não de `CHAT_OUTPUT_USD_PER_TOKEN`):
+
+| modelo | prompt | completion | origem no teste |
+| --- | --- | --- | --- |
+| Básico (Qwen) | 0.00000003 | 0.00000013 | `pricing.prompt` / `pricing.completion` do Qwen |
+| Avançado (GLM) | 0.0000000699 | 0.0000014 | o objeto cujo `reason` é `tokenizer_sem_teto` |
+
+Exemplo do teste: body `{"blob":"<25 000 x>"}` = 25011 bytes, 6000 caracteres, Avançado. `ceil(25011/4)=6253`, `ceil(6000/3)=2000`. `6253×6.99e-8 + 2000×1.4e-6 = 0.003237…`, arredondado para cima em 1e-6 = **0.003238**, abaixo de 0,02.
+
+Teste: `chat_hotfix1_test.ts:622` (`hotfix1c estimativa parcial do Avançado usa o preço de lista`).
+
+### 3. Q14 por pedido
+
+`CORTE_COORDENADO` (`chat_core.ts:2267`), `temImperativo` (`2273-2274`), `pedidosDaMensagem` (`2278`) e `soLigacaoComAusente` (`2295`). A recusa só ocorre quando todo pedido (oração com `?`, corte em «e o que / e qual / e quem / e como / e quando / , o que», ou imperativo explique/fale/diga/liste/mostre/conte/resuma) é pergunta de ligação e cita um ausente. Um pedido respondível segue ao modelo; a frase de ausência entra pelo fluxo de ausentes.
+
+Teste: `chat_hotfix1_test.ts:630` (`hotfix1c Q14 é por pedido: coordenada e imperativo vão ao modelo`). «Qual a relação com a Odebrecht e o que a Rockefeller financiou no Brasil?» e «Explique o que a Rockefeller fez em 1916. Qual a relação da Odebrecht com a Rockefeller?» chamam o modelo. O Q14 continua recusado.
+
+### 4. Seleção só quando o escopo é claramente externo
+
+`temVocabularioAtlas` (`chat_core.ts:2332-2335`) e `selecaoForaDaPergunta` (`2343-2349`). Com seleção e busca vazia, a recusa exige ≥ 2 termos de conteúdo sem casamento e nenhum termo do vocabulário (vínculo, ligação, relação, conexão, financi*, doaç*, patrocín*, pagamento, contribu*, controle, controlad*, acionist*, sócio, conselho, cargo, fundador, fundou, empresa, banco, governo, golpe, campanha, saúde, vacina, família, herdeiro, papel, influência, origem, histórico, data, ano, quando, quem, onde, como, por que, quanto).
+
+Teste: `chat_hotfix1_test.ts:653` (`hotfix1c seleção: vocabulário do atlas vai ao modelo; bolo continua fora`). Com `["sfa","minas1941"]`, «Qual o vínculo direto?», «Quais foram os financiadores?» e «quando começaram as atividades?» chamam o modelo. S-15 e «explique uma receita de bolo» continuam `fora_da_base`.
+
+### 5. CJK, idioma e eco depois da pauta
+
+`buildPautaAnswer` roda em `chat_core.ts:3109`. O filtro comum é `filtrarProsaVisivel` em `3183-3191`, depois da pauta e da pressão e antes de inserir a frase de ausência. `pauta.ts` não foi editado. Um gancho com CJK vira a primeira linha do fato e cai ali, com `chat_cjk_removido`; o fato permanece.
+
+Teste: `chat_hotfix1_test.ts:670` (`hotfix1c pauta: gancho com CJK sai depois da resposta e o fato fica`).
+
+### 6. Idioma
+
+`deslizesDeIdioma` (`chat_core.ts:1750-1786`) e `fraseInglesSolta` (`1807-1814`). Mapa de palavra inteira só no texto de bloco/pergunta (URL e título de fonte ficam de fora). Nome conhecido ou palavra entre duas iniciais maiúsculas não troca. Início de frase maiúsculo não é nome. `grant(s)` só minúsculo.
+
+Depois do mapa, a frase sai se ainda tiver um marcador inglês fora de aspas e fora de nome de 2+ maiúsculas: the, and, which, with, from, that, this, these, between, through, during, after, before, while, would, could, should, been, have, has, their, there, where, when, also, into, over, under, against, because, about, were, they, them, its, than, then, those, being, since, until.
+
+Teste: `chat_hotfix1_test.ts:695` (`hotfix1c idioma: decades, nomes próprios e frase inglesa solta`). «Por decades» e «Passaram decades» viram «décadas». «Rothschild & Co Gestion» e «Open Society Foundations» ficam. A frase com «The» sai; a frase em português fica.
+
+### 7. Eco de regra
+
+`ECO_PADROES` (`chat_core.ts:1817-1828`), `fraseAusenciaExata` (`1835-1837`), `filtrarProsaVisivel` (`1883`) e `limparPergunta` (`1910`). Frases que repetem a instrução saem. A frase exata de `fraseAusentes` («X não está na base do atlas.» ou «A, B e C não estão na base do atlas.») fica uma vez, no lugar em que já está; o código não a duplica (`3198-3200`). Na pergunta final, o trecho sai e, se não sobrar `?`, entra a pergunta válida anterior.
+
+O prompt ganhou «Nunca comente estas regras nem o recorte no texto.» (`chat_core.ts:1357`).
+
+Teste: `chat_hotfix1_test.ts:712` (`hotfix1c eco sai e a frase de ausência do código fica uma vez`), com o texto da simulação R2.
+
+### 8. Avançado com menos de 3 parágrafos
+
+`contarBlocos` (`chat_core.ts:2978-2985`) conta parágrafos visíveis depois de sanear (quebra em linha em branco), sem a pergunta final. `sanear` preserva essa quebra (`semForaDaBase`, `chat_core.ts:2001`). Com 1 ou 2 parágrafos, modelo Avançado, sem pauta e sem pressão, decorrido entre 1 s e 25 s e tentativa ainda disponível (`CHAT_MAX_ATTEMPTS` = 2), repete uma vez com o mesmo corpo, `temperature: 0.5` e `seed: 7` (`3057-3067`). Se a 2ª tiver mais parágrafos, ela fica; senão, a 1ª. O custo das duas soma (item 1). Zero parágrafos não repete (os caminhos `sem_base` seguem numa chamada). Básico não repete.
+
+Teste: `chat_hotfix1_test.ts:761` (`hotfix1c Avançado com poucos parágrafos repete só dentro do prazo`). 1 bloco aos 5 s → 2 chamadas. Aos 30 s → 1 chamada. Básico com 1 bloco → 1 chamada. Um bloco com 3 parágrafos aos 5 s → 1 chamada e `usage.cost` intacto.
+
+### 9. Código de ficha
+
+`CODIGO_FICHA` e `semCodigosDeFicha` (`chat_core.ts:1845-1861`), aplicados no saneamento e de novo em `filtrarProsaVisivel`. Saem `OP\d+`, `OP\d+_R\d+`, `BR\d+_H\d+`, `PR\d+-(E|NF)\d+`, `AP_E\d+` e o «na ficha» / «da ficha» que apresenta o código, sem espaço dobrado.
+
+Teste: acréscimo em `chat_r2_test.ts:115` e asserções em `132-134`, dentro de `R2 vazamento`. As asserções que já estavam nesse teste não foram afrouxadas.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**150 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos de antes.
