@@ -29,7 +29,7 @@ before(async () => {
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, channel: 'chrome' });
 });
 after(async () => { if (browser) await browser.close(); if (server) await new Promise(r => server.close(r)); });
 async function open(width, height, suffix = '/mapa/') {

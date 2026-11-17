@@ -12,7 +12,6 @@ const { arquivoDoSite } = require('./site_files.cjs');
 
 const root = path.resolve(__dirname, '..');
 const prints = path.resolve(root, '../prints');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 function ariaN(page) {
   return page.evaluate(() => document.querySelectorAll('#map-mode [aria-current]').length);
@@ -215,8 +214,7 @@ function servir(override) {
 }
 
 async function launch() {
-  try { return await chromium.launch({ headless: true }); }
-  catch { return await chromium.launch({ headless: true, executablePath: CHROME }); }
+  return chromium.launch({ headless: true, channel: 'chrome' });
 }
 
 async function touch(cdp, type, pts) {

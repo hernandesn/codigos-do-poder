@@ -38,7 +38,7 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     origin = `http://127.0.0.1:${server.address().port}`;
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: 'chrome' });
   });
   afterEach(async () => { for (const c of contexts.splice(0)) await c.close(); });
   after(async () => {

@@ -205,7 +205,7 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     origin = `http://127.0.0.1:${server.address().port}`;
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: 'chrome' });
   });
   after(async () => {
     if (browser) await browser.close();

@@ -45,7 +45,7 @@ test('SEC-06 CSP sem violações: temas, #all, entidade e login em desktop e cel
   try {
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     const origin = `http://127.0.0.1:${server.address().port}`;
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: 'chrome' });
     fs.mkdirSync(prints, { recursive: true });
     for (const [name, width, height] of [['desktop', 1440, 900], ['celular', 390, 844]]) {
       const context = await browser.newContext({ viewport: { width, height }, isMobile: width < 500, hasTouch: width < 500, serviceWorkers: 'block' });

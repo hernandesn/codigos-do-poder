@@ -34,7 +34,13 @@ test('raiz serve a landing e /mapa/index.html é o arquivo gerado', () => {
   assert.match(js, /classList\.add\('redir-app'\)/);
 });
 
-test('redirect preserva query e hash do app e ignora a raiz sem hash', () => {
+function ancorasDoScript(js) {
+  const match = js.match(/\/\/ ANCORAS-LANDING:inicio\n\s*var ancoras = (\[[\s\S]*?\]);\n\s*\/\/ ANCORAS-LANDING:fim/);
+  assert.ok(match, 'bloco ANCORAS-LANDING');
+  return JSON.parse(match[1]);
+}
+
+test('redirect preserva query e hash do app e deixa âncora da landing na raiz', () => {
   const js = read('inicio/redirecionar-app.js');
   const run = (hash, search) => {
     const added = [];
@@ -43,20 +49,47 @@ test('redirect preserva query e hash do app e ignora a raiz sem hash', () => {
       location: { hash, search, replace(url) { replaced = url; } },
       document: { documentElement: { classList: { add(name) { added.push(name); } } } },
       URLSearchParams,
+      decodeURIComponent,
     });
     return { replaced, added };
   };
-  assert.deepEqual(run('', ''), { replaced: null, added: [] });
-  assert.deepEqual(run('', '?utm=1'), { replaced: null, added: [] });
+  const fica = { replaced: null, added: [] };
+  assert.deepEqual(run('', ''), fica);
+  assert.deepEqual(run('#', ''), fica);
+  assert.deepEqual(run('', '?utm=1'), fica);
+  for (const id of ancorasDoScript(js)) assert.deepEqual(run('#' + id, ''), fica, id);
+  assert.deepEqual(run('#planos', ''), fica);
+  assert.deepEqual(run('#faq', ''), fica);
+  assert.deepEqual(run('#base', ''), fica);
+  assert.deepEqual(run('#Planos', ''), { replaced: '/mapa/#Planos', added: ['redir-app'] });
   assert.deepEqual(run('#all', ''), { replaced: '/mapa/#all', added: ['redir-app'] });
   assert.deepEqual(run('#e=ipes', ''), { replaced: '/mapa/#e=ipes', added: ['redir-app'] });
   assert.deepEqual(run('#ent-ipes', ''), { replaced: '/mapa/#ent-ipes', added: ['redir-app'] });
   assert.deepEqual(run('#OP13', ''), { replaced: '/mapa/#OP13', added: ['redir-app'] });
   assert.deepEqual(run('#caso_op13', ''), { replaced: '/mapa/#caso_op13', added: ['redir-app'] });
-  assert.deepEqual(run('#planos', ''), { replaced: '/mapa/#planos', added: ['redir-app'] });
+  assert.deepEqual(run('#mapa-mundi', ''), { replaced: '/mapa/#mapa-mundi', added: ['redir-app'] });
+  assert.deepEqual(run('#planos', '?editor=1'), { replaced: '/mapa/?editor=1#planos', added: ['redir-app'] });
   assert.deepEqual(run('#mapa-mundi', '?editor=1'), { replaced: '/mapa/?editor=1#mapa-mundi', added: ['redir-app'] });
   assert.deepEqual(run('', '?debug=1'), { replaced: '/mapa/?debug=1', added: ['redir-app'] });
   assert.deepEqual(run('', '?access_token=abc'), { replaced: '/mapa/?access_token=abc', added: ['redir-app'] });
+});
+
+test('a lista de âncoras é a dos ids do index.html e não colide com hash do app', async () => {
+  const { idsDoHtml, idsNoScript, aplicar } = await import('../scripts/gerar-ancoras-landing.mjs');
+  const html = read('index.html');
+  const js = read('inicio/redirecionar-app.js');
+  const ids = idsDoHtml(html);
+  assert.deepEqual(idsNoScript(js), ids);
+  assert.equal(aplicar(js, ids), js);
+  for (const id of ['planos', 'faq', 'base', 'exemplos', 'como', 'comecar']) {
+    assert.equal(ids.includes(id), true, id);
+  }
+  for (const hash of ['e=ipes', 'OP13', 'all', 'mapa-mundi']) {
+    assert.equal(ids.includes(hash), false, hash);
+  }
+  for (const id of ids) {
+    assert.equal(/^e=/.test(id) || /^OP\d/.test(id) || /^caso_/.test(id) || /^ent-/.test(id), false, id);
+  }
 });
 
 function tipo(file) {
@@ -87,8 +120,7 @@ describe('rotas no Chromium', { timeout: 180000 }, () => {
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     origin = `http://127.0.0.1:${server.address().port}`;
-    try { browser = await chromium.launch({ headless: true, channel: 'chrome' }); }
-    catch { browser = await chromium.launch({ headless: true }); }
+    browser = await chromium.launch({ headless: true, channel: 'chrome' });
   });
   after(async () => {
     if (browser) await browser.close();
@@ -168,6 +200,59 @@ describe('rotas no Chromium', { timeout: 180000 }, () => {
       await page.goto(origin + '/#OP13');
       await page.waitForURL(url => url.pathname === '/mapa/' && url.hash === '#OP13');
       await page.waitForFunction(() => window.mural?.getState().view === 'caso:OP13' && window.mural.getState().selected?.id === 'caso_op13');
+    } finally { await context.close(); }
+  });
+
+  test('/#planos, /#faq e /#base ficam na landing e a seção entra no viewport', async () => {
+    const { context, page } = await open();
+    try {
+      for (const id of ['planos', 'faq', 'base']) {
+        await page.goto(origin + '/#' + id, { waitUntil: 'load' });
+        await page.evaluate(() => document.fonts.ready);
+        const url = new URL(page.url());
+        assert.equal(url.pathname, '/', id);
+        assert.equal(url.hash, '#' + id, id);
+        // html{scroll-behavior:smooth} anima a rolagem do hash; espera o fim.
+        await page.waitForFunction(elId => {
+          const el = document.getElementById(elId);
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          return scrollY > 0 && Math.abs(r.top) < 4 && r.bottom > 0;
+        }, id);
+        const pos = await page.evaluate(elId => {
+          const el = document.getElementById(elId);
+          const r = el.getBoundingClientRect();
+          return {
+            top: r.top,
+            bottom: r.bottom,
+            inner: innerHeight,
+            scroll: scrollY,
+            escondida: document.documentElement.classList.contains('redir-app'),
+          };
+        }, id);
+        assert.equal(pos.escondida, false, id);
+        assert.ok(pos.scroll > 0, id + ' não rolou ' + JSON.stringify(pos));
+        assert.ok(pos.bottom > 0 && pos.top < pos.inner, id + ' fora do viewport ' + JSON.stringify(pos));
+        assert.ok(pos.top < pos.inner * 0.45, id + ' não ficou no alto da tela ' + JSON.stringify(pos));
+      }
+    } finally { await context.close(); }
+  });
+
+  test('/ sem hash e /# ficam na raiz', async () => {
+    const { context, page } = await open();
+    try {
+      await page.goto(origin + '/', { waitUntil: 'load' });
+      let url = new URL(page.url());
+      assert.equal(url.pathname, '/');
+      assert.equal(url.hash, '');
+      assert.equal(await page.locator('h1').isVisible(), true);
+      assert.equal(await page.evaluate(() => document.documentElement.classList.contains('redir-app')), false);
+      await page.goto(origin + '/#', { waitUntil: 'load' });
+      url = new URL(page.url());
+      assert.equal(url.pathname, '/');
+      assert.ok(url.hash === '' || url.hash === '#', url.hash);
+      assert.match(await page.title(), /o mapa que a manchete não monta/);
+      assert.equal(await page.evaluate(() => location.pathname), '/');
     } finally { await context.close(); }
   });
 
