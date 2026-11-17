@@ -1,0 +1,386 @@
+{
+  "rothschild": {
+    "raizes": [
+      {
+        "id": "rothschild",
+        "nome": "Rothschild",
+        "nucleo": "bancos",
+        "tipo": "familia",
+        "nota": "Ramos e empresas distintos; sobrenome não demonstra controle conjunto."
+      }
+    ],
+    "entidades": [
+      {
+        "id": "concordia",
+        "nome": "Concordia",
+        "nucleo": "bancos",
+        "tipo": "holding",
+        "nota": ""
+      },
+      {
+        "id": "edr",
+        "nome": "Edmond de Rothschild",
+        "nucleo": "bancos",
+        "tipo": "empresa",
+        "nota": ""
+      },
+      {
+        "id": "rit",
+        "nome": "RIT Capital Partners",
+        "nucleo": "bancos",
+        "tipo": "empresa",
+        "nota": ""
+      },
+      {
+        "id": "rothschild",
+        "nome": "Rothschild",
+        "nucleo": "bancos",
+        "tipo": "familia",
+        "nota": "Ramos e empresas distintos; sobrenome não demonstra controle conjunto."
+      }
+    ],
+    "relacoes": [
+      {
+        "confianca": "alta",
+        "destino": "rit",
+        "estado": "retrato_documental",
+        "fim": null,
+        "fontes": [
+          "S01"
+        ],
+        "id": "E001",
+        "inicio": null,
+        "intensidade": 3,
+        "origem": "rothschild",
+        "periodo": "referência consultada em 2026",
+        "tipo": "participacao",
+        "afirmacao": "Interesses da família são o maior bloco acionista da RIT.",
+        "limite": "Maior bloco não significa maioria absoluta; não abrange todos os ramos."
+      },
+      {
+        "confianca": "alta",
+        "destino": "concordia",
+        "estado": "retrato_documental",
+        "fim": null,
+        "fontes": [
+          "I02",
+          "I29"
+        ],
+        "id": "E017",
+        "inicio": null,
+        "intensidade": 5,
+        "origem": "rothschild",
+        "periodo": "31/12/2025",
+        "tipo": "veiculo_familiar",
+        "afirmacao": "O organograma publicado para 31/12/2025 atribui a Concordia 52% do capital de Rothschild & Co.",
+        "limite": "Percentual arredondado de capital; não equivale a votos nem identifica os beneficiários finais de cada ramo."
+      },
+      {
+        "confianca": "alta",
+        "destino": "edr",
+        "estado": "retrato_documental",
+        "fim": null,
+        "fontes": [
+          "S11",
+          "S56"
+        ],
+        "id": "E024",
+        "inicio": "2019",
+        "intensidade": 5,
+        "origem": "rothschild",
+        "periodo": "2019; referência em 31/12/2025",
+        "tipo": "controle",
+        "afirmacao": "O grupo Edmond de Rothschild se apresenta como 100% familiar.",
+        "limite": "Ramo de Benjamin de Rothschild; empresa distinta de Rothschild & Co."
+      }
+    ],
+    "fontes": [
+      {
+        "id": "I02",
+        "titulo": "Organograma de capital publicado para 31/12/2025",
+        "acesso": "Imagem examinada visualmente; categorias e percentuais transcritos sem normalização.",
+        "editor": "Rothschild & Co",
+        "localizador": "Imagem vinculada na página Actionnaires, cuja legenda dá a data de 31/12/2025. O caminho /2023/ da imagem não é sua data de referência.",
+        "tipo": "documento_primario",
+        "url": "https://www.rothschildandco.com/siteassets/publications/rothschildandco/group/2023/rothschild--co-sca-structure-fr-v3.png"
+      },
+      {
+        "id": "I29",
+        "titulo": "Actionnaires — referência de 31/12/2025",
+        "acesso": "Documento obtido; leitura focal das seções indicadas.",
+        "editor": "Rothschild & Co",
+        "localizador": "Legenda e nota do organograma: percentuais de capital, arredondados; acionistas diretos individualmente abaixo de 10%, exceto Concordia.",
+        "tipo": "documento_primario",
+        "url": "https://www.rothschildandco.com/fr/nous-connaitre/actionnaires/?page=3"
+      },
+      {
+        "id": "S01",
+        "titulo": "About us — RIT Capital Partners",
+        "acesso": "trecho indexado",
+        "editor": "RIT",
+        "localizador": "História de 1971 e família como maior acionista",
+        "tipo": "institucional",
+        "url": "https://www.ritcap.com/about-us/"
+      },
+      {
+        "id": "S11",
+        "titulo": "Who we are / key figures",
+        "acesso": "texto/trecho consultado",
+        "editor": "Edmond de Rothschild",
+        "localizador": "100% familiar; números com referência em 31/12/2025",
+        "tipo": "institucional",
+        "url": "https://www.edmond-de-rothschild.com/en/who-we-are"
+      },
+      {
+        "id": "S56",
+        "titulo": "Our history — family-owned",
+        "acesso": "texto/trecho consultado",
+        "editor": "Edmond de Rothschild",
+        "localizador": "Fechamento de capital de 2019 pela família de Benjamin",
+        "tipo": "institucional",
+        "url": "https://www.edmond-de-rothschild.com/en/our-history"
+      }
+    ],
+    "casos": []
+  },
+  "fundacao": {
+    "raizes": [
+      {
+        "id": "rf",
+        "nome": "Rockefeller Foundation",
+        "nucleo": "rockefeller",
+        "tipo": "fundacao",
+        "nota": ""
+      }
+    ],
+    "entidades": [
+      {
+        "id": "geapp_llc",
+        "nome": "Global Energy Alliance · GEAPP LLC",
+        "nucleo": "influencia_documentada",
+        "tipo": "instituicao",
+        "nota": ""
+      },
+      {
+        "id": "jdr",
+        "nome": "John D. Rockefeller",
+        "nucleo": "rockefeller",
+        "tipo": "pessoa",
+        "nota": ""
+      },
+      {
+        "id": "rf",
+        "nome": "Rockefeller Foundation",
+        "nucleo": "rockefeller",
+        "tipo": "fundacao",
+        "nota": ""
+      },
+      {
+        "id": "rfcc",
+        "nome": "RF Catalytic Capital, Inc.",
+        "nucleo": "influencia_documentada",
+        "tipo": "instituicao",
+        "nota": ""
+      }
+    ],
+    "relacoes": [
+      {
+        "confianca": "alta",
+        "destino": "rf",
+        "estado": "historico",
+        "fim": null,
+        "fontes": [
+          "S18"
+        ],
+        "id": "E044",
+        "inicio": "1913",
+        "intensidade": 4,
+        "origem": "jdr",
+        "periodo": "1913",
+        "tipo": "fundacao",
+        "afirmacao": "Rockefeller estabeleceu a Rockefeller Foundation.",
+        "limite": "Origem histórica não demonstra controle atual de cada beneficiário."
+      },
+      {
+        "confianca": "alta",
+        "destino": "rfcc",
+        "estado": "retrato_documental",
+        "fim": null,
+        "fontes": [
+          "I09"
+        ],
+        "id": "IN006",
+        "inicio": null,
+        "intensidade": 5,
+        "origem": "rf",
+        "periodo": "2024",
+        "tipo": "controle_declarado",
+        "afirmacao": "O 990-PF 2024 identifica RF Catalytic Capital entre as entidades controladas.",
+        "limite": "Entidade sem fins lucrativos; controle institucional não é propriedade pessoal da família."
+      },
+      {
+        "confianca": "alta",
+        "destino": "geapp_llc",
+        "estado": "historico",
+        "fim": "2024-12-31",
+        "fontes": [
+          "I09"
+        ],
+        "id": "IN009",
+        "inicio": null,
+        "intensidade": 3,
+        "origem": "rf",
+        "periodo": "2024",
+        "tipo": "transferencia_institucional",
+        "afirmacao": "O 990-PF registra em 2024 US$50.413.309 em transferência de equity e contribuição em espécie à GEAPP LLC.",
+        "limite": "US$50.056.563 de equity + US$346.746 em espécie; não é tudo dinheiro novo em caixa."
+      }
+    ],
+    "fontes": [
+      {
+        "id": "I09",
+        "titulo": "Form 990-PF 2024",
+        "acesso": "Arquivo integral obtido; página 131 conferida visualmente e por texto. Não se afirma leitura dos 162 fólios.",
+        "editor": "The Rockefeller Foundation / IRS",
+        "localizador": "Página PDF/impressa 131, Statement 16: RF Catalytic Capital e GEAPP LLC. Não confundir transferência de equity e contribuição em espécie com grant integralmente em caixa.",
+        "tipo": "documento_primario",
+        "url": "https://www.rockefellerfoundation.org/wp-content/uploads/2025/11/2024-990-PF.pdf"
+      },
+      {
+        "id": "S18",
+        "titulo": "John D. Rockefeller, 1839–1937",
+        "acesso": "texto/trecho consultado",
+        "editor": "Rockefeller Archive Center",
+        "localizador": "Standard Oil; Chicago; instituto médico; General Education Board; fundação",
+        "tipo": "arquivo",
+        "url": "https://rockarch.org/resources/about-the-rockefellers/john-d-rockefeller-sr/"
+      }
+    ],
+    "casos": []
+  },
+  "petroleo": {
+    "raizes": [
+      {
+        "id": "standard",
+        "nome": "Standard Oil",
+        "nucleo": "rockefeller",
+        "tipo": "empresa",
+        "nota": ""
+      }
+    ],
+    "entidades": [
+      {
+        "id": "jdr",
+        "nome": "John D. Rockefeller",
+        "nucleo": "rockefeller",
+        "tipo": "pessoa",
+        "nota": ""
+      },
+      {
+        "id": "standard",
+        "nome": "Standard Oil",
+        "nucleo": "rockefeller",
+        "tipo": "empresa",
+        "nota": ""
+      },
+      {
+        "id": "standard_nj",
+        "nome": "Standard Oil of New Jersey · histórico",
+        "nucleo": "aprofundamentos_1_4",
+        "tipo": "empresa",
+        "nota": "Companhia industrial do antigo sistema Standard; contratos e gestores próprios. Não é a família Rockefeller como pessoa coletiva."
+      },
+      {
+        "id": "supremecourt",
+        "nome": "Suprema Corte dos EUA",
+        "nucleo": "politica",
+        "tipo": "orgao_publico",
+        "nota": ""
+      }
+    ],
+    "relacoes": [
+      {
+        "confianca": "alta",
+        "destino": "standard",
+        "estado": "historico",
+        "fim": null,
+        "fontes": [
+          "S18",
+          "S28"
+        ],
+        "id": "E042",
+        "inicio": "1870",
+        "intensidade": 4,
+        "origem": "jdr",
+        "periodo": "1870",
+        "tipo": "fundacao",
+        "afirmacao": "John D. Rockefeller foi cofundador da Standard Oil.",
+        "limite": ""
+      },
+      {
+        "confianca": "alta",
+        "destino": "standard",
+        "estado": "historico",
+        "fim": null,
+        "fontes": [
+          "S29"
+        ],
+        "id": "E043",
+        "inicio": null,
+        "intensidade": 4,
+        "origem": "supremecourt",
+        "periodo": "15/05/1911",
+        "tipo": "decisao_judicial",
+        "afirmacao": "A Suprema Corte determinou a dissolução da combinação Standard Oil sob a legislação antitruste.",
+        "limite": "Decisão sobre aquela estrutura e época; não acusa descendentes."
+      },
+      {
+        "confianca": "alta",
+        "destino": "standard_nj",
+        "estado": "historico",
+        "fim": null,
+        "fontes": [
+          "S18"
+        ],
+        "id": "ROM66",
+        "inicio": null,
+        "intensidade": 3,
+        "origem": "standard",
+        "periodo": "após 1892–1911",
+        "tipo": "reorganizacao_empresarial",
+        "afirmacao": "Após a dissolução do trust, empresas que o compunham participaram da formação da Standard Oil of New Jersey.",
+        "limite": "Sucessão/reorganização societária, não identidade jurídica simples nem continuidade de controle familiar."
+      }
+    ],
+    "fontes": [
+      {
+        "id": "S18",
+        "titulo": "John D. Rockefeller, 1839–1937",
+        "acesso": "texto/trecho consultado",
+        "editor": "Rockefeller Archive Center",
+        "localizador": "Standard Oil; Chicago; instituto médico; General Education Board; fundação",
+        "tipo": "arquivo",
+        "url": "https://rockarch.org/resources/about-the-rockefellers/john-d-rockefeller-sr/"
+      },
+      {
+        "id": "S28",
+        "titulo": "Standard Oil Established",
+        "acesso": "trecho indexado",
+        "editor": "Library of Congress",
+        "localizador": "Fundação em 10/01/1870; dissolução em 1911",
+        "tipo": "biblioteca",
+        "url": "https://guides.loc.gov/this-month-in-business-history/january/standard-oil-established"
+      },
+      {
+        "id": "S29",
+        "titulo": "Standard Oil Co. v. United States, 221 U.S. 1",
+        "acesso": "trecho indexado",
+        "editor": "Supreme Court / Library of Congress",
+        "localizador": "Decisão de 15/05/1911; dissolução antitruste",
+        "tipo": "decisao_judicial",
+        "url": "https://tile.loc.gov/storage-services/service/ll/usrep/usrep221/usrep221001/usrep221001.pdf"
+      }
+    ],
+    "casos": []
+  }
+}

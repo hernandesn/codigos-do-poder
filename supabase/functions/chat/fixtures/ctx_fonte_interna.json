@@ -1,0 +1,47 @@
+{
+  "raizes": [
+    {
+      "id": "santa_se",
+      "nome": "Santa Sé",
+      "tipo": "instituicao"
+    }
+  ],
+  "entidades": [
+    {
+      "id": "santa_se",
+      "nome": "Santa Sé",
+      "tipo": "instituicao"
+    },
+    {
+      "id": "brasil",
+      "nome": "Brasil",
+      "tipo": "instituicao"
+    }
+  ],
+  "relacoes": [
+    {
+      "id": "PR15b-E001",
+      "origem": "santa_se",
+      "destino": "brasil",
+      "tipo": "correspondencia_diplomatica",
+      "estado": "historico",
+      "confianca": "alta",
+      "periodo": "1964",
+      "afirmacao": "Há correspondência diplomática entre a Santa Sé e o Brasil neste recorte de teste.",
+      "limite": "A fonte é interna e não pode ir ao texto público.",
+      "fontes": [
+        "PR15b-NF12"
+      ]
+    }
+  ],
+  "fontes": [
+    {
+      "id": "PR15b-NF12",
+      "tipo": "proposta_interna",
+      "titulo": "Pauta 15a — Santa Sé↔Brasil diplomatas v1",
+      "acesso": "nota de trabalho",
+      "localizador": "rascunho interno — não publicar"
+    }
+  ],
+  "casos": []
+}
