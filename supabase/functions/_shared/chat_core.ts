@@ -1193,25 +1193,34 @@ function escapeReg(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Tira id cru e apelido "[n]" do texto visível. Entidade vira o nome antes de "·". */
+/** Id de código: tem "_", dígito ou "-", ou é só maiúsculas com ao menos duas letras. */
+function idPareceCodigo(id: string): boolean {
+  return /[_\d-]/.test(id) || /^[A-Z]{2,}$/.test(id)
+}
+
+/** Tira id cru e apelido "[n]" do texto visível. Entidade vira o nome antes de "·". Uma passada só. */
 export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): string {
   const nomes = new Map<string, string>()
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
-    if (!item?.id) continue
+    if (!item?.id || !idPareceCodigo(item.id)) continue
     const curto = (item.nome || '').replace(/<[^>]*>/g, '').split('·')[0].trim()
     if (!nomes.has(item.id) || (curto && !nomes.get(item.id))) nomes.set(item.id, curto)
   }
-  let out = texto
-  const entidades = [...nomes.keys()].sort((a, b) => b.length - a.length)
-  for (const id of entidades) {
-    out = out.replace(new RegExp(`\\b${escapeReg(id)}\\b`, 'g'), nomes.get(id) || '')
-  }
-  const drop = [
+  const troca = new Map<string, string>()
+  for (const [id, nome] of nomes) troca.set(id, nome)
+  for (const id of [
     ...(ctx.relacoes ?? []).map((rel) => rel?.id),
     ...(ctx.fontes ?? []).map((fonte) => fonte?.id),
-  ].filter((id): id is string => !!id && !nomes.has(id))
-  drop.sort((a, b) => b.length - a.length)
-  for (const id of drop) out = out.replace(new RegExp(`\\b${escapeReg(id)}\\b`, 'g'), '')
+  ]) {
+    if (!id || troca.has(id) || !idPareceCodigo(id)) continue
+    troca.set(id, '')
+  }
+  let out = texto
+  const ids = [...troca.keys()].sort((a, b) => b.length - a.length)
+  if (ids.length) {
+    const re = new RegExp(`\\b(?:${ids.map(escapeReg).join('|')})\\b`, 'g')
+    out = out.replace(re, (id) => troca.get(id) ?? '')
+  }
   out = out.replace(/\[(?:[1-9]\d{0,2})\]/g, '')
   for (let i = 0; i < 4; i++) {
     const next = out.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.;:!?])/g, '$1')

@@ -1232,8 +1232,7 @@ Deno.test('SPEC4 fallback aceita ligação ausente, nota e três nomes sem HTML'
   assert(answer, 'usa nota de raiz sem relação')
   eq(answer.blocos.length, 4, 'três temas e a lacuna')
   eq(answer.blocos[1].texto, `Heitor Lyra: ${'a'.repeat(400)}`, 'afirmação limitada a 400 caracteres sem tags')
-  // O id cru "arquivo" no meio da nota vira o nome da entidade ("Arquivo").
-  eq(answer.blocos[2].texto, 'Arquivo: Nota documental do Arquivo.', 'nota sem HTML; id cru vira o nome')
+  eq(answer.blocos[2].texto, 'Arquivo: Nota documental do arquivo.', 'nota sem HTML')
   eq(answer.blocos[3].texto, 'O atlas não documenta ligação direta entre Golpe de 1964, Heitor Lyra e Arquivo.', 'lista de três nomes sem sufixos')
   assert(answer.blocos.every((b) => !/[<>]/.test(b.texto)), 'texto simples')
 })

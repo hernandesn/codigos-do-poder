@@ -33,7 +33,7 @@ Na fixture real, com a seleção de febre amarela, a pergunta Soros/Lula devolve
 1. `boundContextJson` não muda (testes de encolhimento seguem vendo ids reais). `buildSystemPrompt` e o mapa de `prepareChat` usam `apelidarRecorte`: cada id de entidade, relação e fonte vira `[n]`, inclusive origem, destino, fontes, `ligacoes_entre_raizes` e lacunas. O mapa fica em `prepared.apelidos` e não vai ao `meta`, ao log nem ao cliente. Antes de `normalizeCitations`, `traduzirApelidos` aceita `[n]`, `n`, `#n` e o id real. Apelido no campo errado segue a pertença do recorte. Apelido inexistente é removido com aviso `citacao_removida`.
 2. `reatribuirPorNome`, antes do saneamento, guarda o id inválido (para o aviso) e, se o texto cita duas entidades com relação no recorte, acrescenta essa relação e as fontes citáveis. Com uma só, cita a entidade e a primeira relação dela que tem fonte. Sem casar, continua `sem_id_valido`.
 3. Ausentes no system prompt, no máximo uma linha, nomes só com letras, dígitos, espaço, `&` e `-`, 60 caracteres, até 3. No final com sucesso, se nenhum bloco diz “não está na base”, entra um bloco documentado com ids vazios.
-4. `ocultarIdsVisiveis` roda em texto, justificativa, `em_aberto` e avisos do modelo, antes de `publicChatText`. Entidade vira o nome antes de `·`; relação e fonte somem; `[n]` de 1 a 3 dígitos some. Anos comuns ficam. Avisos do sistema (`Relação ${id} está como…`) e o texto da pauta montado depois não passam por essa limpeza.
+4. `ocultarIdsVisiveis` roda em texto, justificativa, `em_aberto` e avisos do modelo, antes de `publicChatText`. Só id que parece código (tem `_`, dígito ou `-`, ou é todo maiúsculo com ≥2 letras) é trocado, numa passada só: entidade vira o nome antes de `·`; relação e fonte somem. Palavra só de minúsculas fica. `[n]` de 1 a 3 dígitos some. Anos comuns ficam. Avisos do sistema (`Relação ${id} está como…`) e o texto da pauta montado depois não passam por essa limpeza.
 5. `em_aberto` fecha o último bloco com `\n\n`, também na pauta.
 6. Duas linhas novas sempre: `Cite só "[n]".` e `Não ponha ids no texto.` A de ausentes só quando há nomes. As linhas de segurança e a de id puro (`walther_ms`, `E219`, `PR1-NF22`) permanecem. O saneamento aceita os dois formatos.
 
@@ -45,15 +45,15 @@ Na fixture real, com a seleção de febre amarela, a pergunta Soros/Lula devolve
 
 Runner: `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs` (Node 25). Deno não está nesta máquina; os arquivos continuam com import `.ts` e sem API de Node.
 
-A suíte no commit base não foi reexecutada neste turno. O arquivo novo acrescenta 14 testes (os 12 pedidos mais Rothschild/Brother Sam/Lemann e o tamanho do prompt). Total registrado: 121. Resultado: **118 passed, 0 failed, 3 skipped**. Os 3 skips são os de sempre (`Deno.serve` / HTTP): limite 402/403, rate limit com `Deno.serve`, e `functions serve` local.
+A suíte no commit base não foi reexecutada. O arquivo novo tem 17 testes (os 12 pedidos, Rothschild/Brother Sam/Lemann, o tamanho do prompt, e três da revisão de ids crus: palavra minúscula intacta, `AP_E39`/`walther_ms`/`BP02`/`IPES`, e passada única). Total registrado: 124. Resultado desta revisão: **121 passed, 0 failed, 3 skipped**. Os 3 skips são os de sempre (`Deno.serve` / HTTP): limite 402/403, rate limit com `Deno.serve`, e `functions serve` local. O commit anterior tinha 118 passed com os mesmos 3 skips.
 
 Ajustes em testes antigos, porque o comportamento pedido mudou:
 
 - F1c(b): `em_aberto` esperado com `\n\n`.
 - A2: com seleção a query deixa de ser `null`; a busca textual pode passar de uma chamada; pergunta curta não é limpa; o teto assertado é 6.
 - `streamSemLigacao`, CRED1 e REL1 passam `entidades: []`. Com a seleção padrão `maua`, o fallback de ligação ficaria desligado e esses testes deixariam de exercê-lo.
-- SPEC4: a nota “do arquivo” contém o id `arquivo`; o texto visível vira “do Arquivo”.
-- Citação: `texto intacto id:golpe64` vira `texto intacto id:Golpe de 1964`. O campo de citação inventado continua removido. `normalizeCitations` não mexe na prosa.
+- Citação: `texto intacto id:golpe64` vira `texto intacto id:Golpe de 1964` porque `golpe64` tem dígito. O campo de citação inventado continua removido. `normalizeCitations` não mexe na prosa.
+- SPEC4 voltou ao texto da v12: “do arquivo” permanece, porque `arquivo` é só letras minúsculas.
 - Teto de 15% do prompt fixo: o piso v12 já era 1373/1341 (teto antigo 1383/1374). As duas linhas novas levam o fixo a 1412/1380. A base do teste passou a ser esse tamanho medido.
 
 ## Tamanho do system prompt (básico)
@@ -70,7 +70,7 @@ O fixo cresce 39 caracteres (1373→1412 no básico, 1341→1380 no avançado). 
 ## Riscos
 
 - O prompt pede id puro e, ao mesmo tempo, `[n]`. Os dois são aceitos de propósito, para não apagar as instruções que os testes travam. O modelo pode citar qualquer um dos dois.
-- Id que é palavra comum (`arquivo`, e no limite `soros`) é trocado no texto visível quando aparece como palavra inteira. A nota do fallback é o caso do teste SPEC4.
+- No texto visível, só sai o id que parece código: tem `_`, dígito ou `-`, ou é todo maiúsculo com pelo menos duas letras (`AP_E39`, `golpe64`, `BP02`, `IPES`). Palavra só de letras minúsculas (`soros`, `arquivo`, `marinho`, `rockefeller`, `rf`, `nm`) fica. A troca é uma passada, então um nome que contém outro id não é reprocessado. Um id minúsculo vazado no texto continua visível.
 - Nomes além de 3 buscas, ou além do teto de 6 chamadas, não entram em `ausentes`. Não dá para avisar “não está na base” de um nome que não foi consultado.
 - `expandPautaContext` continua fora desse teto.
 - Apelidar um recorte cheio de ids muito curtos pode alongar o JSON (`rf` → `[1]`). No sintético e em Soros ele encolheu. Se passar de 8000, o encurtamento de texto posterior ainda roda.

@@ -257,7 +257,7 @@ Deno.test('id inventado ou parcial continua removido', () => {
   const doc = answer.blocos[0]
   assert(doc.tipo === 'documentado', 'bloco permanece')
   eq(JSON.stringify(doc.entidades), JSON.stringify([]), 'nenhum id inventado sobrevive')
-  eq(doc.texto, 'texto intacto id:Golpe de 1964', 'id cru no texto vira o nome; a citação inventada não vira id')
+  eq(doc.texto, 'texto intacto id:Golpe de 1964', 'golpe64 tem dígito e vira o nome; citação inventada não vira id')
 })
 
 Deno.test('idKind classifica os padrões reais e nada além deles', () => {

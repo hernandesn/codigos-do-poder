@@ -366,6 +366,59 @@ Deno.test('8 ids crus saem do texto visível e a entidade vira o nome', () => {
   proibido(doc.texto, ['AP_E39', '[2]', 'walther_ms'])
 })
 
+Deno.test('id minúsculo comum não sai do texto visível', () => {
+  const ctx: ChatContextPayload = {
+    raizes: [{ id: 'soros', nome: 'Soros · índice familiar', tipo: 'familia' }],
+    entidades: [
+      { id: 'soros', nome: 'Soros · índice familiar', tipo: 'familia' },
+      raiz('arquivo', 'Arquivo'),
+      raiz('marinho', 'Marinho', 'pessoa'),
+      raiz('rockefeller', 'Família Rockefeller', 'familia'),
+      raiz('rf', 'Rockefeller Foundation', 'fundacao'),
+      raiz('nm', 'Nota'),
+    ],
+    relacoes: [],
+    fontes: [],
+  }
+  const frase = 'soros contra febre amarela'
+  eq(ocultarIdsVisiveis(frase, ctx), frase, 'soros intacto')
+  const outras = 'arquivo, marinho, rockefeller, rf e nm'
+  eq(ocultarIdsVisiveis(outras, ctx), outras, 'outras palavras comuns intactas')
+})
+
+Deno.test('AP_E39 e walther_ms saem; maiúsculas e dígito também', () => {
+  const ctx: ChatContextPayload = {
+    raizes: [{ id: 'walther_ms', nome: 'Walther Moreira Salles · banqueiro', tipo: 'pessoa' }],
+    entidades: [
+      { id: 'walther_ms', nome: 'Walther Moreira Salles · banqueiro', tipo: 'pessoa' },
+      { id: 'IPES', nome: 'Instituto', tipo: 'instituicao' },
+    ],
+    relacoes: [{ id: 'AP_E39', origem: 'walther_ms', destino: 'IPES', fontes: ['BP02'] }],
+    fontes: [{ id: 'BP02', titulo: 'Boletim' }],
+  }
+  const saida = ocultarIdsVisiveis('AP_E39 e walther_ms, mais BP02 e IPES.', ctx)
+  assert(saida.includes('Walther Moreira Salles'), 'nome de walther_ms')
+  assert(saida.includes('Instituto'), 'IPES maiúsculo vira o nome')
+  proibido(saida, ['AP_E39', 'walther_ms', 'BP02', 'IPES'])
+})
+
+Deno.test('troca de id cru é uma passada só', () => {
+  const ctx: ChatContextPayload = {
+    raizes: [
+      { id: 'aa_outer', nome: 'Casa bb_inner', tipo: 'organizacao' },
+      { id: 'bb_inner', nome: 'Nome Interno', tipo: 'pessoa' },
+    ],
+    entidades: [
+      { id: 'aa_outer', nome: 'Casa bb_inner', tipo: 'organizacao' },
+      { id: 'bb_inner', nome: 'Nome Interno', tipo: 'pessoa' },
+    ],
+    relacoes: [],
+    fontes: [],
+  }
+  eq(ocultarIdsVisiveis('veja aa_outer fim', ctx), 'veja Casa bb_inner fim', 'nome inserido não é reprocessado')
+  eq(ocultarIdsVisiveis('bb_inner sozinho', ctx), 'Nome Interno sozinho', 'o id interno ainda sai do texto original')
+})
+
 Deno.test('9 em_aberto fecha o último bloco em parágrafo próprio', async () => {
   const store = createMemoryDb({ clock: CLOCK })
   const prepared = await preparar(store, 'Quais as conexões documentadas de Mauá e suas fontes?', ['maua'])
