@@ -175,9 +175,9 @@ Deno.test('slugs e teto', () => {
   eq(MODEL_SLUGS.basico, 'qwen/qwen3.7-flash', 'slug basico')
   eq(MODEL_SLUGS.avancado, 'z-ai/glm-5.3', 'slug avancado')
   eq(CHAT_DAILY_BUDGET_USD, 3, 'teto default')
-  eq(CHAT_MAX_TOKENS.basico, 3600, 'max_tokens basico (R2: resposta longa)')
+  eq(CHAT_MAX_TOKENS.basico, 2600, 'max_tokens basico (hotfix1: acima do máximo observado 2194)')
   eq(CHAT_MAX_TOKENS.avancado, 6000, 'max_tokens avancado (R2)')
-  eq(CHAT_COST_ESTIMATE_USD.basico, 0.002, 'preço de saída = 3600 tokens a US$ 0,0005/900')
+  eq(CHAT_COST_ESTIMATE_USD.basico, 0.001444, 'preço de saída = 2600 tokens a US$ 0,0005/900')
   eq(CHAT_COST_ESTIMATE_USD.avancado, 0.013333, 'preço de saída = 6000 tokens')
   assert(CHAT_LEASE_HOLD_MS > CHAT_MODEL_TIMEOUT_MS, 'o lease cobre o aborto')
   const qwen = proveProviderSpend({
