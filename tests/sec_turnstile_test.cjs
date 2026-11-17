@@ -135,7 +135,9 @@ test('CSP do index libera challenges.cloudflare.com só em script-src e frame-sr
   assert.equal(/<script[^>]*src=["']https:\/\/challenges\.cloudflare\.com/.test(html), false);
   assert.match(html, /id="auth-turnstile"/);
   const configJs = fs.readFileSync(path.join(siteRoot, 'config.js'), 'utf8');
-  assert.match(configJs, /"turnstileSiteKey":""/);
+  // Sitekey pública de produção (não é segredo). A secreta fica só no Supabase Auth.
+  assert.match(configJs, /"turnstileSiteKey":"0x4AAAAAAGDto-Jqyp0wkmqA"/);
+  assert.equal(loadApi().api.parsePublicConfig(publicConfig('0x4AAAAAAGDto-Jqyp0wkmqA')).turnstileSiteKey, '0x4AAAAAAGDto-Jqyp0wkmqA');
   assert.equal(configJs.includes(TEST_SITE_KEY), false);
   for (const secret of SECRET_TEST_KEYS) assert.equal(configJs.includes(secret), false);
 });
