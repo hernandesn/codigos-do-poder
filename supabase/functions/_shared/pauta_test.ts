@@ -174,7 +174,7 @@ Deno.test('P7: pressão não transforma ilegalidade em Fato', async () => {
 Deno.test('pauta: prompt compacto, schema de hipótese, sanitização e contrato', async () => {
   const ctx = await rock(); const prompt = buildSystemPrompt('basico', ctx, true)
   assert(prompt.includes('Título') && prompt.includes('2+ Fatos') && prompt.includes('em_aberto'))
-  assert(CHAT_MAX_TOKENS.basico === 2600 && CHAT_MAX_TOKENS.avancado === 6000 && MODEL_SLUGS.basico === 'qwen/qwen3.7-flash')
+  assert(CHAT_MAX_TOKENS.basico === 2600 && CHAT_MAX_TOKENS.avancado === 6000 && MODEL_SLUGS.basico === 'deepseek/deepseek-v4.1-flash-1017')
   assert(JSON.stringify(RESPOSTA_JSON_SCHEMA).includes('hipotese'))
   const { answer } = sanitizeAnswer({ blocos: [{ tipo: 'hipotese', texto: 'A base não mostra o contrato. Próximo passo: buscar o contrato.', base: [], justificativa: 'Lacuna' }] }, ctx)
   assert(answer.blocos[0]?.tipo === 'hipotese'); assertBloco(answer.blocos[0])

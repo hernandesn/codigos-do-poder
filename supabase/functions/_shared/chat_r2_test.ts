@@ -182,7 +182,7 @@ Deno.test('R2 filtros de fato de fora: superlativo, século, hoje, lugar', () =>
 
 Deno.test('R2 modelo do Básico numa constante e raciocínio por modelo', () => {
   eq(MODEL_SLUGS.basico, BASICO_MODEL_SLUG, 'Básico lê a constante')
-  eq(BASICO_MODEL_SLUG, 'qwen/qwen3.7-flash', 'Básico atual')
+  eq(BASICO_MODEL_SLUG, 'deepseek/deepseek-v4.1-flash-1017', 'Básico atual')
   eq(MODEL_SLUGS.avancado, 'z-ai/glm-5.3', 'Avançado')
   const av = modelRequestBody('avancado', 's', 'm')
   eq(JSON.stringify(av.reasoning), JSON.stringify({ effort: 'minimal', exclude: true }), 'GLM exige raciocínio')

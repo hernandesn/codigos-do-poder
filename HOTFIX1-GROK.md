@@ -266,3 +266,84 @@ Teste: acréscimo em `chat_r2_test.ts:115` e asserções em `132-134`, dentro de
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **150 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos de antes.
+
+## Hotfix1d
+
+Sobre `79af07d`. Aprovado pelo dono: o Básico passa para DeepSeek. Na função só muda `chat_core.ts`. Auth, CORS, SQL e limites diários não mudam. O teto `CHAT_OUTPUT_USD_PER_TOKEN` e `CHAT_MAX_TOKENS.basico` (2600) não mudam. As frases das seções anteriores que dizem que o Básico continua no Qwen, que o Básico não repete e que a repetição curta exige 1 s ficam como histórico; esta seção as substitui.
+
+### 0. Achados da revisão Codex do 1c (79af07d, REPROVADO)
+
+Texto depois de «tokens used» em `~/.grokbot-codex/chat-hotfix-v17c-codex.log`.
+
+- ALTA (revisão `:3017`): o retry do Avançado seguido de `modelo_ocupado` fazia 3 chamadas, acima de `CHAT_MAX_ATTEMPTS` = 2, e a liquidação passava a reserva. Corrigido. `chamadasModelo` sobe antes de cada `stream()` (`chat_core.ts:3367`). `podeRepetir` (`3418`) e o `continue` de ocupado (`3390-3392`) exigem `chamadasModelo < 2`. O mesmo contador cobre 429/ocupado, qualidade, poucos blocos, ids e Básico curto. `fecharValor` (`3251-3256`) limita a soma à reserva, exceto quando um `usage.cost` conhecido já passa dela (SEC-01). Teste: `chat_hotfix1_test.ts:902` (`hotfix1d custo por tentativa, teto de chamadas e JSON ruim devolve a primeira`), trecho «poucos blocos mais 429» (`939-947`): 2 chamadas, commit `0.0002` ≤ reserva.
+- MÉDIA (`:2907`/`:2914`): custo conhecido e desconhecido por tentativa, inclusive zero. Corrigido. Livro `gastos` (`3239`), `costNow` (`3258-3263`), `custoNoCatch` (`3264-3272`), `fecharTentativa` (`3273-3281`), `registrarFalha` (`3282-3291`). `usage.cost` 0 é conhecido. 1ª com cost 0 + 2ª `noCharge` liquida 0. Erro sem texto depois de tentativa paga soma `chatPartialSpendUsd` da tentativa atual com 0 caracteres. Sem delta e sem custo conhecido positivo, o erro continua no teto (SPEC2 SSE / SEC-01). Teste: o mesmo `chat_hotfix1_test.ts:902`.
+- MÉDIA (`:3050`/`:3070`): 1ª resposta válida + 2ª com JSON irrecuperável devolve a 1ª. Corrigido em `3420-3422` (vale para todo retry que já guardou texto). Se a repetição era de ids, cai na resposta documental em vez de republicar o texto sem id (`3403-3407`, `3421`). Teste: o mesmo `chat_hotfix1_test.ts:902`, trecho do JSON ruim.
+- MÉDIA (`:2348`): com seleção, «Explique o contrato detalhadamente» e «Quais os principais fatos?» não podem ser recusadas. Corrigido. `pedidoGenericoSelecao` (`2633-2637`) deixa passar explique/resuma/detalhe/fatos/principais/contrato/documento/isso/eles/elas. Receita, futebol, clima e programação continuam fora. Teste: `chat_hotfix1_test.ts:959`. «explique uma receita de bolo» segue «Não encontrei isso na base do atlas.».
+- MÉDIA (`:2267`/`:2274`): «Qual a relação com a Odebrecht e quais foram as ações da Rockefeller?» vai ao modelo. Corrigido. `CORTE_COORDENADO` inclui «e quais» antes de «e qual» e «e quem» (`2556`). `temImperativo` inclui descreva/descrevam/apresente/apresentem/compare/comparem (`2562-2564`). Na dúvida, não recusa. O Q14 original continua recusado. Teste: `chat_hotfix1_test.ts:975`.
+- MÉDIA (`:1759`/`:1807`/`:1817`): filtros derrubavam conteúdo legítimo. Corrigido. `deslizesDeIdioma` mascara nome do recorte e sequência Capitalizada + Board/Fund/Foundation/Trust (`1884-1897`). `spansProtegidos` protege URL e «and» entre nomes (`1958-1968`), então «Bill and Melinda Gates» não cai. O eco de «documentos anexos» só casa com «nos/dos documentos anexos fornecidos» ou «a esta conversa» (`1992`), e `casaForaDeUrl` (`1999`) não filtra URL. Teste: `chat_hotfix1_test.ts:997`.
+- BAIXA (`:3059`): piso de 1 s do retry curto. Não é bug à parte. O item 6 troca essa condição por uma que não depende de relógio. Registrado aqui e coberto pelo teste de 1 bloco aos 0 ms.
+
+### 1. Modelo do Básico
+
+`BASICO_MODEL_SLUG` (`chat_core.ts:25`) = `deepseek/deepseek-v4.1-flash-1017`. `CHAT_REASONING.basico` continua `{ effort: 'none' }` (`32`). Avançado continua `z-ai/glm-5.3` com `{ effort: 'minimal', exclude: true }`. `CHAT_MAX_TOKENS.basico` continua 2600 (`36`). O teto `CHAT_OUTPUT_USD_PER_TOKEN.basico` continua `0.0005/900` (`39-41`).
+
+Preço de lista, em USD/token, informado pelo dono como tabela OpenRouter de 2026-11-17. Não houve consulta de rede nesta sessão.
+
+| modelo | prompt | completion | origem |
+| --- | --- | --- | --- |
+| Básico (DeepSeek V4.1 Flash) | 0.000000036 | 0.0000005 | lista OpenRouter de 2026-11-17, dada pelo dono |
+| Avançado (GLM) | 0.0000000699 | 0.0000014 | o mesmo de antes: objeto `tokenizer_sem_teto` em `chat_core_test.ts` |
+
+`CHAT_MODEL_PRICE_USD_PER_TOKEN.basico` (`89-91`). Os dois preços do Básico são ≤ `0.0005/900` (≈ 5,56e-7), então `max_price` não filtra o endpoint. A reserva do Básico continua `roundUsd(2600 × 0.0005/900)` = 0.001444.
+
+Asserções de slug atualizadas, e só elas: `chat_core_test.ts:175` e `:257`, `chat_r2_test.ts:185`, `pauta_test.ts:177`. As fixtures de catálogo do Qwen em `proveProviderSpend` ficam.
+
+Teste: `chat_hotfix1_test.ts:831` (`hotfix1d preço de lista do DeepSeek cabe no teto do Básico`).
+
+### 2. Regressão R3 (Walther–IBEC)
+
+Resposta substantiva não vira recusa.
+
+- `traduzirApelidos` (`1706-1731`) aceita o id real em qualquer caixa (`idCanonico`, `1656`), o apelido `[n]`/`#n`/`n`, `R<n>`/`F<n>`/`E<n>` só do tipo certo (`idPorRotulo`, `1668`) e slug por nome normalizado, iniciais ou prefixo único (`idPorSlug`, `1687`). O resto continua desconhecido.
+- Sem id válido e com texto, `reatribuirPorNome` (`1764`) também usa sigla e segmento (`entidadesNoTexto`, `1745`; `siglasDe`, `1734`). IBEC entre parênteses entra por `segmentosDe`.
+- Ainda sem id e com ≥ 2 blocos de texto: se o prazo ≤ `CHAT_RETRY_DEADLINE_MS` (25 s) e ainda houver tentativa, uma repetição com o mesmo corpo e o lembrete `LEMBRETE_IDS` (`2716`, `3430-3435`). Se a repetição falhar, `respostaDocumental` (`2692`) monta a resposta do recorte e cobra. `fora_da_base` depois do modelo só com `sem_base` sem bloco válido ou sem texto (`3510-3524`). Recusa meta não conta como substantivo (`textoSubstantivo`, `2515`).
+
+Testes: `chat_hotfix1_test.ts:840` (slugs e R13/F14, 1 chamada, ids reais) e `:873` (sem nome aos 5 s → 2 chamadas; aos 30 s → documental com «Contrato de 1936», nunca `fora_da_base`).
+
+### 3. Pergunta final e fecho sem insinuação
+
+Prompt em `chat_core.ts:1358`. A frase antiga («A pergunta final só liga nomes que o recorte liga…») permanece. A nova pede ligação aberta, sem fato novo, sem ocultação, culpa, «quem sabia» nem «nunca». Para o prompt fixo não passar do baseline de 5810 caracteres (`chat_fix_selecao_test.ts:645`), os parênteses de exemplo em `pontes_entre_raizes` e no cargo de conselho foram enxugados (`1354-1355`). As frases que os testes procuram continuam. O fixo do Básico ficou em 5628.
+
+Filtro `FRASE_INSINUA` (`2098`), case-insensitive. «sabia do buraco» aceita até quatro palavras no meio, para apanhar «sabia do tamanho do buraco». Na pergunta, `limparPergunta` (`2185-2189`) troca o texto por «Que outros vínculos documentados ligam X a Y no atlas?» (`perguntaNeutra`, `2152`). No fecho, só a frase que contém «O que liga tudo» e casa com o filtro sai (`2134`).
+
+Teste: `chat_hotfix1_test.ts:1036`. As quatro frases da especificação saem; o fato de 1936 fica.
+
+### 4. Mapa de idioma
+
+`deslizesDeIdioma` (`1884-1953`). Ordem: máscara de nome, «funding loan» entre aspas vira um placeholder e só volta no fim (`1899`, `1952`), depois as expressões compostas (`1906-1908`), depois as palavras soltas (`1930-1944`). «and» entre duas palavras já traduzidas vira «e» (`1946-1950`); entre nomes próprios não. `concordarDoacao` (`1860-1880`) acerta artigo e particípio de doação/doações.
+
+`semCodigosDeFicha` (`2042-2069`) tira as locuções «na ficha da operação», «na ficha do caso», «da ficha da operação», «segundo a ficha», «na mesma ficha» e reescreve «a ficha do X registra» só quando havia código. «ficha de compromisso» e o título da fonte ficam.
+
+A asserção existente `chat_hotfix1_test.ts:712` passou de «O grant pagou o contrato.» para «A doação pagou o contrato.». É a concordância pedida neste item, não um afrouxamento.
+
+Teste novo: `chat_hotfix1_test.ts:997`. «Rothschild & Co Gestion», «Open Society Foundations», «International Health Board», «National Science Board», «Bill and Melinda Gates» e a URL ficam.
+
+### 5. Referência pendente
+
+`ANAFORA_SEM_ANTECEDENTE` e `semAnaforaPendente` (`2072-2095`). Roda em `filtrarProsaVisivel` (`2130`) e em `semForaDaBase` (`2288`), para a frase seguinte não perder o antecedente quando o filtro anterior já colou o resto. Com menos de 2 frases restantes, cai o bloco. Teste: o mesmo `chat_hotfix1_test.ts:997`, trecho da anáfora (`1025-1033`).
+
+### 6. Retry do Avançado por poucos blocos
+
+Sem piso de 1 s. `querRetryCurto` (`2733-2739`): o argumento `repetirCurto` vence; senão, `CHAT_RETRY_CURTO=0` desliga. O runner põe essa variável em `chat_core_node_test.mjs:31`, antes dos imports, para os testes antigos (SPEC4 inclusive) continuarem numa chamada. `rodarModelo` passa `repetirCurto: true` (`chat_hotfix1_test.ts:556`). O teto de 25 s permanece (`3418`, `3440-3449`). Vale para os dois modelos.
+
+Teste: `chat_hotfix1_test.ts:949-956` (1 bloco aos 0 ms → 2 chamadas), dentro de `hotfix1d custo…`.
+
+### 7. Básico curto
+
+A mesma repetição do item 6, com soma de custo. A asserção que era «Básico com 1 bloco não repete» / 1 chamada passou a 2 chamadas e commit `0.0002 + 0.0003` (`chat_hotfix1_test.ts:792-793`), no teste `hotfix1c Avançado com poucos parágrafos repete só dentro do prazo`. É a regra nova, não um afrouxamento. O eco do hotfix1c ganhou dois parágrafos para continuar em 1 chamada.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**158 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Os 8 testes a mais são os deste hotfix.

@@ -21,13 +21,13 @@ export const CHAT_RETRY_DEADLINE_MS = 25_000
 export const CHAT_LEASE_HOLD_MS = CHAT_MODEL_TIMEOUT_MS + 120_000
 export const CHAT_CONTEXT_JSON_MAX = 16_000
 export const OPENROUTER_KEY_URL = 'https://openrouter.ai/api/v1/key'
-/** Modelo do Básico num só lugar: troque aqui (e, se o novo modelo exigir raciocínio, CHAT_REASONING.basico). */
-export const BASICO_MODEL_SLUG = 'qwen/qwen3.7-flash'
+/** Modelo do Básico num só lugar. DeepSeek V4.1 Flash com effort none: a simulação mediu mediana de 9,6 s e US$ 0,0013 por pergunta. */
+export const BASICO_MODEL_SLUG = 'deepseek/deepseek-v4.1-flash-1017'
 export const MODEL_SLUGS = {
   basico: BASICO_MODEL_SLUG,
   avancado: 'z-ai/glm-5.3',
 } as Record<'basico' | 'avancado', string>
-/** GLM 5.3: os endpoints dentro do max_price exigem raciocínio (HTTP 400 com effort none); minimal gasta ~100 tokens. */
+/** GLM 5.3: os endpoints dentro do max_price exigem raciocínio (HTTP 400 com effort none); minimal gasta ~100 tokens. Básico fica em none. */
 export const CHAT_REASONING: Record<'basico' | 'avancado', Record<string, unknown>> = {
   basico: { effort: 'none' },
   avancado: { effort: 'minimal', exclude: true },
@@ -49,7 +49,7 @@ export const CHAT_COST_ESTIMATE_USD = {
   basico: roundUsd(CHAT_MAX_TOKENS.basico * CHAT_OUTPUT_USD_PER_TOKEN.basico),
   avancado: roundUsd(CHAT_MAX_TOKENS.avancado * CHAT_OUTPUT_USD_PER_TOKEN.avancado),
 } as const
-/** Duas tentativas no máximo (o retry existente de 429), ambas cobertas pela reserva. */
+/** Duas chamadas no máximo, em qualquer retry (HTTP 429, qualidade, blocos, ids, Básico curto). A reserva cobre as duas. */
 export const CHAT_MAX_ATTEMPTS = 2
 /** Teto de ids por parágrafo no texto público. */
 export const MAX_IDS_BLOCO = 5
@@ -57,7 +57,7 @@ export const MAX_IDS_BLOCO = 5
 export const CHAT_MAX_WORDS = { basico: 1000 } as const
 /** Protótipo: no caminho sem pauta, inferência vira parágrafo com as fontes das relações-base. */
 export const PROSA_CORRIDA = { ativo: true }
-/** Envelope dos dois papéis e do template dos modelos textuais fixos Qwen/GLM.
+/** Envelope dos dois papéis e do template dos modelos textuais fixos DeepSeek/GLM.
  * 4096 tokens excede os delimitadores de duas mensagens e a instrução de JSON.
  * O schema completo também entra nos bytes abaixo. Não há ferramentas, mídia,
  * plugins, cache_control ou prompt de terceiros neste contrato.
@@ -79,12 +79,15 @@ export function chatSpendCeilingUsd(modelo: Modelo, body: Record<string, unknown
 }
 
 /**
- * Preço de lista USD/token, o mesmo que chat_core_test.ts cita para provar o
- * catálogo: Qwen no Básico (prompt 0.00000003, completion 0.00000013) e GLM no
- * Avançado (prompt 0.0000000699, completion 0.0000014). Não é o teto.
+ * Preço de lista OpenRouter em USD/token, em 2026-11-17. Não é o teto de max_price.
+ * Básico (DeepSeek V4.1 Flash): prompt 0.000000036, completion 0.0000005.
+ * Avançado (GLM): prompt 0.0000000699, completion 0.0000014, o objeto cujo
+ * reason é tokenizer_sem_teto em chat_core_test.ts.
+ * O teto CHAT_OUTPUT_USD_PER_TOKEN.basico (0.0005/900) continua acima dos dois
+ * preços do Básico, então o max_price não filtra o endpoint.
  */
 export const CHAT_MODEL_PRICE_USD_PER_TOKEN = {
-  basico: { prompt: 0.00000003, completion: 0.00000013 },
+  basico: { prompt: 0.000000036, completion: 0.0000005 },
   avancado: { prompt: 0.0000000699, completion: 0.0000014 },
 } as const
 
@@ -1348,10 +1351,11 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Nada de superlativo ou dado de fora do recorte ("a família mais rica", "o maior banco", sede, cidade, bairro). "Quem pagou a conta", "quem lucrou" e "quem mandou" são tese: escreva com a marca de tese na mesma frase. A pergunta final não insinua suborno, favores em troca ou outro ilícito.',
     'Não chame ninguém de membro, parente ou representante de uma família sem relação no recorte que diga isso (conselheiro de empresa com o nome da família não é da família). Não chame caminho por intermediários de vínculo direto: diga por quem passa.',
     'Fundação, missão, banco ou empresa que leva o nome de uma família, ou que o recorte liga a ela, é a família agindo: trate como ligada. Nunca diga que falta ligação entre X e algo que leva o nome de X.',
-    'pontes_entre_raizes traz caminhos documentados entre os temas (texto = cadeia de nomes com tipo e data de cada elo; a seta mostra quem age sobre quem; relacoes = os elos na ordem): esse caminho é a ligação. Conte cada elo com o verbo do tipo (fundador = fundou; conselheiro = foi conselheiro; controle = controlou; contrato = contratou) e respeite a seta.',
-    'Cargo em conselho se descreve exato: qual conselho, de qual entidade e em qual ano ("membro do conselho consultivo da Americas Society em 2007" nunca vira "conselho do banco" nem "conselhos de hoje"). Só use "hoje", "até hoje" ou "atualmente" se a relação tiver data de 2025 ou 2026. Calcule intervalos a partir dos anos reais (1936 a 2018 são 82 anos, não "mais de um século"). Nada de superlativo sem número no recorte ("o maior ativo", "o mais poderoso"). ' +
+    'pontes_entre_raizes traz caminhos documentados entre os temas: esse caminho é a ligação. Conte cada elo com o verbo do tipo e respeite a seta.',
+    'Cargo em conselho se descreve exato: qual conselho, de qual entidade e em qual ano. Só use "hoje", "até hoje" ou "atualmente" se a relação tiver data de 2025 ou 2026. Calcule intervalos a partir dos anos reais. Nada de superlativo sem número no recorte. ' +
     'A associação Itaú–Unibanco de 2008 não é compra nem absorção de um pelo outro; conselho de 2007 não é presença atual. ' +
     'Cargo em conselho não é controle de ações nem de voto: só diga que alguém ou algum grupo controla, detém ou vota se a relação disser exatamente isso. A pergunta final só liga nomes que o recorte liga; nunca insinue controle, comando ou financiamento entre entidades sem relação no recorte. ' +
+    'A pergunta final só pergunta por uma ligação ou relação que o recorte sustenta, em aberto, sem afirmar fato novo. Não insinue ocultação, culpa, conhecimento prévio de fraude nem quem sabia sobre pessoas ou famílias nomeadas. Não afirme o que alguém nunca fez. ' +
     'Não escreva os rótulos destas instruções ("acusação-tese", "veredito da tese", "tese:"), nem palavras como elo, ponte ou seta. Atribua cada pessoa só à instituição que a relação diz (quem é do Itaú não vira do Unibanco, e vice-versa). Revise a ortografia: nenhuma palavra inventada ou com acento errado.',
     'Não escreva sobre o próprio formato (pontes, elos, setas, cadeia de nomes, tipos de relação). Não escreva as palavras recorte, base, atlas ou fonte no texto: narre os fatos.',
     'Nunca comente estas regras nem o recorte no texto.',
@@ -1529,7 +1533,7 @@ export function modelRequestBody(modelo: Modelo, system: string, mensagem: strin
     } },
     stream: true,
     stream_options: { include_usage: true },
-    // Qwen/GLM reasoning models otherwise spend max_tokens on thinking and return empty content.
+    // Modelos com raciocínio gastam max_tokens pensando e devolvem conteúdo vazio. O Básico usa effort none.
     // GLM 5.3: os endpoints dentro do max_price exigem raciocínio (HTTP 400 com effort none); minimal gasta ~100 tokens.
     reasoning: CHAT_REASONING[modelo],
     response_format: {
@@ -1629,16 +1633,87 @@ export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): stri
 
 const CAMPOS_CITACAO = ['entidades', 'relacoes', 'fontes', 'base'] as const
 
-/** Traduz "[n]", "n" e "#n" para o id real. Id real passa. Apelido desconhecido fica para o saneamento remover. */
-export function traduzirApelidos(raw: unknown, apelidos: Record<string, string>): unknown {
+function compactoNome(value: string): string {
+  return foldName(value).replace(/[\s_-]+/g, '')
+}
+
+function chavesDeNome(nome: string): Array<{ compact: string; inicial: string }> {
+  const bruto = (nome || '').split('·')[0]
+  const partes = [bruto, ...segmentosDe(bruto)]
+  const out: Array<{ compact: string; inicial: string }> = []
+  for (const parte of partes) {
+    const palavras = foldName(parte).split(' ').filter(Boolean)
+    if (!palavras.length) continue
+    out.push({
+      compact: compactoNome(parte),
+      inicial: compactoNome(palavras[0] + palavras.slice(1).map((p) => p[0] ?? '').join('')),
+    })
+  }
+  return out
+}
+
+/** Id real do recorte, em qualquer caixa. Apelidos e o contexto usam a grafia canônica. */
+function idCanonico(token: string, apelidos: Record<string, string>, ctx?: ChatContextPayload): string | null {
+  const low = token.trim().toLowerCase()
+  if (!low) return null
+  for (const id of Object.values(apelidos)) if (id.toLowerCase() === low) return id
+  if (!ctx) return null
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) if (item?.id && item.id.toLowerCase() === low) return item.id
+  for (const rel of ctx.relacoes ?? []) if (rel?.id && rel.id.toLowerCase() === low) return rel.id
+  for (const fonte of ctx.fontes ?? []) if (fonte?.id && fonte.id.toLowerCase() === low) return fonte.id
+  return null
+}
+
+/** R<n>/F<n>/E<n> só quando n é apelido do tipo certo. Tipo trocado continua desconhecido. */
+function idPorRotulo(token: string, apelidos: Record<string, string>, ctx?: ChatContextPayload): string | null {
+  const match = token.trim().match(/^([RrFfEe])(\d+)$/)
+  if (!match || !ctx) return null
+  const id = apelidos[match[2]]
+  if (!id) return null
+  const tipo = match[1].toUpperCase()
+  const ehRel = (ctx.relacoes ?? []).some((rel) => rel?.id === id)
+  const ehFonte = (ctx.fontes ?? []).some((fonte) => fonte?.id === id)
+  const ehEnt = [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])].some((item) => item?.id === id)
+  if (tipo === 'R' && ehRel) return id
+  if (tipo === 'F' && ehFonte) return id
+  if (tipo === 'E' && ehEnt) return id
+  return null
+}
+
+/**
+ * Slug do modelo contra o nome da entidade: igual ao nome compacto, às iniciais
+ * (walther_ms → Walther Moreira Salles) ou prefixo único de 4+ letras.
+ */
+function idPorSlug(token: string, ctx?: ChatContextPayload): string | null {
+  if (!ctx) return null
+  const slug = compactoNome(token)
+  if (slug.length < 3) return null
+  const vistos = new Map<string, Array<{ compact: string; inicial: string }>>()
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
+    if (!item?.id || vistos.has(item.id)) continue
+    vistos.set(item.id, chavesDeNome(item.nome || ''))
+  }
+  const lista = [...vistos.entries()]
+  const exatos = lista.filter(([, chaves]) => chaves.some((chave) => chave.compact === slug || chave.inicial === slug))
+  if (exatos.length === 1) return exatos[0][0]
+  if (exatos.length > 1 || slug.length < 4) return null
+  const prefixos = lista.filter(([, chaves]) => chaves.some((chave) =>
+    (chave.compact.startsWith(slug) && chave.compact !== slug) || (chave.inicial.startsWith(slug) && chave.inicial !== slug)))
+  return prefixos.length === 1 ? prefixos[0][0] : null
+}
+
+/** Traduz "[n]", "n", "#n", id real, R/F/E e slug de entidade. O desconhecido fica para o saneamento remover. */
+export function traduzirApelidos(raw: unknown, apelidos: Record<string, string>, ctx?: ChatContextPayload): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
-  const reais = new Set(Object.values(apelidos))
   const traduzir = (token: string): string => {
     const t = token.trim()
-    if (reais.has(t)) return t
+    const canonico = idCanonico(t, apelidos, ctx)
+    if (canonico) return canonico
     const match = t.match(/^\[(\d+)\]$/) ?? t.match(/^#(\d+)$/) ?? t.match(/^(\d+)$/)
     if (match && apelidos[match[1]]) return apelidos[match[1]]
-    return token
+    const rotulo = idPorRotulo(t, apelidos, ctx)
+    if (rotulo) return rotulo
+    return idPorSlug(t, ctx) ?? token
   }
   const lista = (value: unknown): unknown => Array.isArray(value)
     ? value.map((item) => typeof item === 'string' ? traduzir(item) : item)
@@ -1656,15 +1731,28 @@ export function traduzirApelidos(raw: unknown, apelidos: Record<string, string>)
   return record
 }
 
+function siglasDe(nome: string): string[] {
+  const out: string[] = []
+  for (const seg of segmentosDe(nome)) {
+    const palavras = foldName(seg).split(' ').filter((w) => w && !/^(?:de|da|do|das|dos|e|y|and)$/.test(w))
+    if (palavras.length < 2) continue
+    const sigla = palavras.map((p) => p[0] ?? '').join('')
+    if (sigla.length >= 3) out.push(sigla)
+  }
+  return out
+}
+
 function entidadesNoTexto(texto: string, ctx: ChatContextPayload): string[] {
   const hay = foldName(texto)
   const out: string[] = []
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
     if (!item?.id || out.includes(item.id)) continue
-    if (segmentosDe(item.nome || '').some((seg) => {
+    const porNome = segmentosDe(item.nome || '').some((seg) => {
       const nome = normalizarSegmento(seg)
       return nome.length >= 2 && containsWhole(hay, nome)
-    })) out.push(item.id)
+    })
+    const porSigla = siglasDe(item.nome || '').some((sigla) => containsWhole(hay, sigla))
+    if (porNome || porSigla) out.push(item.id)
   }
   return out
 }
@@ -1718,7 +1806,7 @@ export function sanearModelo(
   ctx: ChatContextPayload,
   apelidos: Record<string, string> = {},
 ): { answer: SanitizedAnswer; removed: boolean } {
-  return sanitizeAnswer(normalizeCitations(reatribuirPorNome(traduzirApelidos(raw, apelidos), ctx), ctx).raw, ctx)
+  return sanitizeAnswer(normalizeCitations(reatribuirPorNome(traduzirApelidos(raw, apelidos, ctx), ctx), ctx).raw, ctx)
 }
 
 const CJK_VISIVEL = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u
@@ -1746,16 +1834,78 @@ const NOMES_PROPRIOS_IDIOMA = [
   'Open Society Foundations',
 ]
 
-/** Palavra inteira. Nome próprio conhecido ou entre duas maiúsculas fica. grant(s) só minúsculo. Não mexe em URL (o chamador separa). */
-function deslizesDeIdioma(t: string): string {
+const PALAVRAS_TRADUZIDAS = new Set([
+  'doação', 'doações', 'empréstimo', 'empréstimos', 'controle', 'gestão', 'dono', 'donos',
+  'título', 'títulos', 'fundo', 'fundos', 'fiduciário', 'fiduciários', 'financiamento',
+  'conselho', 'participação', 'décadas', 'década', 'séculos', 'século', 'membros', 'membro',
+  'votação', 'acionistas', 'acionista', 'porém', 'embora', 'fortemente',
+])
+
+function nomesProtegidos(ctx?: ChatContextPayload): string[] {
+  const nomes = [...NOMES_PROPRIOS_IDIOMA]
+  if (ctx) {
+    for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
+      const nome = (item?.nome || '').split('·')[0].trim()
+      if (nome.length >= 3) nomes.push(nome)
+    }
+    for (const fonte of ctx.fontes ?? []) {
+      const titulo = (fonte?.titulo || '').trim()
+      if (titulo.length >= 3) nomes.push(titulo)
+    }
+  }
+  return [...new Set(nomes)].sort((a, b) => b.length - a.length)
+}
+
+/** doação é feminino: artigo e particípio imediatamente ao lado concordam. */
+function concordarDoacao(t: string): string {
+  const mapa: Record<string, [string, string]> = {
+    pago: ['paga', 'pagas'], pagos: ['paga', 'pagas'],
+    concedido: ['concedida', 'concedidas'], concedidos: ['concedida', 'concedidas'],
+    aprovado: ['aprovada', 'aprovadas'], aprovados: ['aprovada', 'aprovadas'],
+    recebido: ['recebida', 'recebidas'], recebidos: ['recebida', 'recebidas'],
+  }
+  t = t.replace(/\bdoa(ção|ções)\s+(pago|pagos|concedido|concedidos|aprovado|aprovados|recebido|recebidos)\b/gi, (full: string, suf: string, adj: string) => {
+    const plural = /ções/i.test(suf)
+    const par = mapa[adj.toLowerCase()]
+    const novo = par ? (plural ? par[1] : par[0]) : adj
+    const saida = adj[0] === adj[0].toUpperCase() ? novo[0].toUpperCase() + novo.slice(1) : novo
+    return full.slice(0, full.length - adj.length) + saida
+  })
+  return t.replace(/\b(um|o|os)\s+(doa(?:ção|ções))\b/gi, (_full: string, art: string, palavra: string) => {
+    const plural = /ções$/i.test(palavra)
+    const low = art.toLowerCase()
+    let novo = plural ? (low === 'um' ? 'umas' : 'as') : (low === 'um' ? 'uma' : 'a')
+    if (art[0] === art[0].toUpperCase()) novo = novo[0].toUpperCase() + novo.slice(1)
+    return `${novo} ${palavra}`
+  })
+}
+
+/** Palavra inteira. Nome próprio conhecido, do recorte, ou entre duas maiúsculas fica. grant(s) só minúsculo. Não mexe em URL (o chamador separa). */
+function deslizesDeIdioma(t: string, ctx?: ChatContextPayload): string {
   const mascaras: string[] = []
   const mascara = (literal: string) => {
-    if (!t.includes(literal)) return
+    if (!literal || !t.includes(literal)) return
     const token = `\u0000${mascaras.length}\u0000`
     mascaras.push(literal)
     t = t.split(literal).join(token)
   }
-  for (const nome of NOMES_PROPRIOS_IDIOMA) mascara(nome)
+  for (const nome of nomesProtegidos(ctx)) mascara(nome)
+  t = t.replace(/\p{Lu}[\p{L}\p{N}'’.-]*(?:\s+\p{Lu}[\p{L}\p{N}'’.-]*)*\s+(?:Boards?|Funds?|Foundations?|Trusts?)\b/gu, (nome: string) => {
+    const token = `\u0000${mascaras.length}\u0000`
+    mascaras.push(nome)
+    return token
+  })
+  // O inglês entre aspas fica só dentro dos parênteses; o mapa seguinte não o reescreve.
+  t = t.replace(/["'«“]funding loan["'»”]/gi, '\u0001FL\u0001')
+  const frase = (de: string, para: string) => {
+    t = t.replace(new RegExp(`\\b${de}\\b`, 'gi'), (w: string, offset: number, todo: string) => {
+      if (entreDoisCapitais(todo, offset, w.length)) return w
+      return palavraComInicialMaiuscula(w) ? para[0].toUpperCase() + para.slice(1) : para
+    })
+  }
+  frase('ownership and management', 'controle e gestão')
+  frase('funding loan', 'empréstimo de consolidação')
+  frase('financiamento loan', 'empréstimo')
   const troca = (de: string, para: string, soMinusculo = false) => {
     t = t.replace(new RegExp(`\\b${de}\\b`, soMinusculo ? 'g' : 'gi'), (w: string, offset: number, todo: string) => {
       if (entreDoisCapitais(todo, offset, w.length)) return w
@@ -1780,9 +1930,26 @@ function deslizesDeIdioma(t: string): string {
   troca('funding', 'financiamento')
   troca('grants', 'doações', true)
   troca('grant', 'doação', true)
+  troca('ownership', 'controle')
+  troca('management', 'gestão')
+  troca('owners', 'donos')
+  troca('owner', 'dono')
+  troca('loans', 'empréstimos')
+  troca('loan', 'empréstimo')
+  troca('bonds', 'títulos')
+  troca('bond', 'título')
+  troca('trusts', 'fundos fiduciários')
+  troca('trust', 'fundo fiduciário')
   troca('board', 'conselho')
   troca('stake', 'participação')
   t = t.replace(/\bhav[aã]o\b/g, 'haviam').replace(/(?<!\p{L})(é|era|foi) member (d[aoe]s?)\b/gu, '$1 membro $2')
+  t = t.replace(/\b(\p{L}+)\s+and\s+(\p{L}+)\b/giu, (full: string, a: string, b: string, offset: number, todo: string) => {
+    if (entreDoisCapitais(todo, offset, full.length)) return full
+    if (PALAVRAS_TRADUZIDAS.has(a.toLowerCase()) && PALAVRAS_TRADUZIDAS.has(b.toLowerCase())) return `${a} e ${b}`
+    return full
+  })
+  t = concordarDoacao(t)
+  t = t.replace(/\u0001FL\u0001/g, 'empréstimo de consolidação (funding loan)')
   return t.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => mascaras[Number(i)] ?? '')
 }
 
@@ -1791,8 +1958,10 @@ const MARCADOR_INGLES = /\b(?:the|and|which|with|from|that|this|these|between|th
 function spansProtegidos(texto: string): Array<[number, number]> {
   const spans: Array<[number, number]> = []
   const aspas = /"[^"]*"|«[^»]*»|“[^”]*”/g
+  const urls = /https?:\/\/\S+/g
   const nomes = /\p{Lu}[\p{L}\p{N}'’.-]*(?:(?:\s+[&-]\s+|\s*&\s*|\s+)+\p{Lu}[\p{L}\p{N}'’.-]*)+/gu
-  for (const re of [aspas, nomes]) {
+  const andEntreNomes = /\p{Lu}[\p{L}\p{N}'’.-]*\s+and\s+\p{Lu}[\p{L}\p{N}'’.-]*/gu
+  for (const re of [aspas, urls, nomes, andEntreNomes]) {
     let m: RegExpExecArray | null
     while ((m = re.exec(texto))) spans.push([m.index, m.index + m[0].length])
   }
@@ -1820,15 +1989,25 @@ const ECO_PADROES = [
   /n[aã]o\s+consta(?:m)?\s+(?:no|nos)\s+(?:recorte|documentos?(?:\s+anexos?)?|dados\s+fornecidos|material)\b/i,
   /a\s+investiga[cç][aã]o\s+deve/i,
   /deve\s+focar/i,
-  /documentos\s+anexos/i,
+  /(?:n[oa]s|d[oa]s)\s+documentos\s+anexos\s+(?:fornecidos|a\s+esta\s+conversa)/i,
   /dados\s+fornecidos/i,
   /material\s+dispon[ií]vel/i,
   /limites\s+estritos\s+deste\s+material/i,
   /(?:n[aã]o\s+)?est(?:á|a|ão|ao)\s+na\s+base(?:\s+do\s+atlas)?/i,
 ]
 
+function casaForaDeUrl(frase: string, re: RegExp): boolean {
+  const urls = [...frase.matchAll(/https?:\/\/\S+/g)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length] as [number, number])
+  const r = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`)
+  let m: RegExpExecArray | null
+  while ((m = r.exec(frase))) {
+    if (!urls.some(([ini, fim]) => m!.index >= ini && m!.index < fim)) return true
+  }
+  return false
+}
+
 function fraseEco(frase: string): boolean {
-  return ECO_PADROES.some((re) => re.test(frase))
+  return ECO_PADROES.some((re) => casaForaDeUrl(frase, re))
 }
 
 /** Texto exato de fraseAusentes (um nome ou «A e B» / «A, B e C»). Eco mais longo continua caindo. */
@@ -1844,20 +2023,82 @@ function tirarTrechosEco(texto: string): string {
 
 const CODIGO_FICHA = 'OP\\d+_R\\d+|OP\\d+|BR\\d+_H\\d+|PR\\d+-(?:E|NF)\\d+|AP_E\\d+'
 
-/** Tira código de ficha/caso e o «na ficha» / «da ficha» que o apresenta, sem deixar buraco. */
-function semCodigosDeFicha(t: string): string {
-  const partes = t.split(/(https?:\/\/\S+)/g).map((parte, i) => {
-    if (i % 2 === 1) return parte
-    return parte
-      .replace(new RegExp(`\\s*\\b(?:na|da)\\s+ficha\\s+(?:${CODIGO_FICHA})\\b`, 'gi'), '')
-      .replace(new RegExp(`\\b(?:${CODIGO_FICHA})\\b`, 'gi'), '')
-  })
-  return partes.join('')
+function limparBuracos(t: string): string {
+  return t
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/,(\s*,)+/g, ',')
+    .replace(/^[,\s;:]+/g, '')
+    .replace(/([.!?])[ \t]*,/g, '$1')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\(\s*\)/g, '')
     .trim()
+}
+
+/**
+ * Tira código de ficha/caso, a locução que o apresenta e o «a ficha do X registra»
+ * quando havia código. «ficha de compromisso» e o título da fonte ficam.
+ */
+function semCodigosDeFicha(t: string, ctx?: ChatContextPayload): string {
+  const mascaras: string[] = []
+  const mascara = (literal: string) => {
+    if (!literal || !t.includes(literal)) return
+    const token = `\u0002${mascaras.length}\u0002`
+    mascaras.push(literal)
+    t = t.split(literal).join(token)
+  }
+  mascara('ficha de compromisso')
+  mascara('Ficha de compromisso')
+  if (ctx) {
+    for (const titulo of (ctx.fontes ?? []).map((fonte) => (fonte?.titulo || '').trim()).filter((titulo) => /ficha/i.test(titulo)).sort((a, b) => b.length - a.length)) {
+      mascara(titulo)
+    }
+  }
+  const tinhaCodigo = new RegExp(`\\b(?:${CODIGO_FICHA})\\b`, 'i').test(t)
+  const partes = t.split(/(https?:\/\/\S+)/g).map((parte, i) => {
+    if (i % 2 === 1) return parte
+    let pedaco = parte
+      .replace(new RegExp(`\\s*\\b(?:na|da)\\s+ficha\\s+(?:${CODIGO_FICHA})\\b`, 'gi'), '')
+      .replace(new RegExp(`\\b(?:${CODIGO_FICHA})\\b`, 'gi'), '')
+    if (tinhaCodigo) {
+      pedaco = pedaco.replace(/\ba ficha d[eoa]s?\s+([^.,;:!?]{1,80}?)\s+registra\b/gi, 'o registro de $1 registra')
+    }
+    return pedaco
+      .replace(/\b(?:na ficha da opera[cç][aã]o|na ficha do caso|da ficha da opera[cç][aã]o|segundo a ficha|na mesma ficha)\b/gi, '')
+  })
+  return limparBuracos(partes.join('')).replace(/\u0002(\d+)\u0002/g, (_m, i: string) => mascaras[Number(i)] ?? '')
+}
+
+const ANAFORA_SEM_ANTECEDENTE = /^(?:essas duas institui[cç][oõ]es|esse banco|essa estrutura|os dois)\b/i
+
+/** Se a frase anterior caiu, a anáfora sem antecedente cai junto. Com menos de 2 frases, cai o bloco. */
+function semAnaforaPendente(frases: string[], cai: (frase: string) => boolean): string[] {
+  const saida: string[] = []
+  let anteriorCaiu = false
+  let anafoura = false
+  for (const frase of frases) {
+    const limpa = frase.trim()
+    if (!limpa) continue
+    if (anteriorCaiu && ANAFORA_SEM_ANTECEDENTE.test(limpa)) {
+      anteriorCaiu = true
+      anafoura = true
+      continue
+    }
+    if (cai(limpa)) {
+      anteriorCaiu = true
+      continue
+    }
+    saida.push(frase.trim())
+    anteriorCaiu = false
+  }
+  if (anafoura && saida.length < 2) return []
+  return saida
+}
+
+const FRASE_INSINUA = /nunca\s+(?:abriu|revelou|explicou|divulgou|respondeu|prestou\s+contas)|quem\s+sabia|sabia\s+d[oa]\s+(?:[\p{L}]+\s+){0,4}(?:buraco|rombo|esquema)|escond|ocult|encobr|abafad|por\s+que\b.*\bnunca\b|ainda\s+n[aã]o\s+(?:foi|foram)\s+(?:identificad|cobrad|punid)|quem\s+mais\s+(?:recebeu|lucrou|ganhou)|n[aã]o\s+apareceu|crit[eé]rios\s+ocultos|por\s+baixo\s+dos\s+panos/iu
+
+function fraseInsinua(frase: string): boolean {
+  return FRASE_INSINUA.test(frase)
 }
 
 function frasesDe(t: string): string[] {
@@ -1880,20 +2121,21 @@ function frasesDe(t: string): string[] {
  * Por linha, para o gancho da pauta não colar no fato. `preservar` é a frase
  * exata de ausência (fraseAusentes): essa frase fica, o resto do eco sai.
  */
-function filtrarProsaVisivel(texto: string, preservar = ''): string {
+function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPayload): string {
   const alvo = preservar ? foldName(preservar) : ''
   const linhas = texto.split('\n').map((linha) => {
-    const comIdioma = linha.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1 ? parte : deslizesDeIdioma(parte)).join('')
+    const comIdioma = linha.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1 ? parte : deslizesDeIdioma(parte, ctx)).join('')
     const frases = frasesDe(comIdioma)
     let tirouCjk = 0
-    const kept = frases.filter((f) => {
-      if (fraseAusenciaExata(f) || (alvo && foldName(f) === alvo)) return true
-      if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return false }
-      if (fraseInglesSolta(f) || fraseEco(f)) return false
-      return true
+    const kept = semAnaforaPendente(frases, (f) => {
+      if (fraseAusenciaExata(f) || (alvo && foldName(f) === alvo)) return false
+      if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
+      if (fraseInglesSolta(f) || fraseEco(f)) return true
+      if (/o que liga tudo/i.test(f) && fraseInsinua(f)) return true
+      return false
     })
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
-    return semCodigosDeFicha(kept.map((f) => f.trim()).join(' ').trim())
+    return semCodigosDeFicha(kept.join(' ').trim(), ctx)
   }).filter((linha) => linha.trim())
   return linhas.join('\n').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.;:!?])/g, '$1').trim()
 }
@@ -1907,8 +2149,45 @@ function ultimaPerguntaValida(blocos: readonly { texto: string }[]): string {
   return ''
 }
 
-function limparPergunta(texto: string, blocos: readonly { texto: string }[]): string {
-  const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto))
+function perguntaNeutra(blocos: readonly { entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx: ChatContextPayload): string {
+  const contagem = new Map<string, number>()
+  const soma = (id: string | undefined) => { if (id) contagem.set(id, (contagem.get(id) ?? 0) + 1) }
+  const rels = new Map((ctx.relacoes ?? []).map((rel) => [rel.id, rel]))
+  const ehEntidade = (id: string) => [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])].some((item) => item?.id === id)
+  for (const bloco of blocos) {
+    for (const id of bloco.entidades ?? []) soma(id)
+    for (const id of bloco.relacoes ?? []) {
+      const rel = rels.get(id)
+      if (rel?.origem) soma(rel.origem)
+      if (rel?.destino) soma(rel.destino)
+    }
+    for (const id of bloco.base ?? []) {
+      const rel = rels.get(id)
+      if (rel) { soma(rel.origem); soma(rel.destino) }
+      else soma(id)
+    }
+  }
+  let ranking = [...contagem.entries()].filter(([id]) => ehEntidade(id))
+  if (ranking.length < 2) {
+    const freq = new Map<string, number>()
+    for (const rel of ctx.relacoes ?? []) {
+      if (rel?.origem && ehEntidade(rel.origem)) freq.set(rel.origem, (freq.get(rel.origem) ?? 0) + 1)
+      if (rel?.destino && ehEntidade(rel.destino)) freq.set(rel.destino, (freq.get(rel.destino) ?? 0) + 1)
+    }
+    ranking = [...freq.entries()]
+  }
+  ranking.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  if (ranking.length < 2) return ''
+  const nome = (id: string) => entityName(ctx, id).replace(/<[^>]*>/g, '').split('·')[0].trim()
+  return `Que outros vínculos documentados ligam ${nome(ranking[0][0])} a ${nome(ranking[1][0])} no atlas?`
+}
+
+function limparPergunta(texto: string, blocos: readonly { texto: string; entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx?: ChatContextPayload): string {
+  const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto, '', ctx))
+  if (ctx && (fraseInsinua(texto) || fraseInsinua(filtrada))) {
+    const neutra = perguntaNeutra(blocos, ctx)
+    if (neutra) return neutra.slice(0, 300)
+  }
   if (/\?/.test(filtrada)) return filtrada.slice(0, 300)
   const anterior = ultimaPerguntaValida(blocos)
   if (anterior) return anterior.slice(0, 300)
@@ -1927,7 +2206,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
   const ortografia = (t: string) => {
     t = t.replace(/\p{L}+/gu, (w) => { const a = acentuadas.get(w.toLowerCase()); if (!a || fold1(w) !== w.toLowerCase()) return w; return w[0] === w[0].toUpperCase() ? a[0].toUpperCase() + a.slice(1) : a })
     // Deslizes de idioma só no texto do bloco/pergunta; título de fonte e URL ficam de fora.
-    t = t.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1 ? parte : deslizesDeIdioma(parte)).join('')
+    t = t.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1 ? parte : deslizesDeIdioma(parte, ctx)).join('')
     for (const n of nomesFixos) { const re = new RegExp(n.split(' ').map((p) => escapeReg(p).replace(/[oa]$/, '[oa]')).join(' '), 'g'); t = t.replace(re, n) }
     return t
   }
@@ -2006,21 +2285,24 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       const frases = frasesDe(paragrafo).map((f) => /\?\s*$/.test(f) && !/\b202[5-6]\b/.test(f)
         ? f.replace(/(?:,\s*)?\b(?:até|ate) os dias de hoje\b|(?:,\s*)?\b(?:até|ate|ainda) hoje\b|\s+de hoje\b/gi, '')
         : f)
-      const kept = frases.filter((f) => !supera(f) && !FORA.some((re, i) => re.test(fold1(f)) && (i < FORA_SEMPRE || !re.test(ctxTexto))))
-      tirouFora += frases.length - kept.length
-      const semCjk = kept.filter((f) => !CJK_VISIVEL.test(f))
-      tirouCjk += kept.length - semCjk.length
-      const semIngles = semCjk.filter((f) => !fraseInglesSolta(f))
-      // Na pergunta, o eco perde só o trecho: a frase com "?" continua. No bloco, a frase sai.
-      // A frase exata de ausência fica no lugar; o código não a reinsere depois.
-      const semEco = pergunta
-        ? semIngles.map((f) => fraseEco(f) && !fraseAusenciaExata(f) ? tirarTrechosEco(f) : f).filter((f) => f.trim())
-        : semIngles.filter((f) => fraseAusenciaExata(f) || !fraseEco(f))
-      return semEco.map((f) => f.trim()).filter(Boolean).join(' ')
+      const semEco = semAnaforaPendente(frases, (f) => {
+        if (supera(f) || FORA.some((re, i) => re.test(fold1(f)) && (i < FORA_SEMPRE || !re.test(ctxTexto)))) {
+          tirouFora += 1
+          return true
+        }
+        if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
+        if (fraseInglesSolta(f)) return true
+        if (!pergunta && !fraseAusenciaExata(f) && fraseEco(f)) return true
+        return false
+      })
+      const ajustadas = pergunta
+        ? semEco.map((f) => fraseEco(f) && !fraseAusenciaExata(f) ? tirarTrechosEco(f) : f).filter((f) => f.trim())
+        : semEco
+      return ajustadas.map((f) => f.trim()).filter(Boolean).join(' ')
     }).filter((paragrafo) => paragrafo.trim())
     if (tirouFora) console.info(JSON.stringify({ evento: 'chat_frase_fora_da_base', n: tirouFora }))
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
-    return semCodigosDeFicha(saida.join('\n\n'))
+    return semCodigosDeFicha(saida.join('\n\n'), ctx)
   }
   const visivel = (value: string, pergunta = false) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))), pergunta)
   const allowedEntities = new Set<string>()
@@ -2229,6 +2511,13 @@ export function hasValidId(blocos: ChatBloco[]): boolean {
     : b.base.length > 0)
 }
 
+/** Recusa meta («não aborda», «sem base») não conta como resposta. Texto com fato conta. */
+function textoSubstantivo(texto: string): boolean {
+  const f = foldName(texto)
+  if (!f) return false
+  return !/\b(?:nao aborda|nao e possivel|sem base|nao encontrei|nao consta|nao sustenta|nao documenta)\b/.test(f)
+}
+
 /**
  * F1e: frase canônica para lacunas entre raízes (lacunasEntreRaizes) quando nenhum bloco a traz.
  * Par fica de fora se um bloco cita relação do recorte com {origem, destino} nesse par (ligação afirmada).
@@ -2264,14 +2553,14 @@ function oracoesDaMensagem(mensagem: string): Array<{ texto: string; interrogati
   return out
 }
 
-const CORTE_COORDENADO = /\s+e\s+(?:o\s+que|qual|quem|como|quando)\b|,\s*o\s+que\b/i
+const CORTE_COORDENADO = /\s+e\s+(?:o\s+que|quais|qual|quem|como|quando)\b|,\s*o\s+que\b/i
 
 function fatiasDePedido(texto: string): string[] {
   return texto.split(CORTE_COORDENADO).map((parte) => parte.trim()).filter(Boolean)
 }
 
 function temImperativo(texto: string): boolean {
-  return /\b(?:explique|fale|diga|liste|mostre|conte|resuma)\b/.test(normalizeQuery(texto))
+  return /\b(?:explique|fale|diga|liste|mostre|conte|resuma|descreva|descrevam|apresente|apresentem|compare|comparem)\b/.test(normalizeQuery(texto))
 }
 
 /** Pedidos: interrogativas, cortes coordenados e imperativos. Declarativa solta não entra. */
@@ -2340,9 +2629,16 @@ function temVocabularioAtlas(mensagem: string): boolean {
  * claramente externo: 2+ termos de conteúdo sem casamento no recorte e nenhum
  * termo do vocabulário do atlas. Dêixis e um termo só continuam no modelo.
  */
+/** Pedido genérico sobre a seleção. Receita, futebol, clima e programação continuam externos. */
+function pedidoGenericoSelecao(mensagem: string): boolean {
+  const q = normalizeQuery(mensagem)
+  if (/\b(?:receita|bolo|futebol|clima|programacao|python|javascript)\b/.test(q)) return false
+  return /\b(?:explique|resuma|detalhe|detalhadamente|fatos|principais|contrato|documento|isso|eles|elas)\b/.test(q)
+}
+
 function selecaoForaDaPergunta(mensagem: string, ctx: ChatContextPayload, textoVazio: boolean, entityIds: readonly string[]): boolean {
   if (entityIds.length === 0 || !textoVazio) return false
-  if (referenciaSelecao(mensagem) || temVocabularioAtlas(mensagem)) return false
+  if (referenciaSelecao(mensagem) || temVocabularioAtlas(mensagem) || pedidoGenericoSelecao(mensagem)) return false
   const termos = contextSearchTokens(mensagem)
   if (termos.length <= 1) return false
   const semCasamento = termos.filter((termo) => !termoNoRecorte(radicalSimples(termo), ctx))
@@ -2390,6 +2686,57 @@ export function fallbackSemLigacao(ctx: ChatContextPayload): SanitizedAnswer | n
 
 function unique(ids: string[]): string[] {
   return [...new Set(ids)]
+}
+
+/** Resposta documental do recorte quando o modelo escreveu fato e não citou apelido. */
+function respostaDocumental(ctx: ChatContextPayload): Record<string, unknown> {
+  const fontesOk = new Set((ctx.fontes ?? []).filter((fonte) => fonte?.id && !isInternalSource(fonte)).map((fonte) => fonte.id))
+  const blocos: Array<Record<string, unknown>> = []
+  for (const rel of ctx.relacoes ?? []) {
+    const afirmacao = (rel?.afirmacao || '').trim()
+    if (!afirmacao || !rel?.id) continue
+    blocos.push({
+      tipo: 'documentado',
+      texto: afirmacao,
+      entidades: [rel.origem, rel.destino].filter((id): id is string => !!id),
+      relacoes: [rel.id],
+      fontes: (rel.fontes ?? []).filter((id) => fontesOk.has(id)),
+    })
+  }
+  if (!blocos.length) {
+    for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
+      const nota = (item?.nota || '').trim()
+      if (!nota || !item?.id) continue
+      blocos.push({ tipo: 'documentado', texto: nota, entidades: [item.id], relacoes: [], fontes: [] })
+    }
+  }
+  return { blocos, sem_base: false }
+}
+
+const LEMBRETE_IDS = 'Cite só os apelidos [n] do recorte nos campos entidades/relacoes/fontes.'
+
+function comLembrete(body: Record<string, unknown>): Record<string, unknown> {
+  const messages = Array.isArray(body.messages)
+    ? body.messages.map((item) => {
+      if (!item || typeof item !== 'object') return item
+      const row = { ...(item as Record<string, unknown>) }
+      if (row.role === 'system' && typeof row.content === 'string' && !row.content.includes(LEMBRETE_IDS)) {
+        row.content = `${row.content} ${LEMBRETE_IDS}`
+      }
+      return row
+    })
+    : body.messages
+  return { ...body, messages }
+}
+
+/** Produção repete resposta curta. CHAT_RETRY_CURTO=0 desliga nos testes antigos; o argumento explícito vence. */
+function querRetryCurto(explicito: boolean | undefined): boolean {
+  if (explicito !== undefined) return explicito
+  try {
+    const env = (globalThis as { Deno?: { env?: { get: (key: string) => string | undefined } } }).Deno?.env?.get('CHAT_RETRY_CURTO')
+    if (env === '0') return false
+  } catch { /* runtime sem Deno.env */ }
+  return true
 }
 
 export function capBasicWords(blocos: ChatBloco[], maxWords = 250): { blocos: ChatBloco[]; trimmed: boolean } {
@@ -2850,6 +3197,8 @@ export async function streamPrepared(input: {
   retryDelayMs?: number
   /** Relógio do prazo da repetição de qualidade. Default: Date.now. */
   now?: () => number
+  /** Repetição por poucos parágrafos. Sem o campo, CHAT_RETRY_CURTO=0 desliga. */
+  repetirCurto?: boolean
 }): Promise<number> {
   try {
     return await streamPreparedInner(input)
@@ -2872,6 +3221,7 @@ async function streamPreparedInner(input: {
   startedAt?: number
   retryDelayMs?: number
   now?: () => number
+  repetirCurto?: boolean
 }): Promise<number> {
   const { prepared, db, emit } = input
   let creditsOpen = true
@@ -2884,51 +3234,60 @@ async function streamPreparedInner(input: {
   let produced = false
   let sentMeta = false
   let possiblyCharged = false
-  let unknownPreviousAttempt = false
   let tentativasEnviadas = 0
   let charsTentativa = 0
-  let somaAnteriores = 0
+  const gastos: Array<{ conhecido: boolean; valor: number }> = []
   const finish = (event: ChatSseEvent) => {
     if (terminal) return
     terminal = true
     emit(event)
   }
   const generatedNow = () => produced || usage !== undefined
-  const metadeDesconhecida = () => unknownPreviousAttempt
-    ? Math.ceil(prepared.estimate / CHAT_MAX_ATTEMPTS * 1_000_000) / 1_000_000
-    : 0
+  const metade = () => Math.ceil(prepared.estimate / CHAT_MAX_ATTEMPTS * 1_000_000) / 1_000_000
   const custoAtual = () => typeof usage?.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null
-  const parcialDesta = () => charsTentativa > 0
-    ? chatPartialSpendUsd(prepared.modelo, requestBody, 1, charsTentativa, prepared.estimate)
-    : 0
-  const temGasto = () => somaAnteriores > 0 || custoAtual() !== null || charsTentativa > 0
-  // Sucesso sem usage.cost e sem tentativa anterior continua no teto (SEC-01).
-  // Custo conhecido de outra tentativa não é trocado pelo teto.
+  let requestBody = prepared.requestBody
+  const parcialDe = (chars: number) => chatPartialSpendUsd(prepared.modelo, requestBody, 1, chars, prepared.estimate)
+  // Custo conhecido acima da reserva passa (SEC-01). Soma parcial ou desconhecida fica na reserva.
+  const fecharValor = (extra: number, extraConhecido: number | null) => {
+    const soma = gastos.reduce((total, gasto) => total + gasto.valor, 0) + extra
+    const conhecido = Math.max(0, ...gastos.filter((gasto) => gasto.conhecido).map((gasto) => gasto.valor), extraConhecido ?? 0)
+    if (conhecido > prepared.estimate) return soma
+    return Math.min(prepared.estimate, soma)
+  }
+  const temGasto = () => gastos.some((gasto) => gasto.valor > 0) || (custoAtual() ?? 0) > 0 || charsTentativa > 0 || possiblyCharged
   const costNow = () => {
     const atual = custoAtual()
-    const metade = metadeDesconhecida()
-    if (atual !== null) return somaAnteriores + atual + metade
-    if (somaAnteriores > 0) return somaAnteriores + (charsTentativa > 0 ? parcialDesta() : 0) + metade
+    if (atual !== null) return fecharValor(atual, atual)
+    if (gastos.length > 0) return fecharValor(charsTentativa > 0 ? parcialDe(charsTentativa) : 0, null)
     return prepared.estimate
   }
   const custoNoCatch = (err: unknown) => {
     const atual = custoAtual()
-    const metade = metadeDesconhecida()
-    if (atual !== null) return somaAnteriores + atual + metade
+    if (atual !== null) return fecharValor(atual, atual)
     const noCharge = err instanceof OpenRouterError && err.noCharge
-    if (charsTentativa === 0 && noCharge) return somaAnteriores + metade
-    if (charsTentativa > 0) return somaAnteriores + parcialDesta() + metade
-    if (somaAnteriores > 0) return somaAnteriores + metade
+    if (charsTentativa === 0 && noCharge) return fecharValor(0, 0)
+    if (charsTentativa > 0) return fecharValor(parcialDe(charsTentativa), null)
+    if (gastos.some((gasto) => gasto.valor > 0)) return fecharValor(parcialDe(0), null)
     return prepared.estimate
   }
   const fecharTentativa = () => {
     const atual = custoAtual()
-    if (atual !== null) somaAnteriores += atual
-    else if (charsTentativa > 0) somaAnteriores += parcialDesta()
+    if (atual !== null) gastos.push({ conhecido: true, valor: atual })
+    else if (charsTentativa > 0) gastos.push({ conhecido: false, valor: parcialDe(charsTentativa) })
     usage = undefined
     text = ''
     charsTentativa = 0
     produced = false
+  }
+  const registrarFalha = (err: unknown) => {
+    const noCharge = err instanceof OpenRouterError && err.noCharge
+    const atual = custoAtual()
+    if (atual !== null) gastos.push({ conhecido: true, valor: atual })
+    else if (charsTentativa > 0) gastos.push({ conhecido: false, valor: parcialDe(charsTentativa) })
+    else if (noCharge) gastos.push({ conhecido: true, valor: 0 })
+    else if (gastos.some((gasto) => gasto.valor > 0)) gastos.push({ conhecido: false, valor: parcialDe(0) })
+    usage = undefined
+    charsTentativa = 0
   }
   const releaseCredits = async () => {
     if (!creditsOpen) return
@@ -2947,7 +3306,7 @@ async function streamPreparedInner(input: {
     await db.commitBudget(prepared.reservation.pedidoId, cost)
   }
   const unwind = async (cost = costNow()) => {
-    const generated = generatedNow() || possiblyCharged || unknownPreviousAttempt || temGasto()
+    const generated = generatedNow() || possiblyCharged || temGasto()
     await runIsolated([
       { run: releaseCredits, label: 'chat_release_failed', detail: releaseFailureDetail(prepared.reservation) },
       {
@@ -2970,28 +3329,42 @@ async function streamPreparedInner(input: {
     sentMeta = true
     emit({ event: 'meta', data: prepared.meta })
   }
-  let requestBody = prepared.requestBody
-  let tentativasHttp = 0
   let emLaco = false
   let textoGuardado: string | null = null
   let blocosGuardados = 0
+  let usarDocumental = false
+  let jaTentouIds = false
+  let chamadasModelo = 0
+  const lerModelo = (bruto: string) => {
+    const cru = jsonCompleto(bruto) ? parseModelJson(bruto) : parseModelJson(repararJsonTruncado(bruto))
+    return sanearModelo(cru, prepared.context, prepared.apelidos).answer
+  }
   const contarBlocos = (bruto: string) => {
     try {
-      const cru = jsonCompleto(bruto) ? parseModelJson(bruto) : parseModelJson(repararJsonTruncado(bruto))
-      return sanearModelo(cru, prepared.context, prepared.apelidos).answer.blocos.reduce((n, bloco) => {
+      return lerModelo(bruto).blocos.reduce((n, bloco) => {
         return n + bloco.texto.split(/\n\s*\n/).map((parte) => parte.trim()).filter(Boolean).length
       }, 0)
     } catch {
       return 0
     }
   }
+  const idsInvalidos = (bruto: string) => {
+    try {
+      const sane = lerModelo(bruto)
+      if (sane.sem_base && countValidDocumentado(sane.blocos) > 0) return false
+      const substantivos = sane.blocos.filter((bloco) => textoSubstantivo(bloco.texto))
+      return substantivos.length >= 2 && !hasValidId(sane.blocos)
+    } catch {
+      return false
+    }
+  }
   try {
    for (let qualidade = 0; ; qualidade++) {
     emLaco = false
     let falhaGuardada = false
-    for (let attempt = 0; ; attempt++) {
-      tentativasHttp += 1
+    for (;;) {
       input.signal.throwIfAborted()
+      chamadasModelo += 1
       try {
         possiblyCharged = true
         tentativasEnviadas += 1
@@ -3014,26 +3387,24 @@ async function streamPreparedInner(input: {
         break
       } catch (err) {
         if (err instanceof OpenRouterError && err.noCharge && !generatedNow()) possiblyCharged = false
-        if (attempt === 0 && !produced && !usage && !input.signal.aborted
-          && err instanceof OpenRouterError && err.kind === 'modelo_ocupado') {
-          unknownPreviousAttempt = possiblyCharged
+        if (!produced && custoAtual() === null && !input.signal.aborted
+          && err instanceof OpenRouterError && err.kind === 'modelo_ocupado'
+          && chamadasModelo < CHAT_MAX_ATTEMPTS) {
+          gastos.push(err.noCharge ? { conhecido: true, valor: 0 } : { conhecido: false, valor: metade() })
+          usage = undefined
+          text = ''
+          charsTentativa = 0
+          produced = false
+          possiblyCharged = false
           // O mesmo sinal mantém o prazo total de 60s do handler, incluindo a espera.
           await waitForRetry(input.retryDelayMs ?? 1500, input.signal)
           continue
         }
-        if (textoGuardado) {
-          const noCharge = err instanceof OpenRouterError && err.noCharge
-          const atual = custoAtual()
-          if (atual !== null) somaAnteriores += atual
-          else if (charsTentativa > 0) somaAnteriores += parcialDesta()
-          else if (!noCharge && charsTentativa === 0 && custoAtual() === null && !unknownPreviousAttempt) {
-            // Pedido aceito sem texto e sem noCharge: pode ter gerado. A parcial com 0 caracteres é só a entrada.
-            somaAnteriores += chatPartialSpendUsd(prepared.modelo, requestBody, 1, 0, prepared.estimate)
-          }
-          usage = undefined
-          charsTentativa = 0
+        if (jaTentouIds || textoGuardado) {
+          registrarFalha(err)
           produced = true
-          text = textoGuardado
+          if (jaTentouIds) usarDocumental = true
+          else text = textoGuardado ?? ''
           falhaGuardada = true
           break
         }
@@ -3044,19 +3415,30 @@ async function streamPreparedInner(input: {
     const truncada = typeof usage?.completion_tokens === 'number' && usage.completion_tokens >= CHAT_MAX_TOKENS[prepared.modelo]
     const legivel = jsonCompleto(text) || jsonPodeReparar(text)
     const decorrido = (input.now ?? Date.now)() - started
-    const podeRepetir = qualidade < 1 && tentativasHttp < CHAT_MAX_ATTEMPTS && !input.signal.aborted && decorrido <= CHAT_RETRY_DEADLINE_MS
-    // Repete laço ou JSON irrecuperável. Truncada reparável segue com repararJsonTruncado.
+    const podeRepetir = qualidade < 1 && chamadasModelo < CHAT_MAX_ATTEMPTS && !input.signal.aborted && decorrido <= CHAT_RETRY_DEADLINE_MS
     const precisaRepetir = emLaco || !legivel
     if (precisaRepetir) {
+      if (jaTentouIds) { usarDocumental = true; break }
+      if (textoGuardado) { text = textoGuardado; break }
       if (!podeRepetir) break
       console.info(JSON.stringify({ evento: 'chat_saida_repetida', motivo: emLaco ? 'laco' : truncada ? 'truncada' : 'json' }))
       fecharTentativa()
       requestBody = { ...prepared.requestBody, temperature: 0.5, seed: 7 }
       continue
     }
-    // Avançado curto: uma segunda tentativa, com o mesmo corpo, se ainda couber no prazo.
-    // Abaixo de 1s o stream foi instantâneo (SPEC4): continua uma tentativa e o usage.cost não dobra.
-    if (!textoGuardado && prepared.modelo === 'avancado' && !prepared.pauta && !prepared.pressure && podeRepetir && decorrido >= 1_000) {
+    if (!prepared.pauta && !prepared.pressure && idsInvalidos(text)) {
+      if (podeRepetir && !jaTentouIds) {
+        jaTentouIds = true
+        console.info(JSON.stringify({ evento: 'chat_saida_repetida', motivo: 'ids' }))
+        fecharTentativa()
+        requestBody = comLembrete(prepared.requestBody)
+        continue
+      }
+      usarDocumental = true
+      break
+    }
+    // Poucos parágrafos: uma segunda tentativa, nos dois modelos, sem piso de relógio.
+    if (querRetryCurto(input.repetirCurto) && !textoGuardado && !prepared.pauta && !prepared.pressure && podeRepetir && !jaTentouIds) {
       const nBlocos = contarBlocos(text)
       if (nBlocos >= 1 && nBlocos < 3) {
         textoGuardado = text
@@ -3087,36 +3469,48 @@ async function streamPreparedInner(input: {
     await unwind(custoErro)
     finish(errorEvent(code, chatErrorMessage(code)))
     if (generatedNow() || code === 'modelo_ocupado' || temGasto()) {
-      await safeLog(db, logRow(prepared, { ...usage, cost: possiblyCharged || unknownPreviousAttempt || generatedNow() || temGasto() ? custoErro : 0 }, code, started))
+      await safeLog(db, logRow(prepared, { ...usage, cost: possiblyCharged || generatedNow() || temGasto() ? custoErro : 0 }, code, started))
     }
     if (!sentMeta && (code === 'modelo_indisponivel' || code === 'modelo_ocupado')) return 503
     return 200
   }
 
   let parsed: unknown
-  try {
-    try { parsed = parseModelJson(text) } catch { parsed = parseModelJson(repararJsonTruncado(text)); console.info(JSON.stringify({ evento: 'chat_json_reparado' })) }
-  } catch {
-    const custoParse = costNow()
-    await unwind(custoParse)
-    finish(errorEvent('modelo_indisponivel', chatErrorMessage('modelo_indisponivel')))
-    await safeLog(db, logRow(prepared, { ...usage, cost: custoParse }, 'modelo_indisponivel', started))
-    return sentMeta ? 200 : 503
-  }
+  let answer: SanitizedAnswer
+  let semBaseIgnorado = false
+  if (usarDocumental) {
+    answer = sanitizeAnswer(respostaDocumental(prepared.context), prepared.context).answer
+    console.info(JSON.stringify({ evento: 'resposta_documental' }))
+  } else {
+    try {
+      try { parsed = parseModelJson(text) } catch { parsed = parseModelJson(repararJsonTruncado(text)); console.info(JSON.stringify({ evento: 'chat_json_reparado' })) }
+    } catch {
+      const custoParse = costNow()
+      await unwind(custoParse)
+      finish(errorEvent('modelo_indisponivel', chatErrorMessage('modelo_indisponivel')))
+      await safeLog(db, logRow(prepared, { ...usage, cost: custoParse }, 'modelo_indisponivel', started))
+      return sentMeta ? 200 : 503
+    }
 
-  let { answer } = sanearModelo(parsed, prepared.context, prepared.apelidos)
-  // Pauta/pressão: prosa do modelo nunca transforma uma acusação em Fato.
-  if (prepared.pauta || prepared.pressure) answer = buildPautaAnswer(prepared.context, prepared.pauta || { avisos: [] }, traduzirApelidos(parsed, prepared.apelidos), !!prepared.pressure)
-  // sem_base:true com bloco documentado válido (texto e fonte do recorte, já saneado) é resposta normal.
-  const semBaseIgnorado = answer.sem_base && countValidDocumentado(answer.blocos) > 0
-  if (semBaseIgnorado) {
-    answer.sem_base = false
-    console.info(JSON.stringify({ evento: 'sem_base_ignorado' }))
+    answer = sanearModelo(parsed, prepared.context, prepared.apelidos).answer
+    // Pauta/pressão: prosa do modelo nunca transforma uma acusação em Fato.
+    if (prepared.pauta || prepared.pressure) answer = buildPautaAnswer(prepared.context, prepared.pauta || { avisos: [] }, traduzirApelidos(parsed, prepared.apelidos, prepared.context), !!prepared.pressure)
+    // sem_base:true com bloco documentado válido (texto e fonte do recorte, já saneado) é resposta normal.
+    semBaseIgnorado = answer.sem_base && countValidDocumentado(answer.blocos) > 0
+    if (semBaseIgnorado) {
+      answer.sem_base = false
+      console.info(JSON.stringify({ evento: 'sem_base_ignorado' }))
+    }
+    const substantivos = answer.blocos.filter((bloco) => textoSubstantivo(bloco.texto))
+    if (!prepared.pauta && !prepared.pressure && !hasValidId(answer.blocos) && substantivos.length >= 2) {
+      answer = sanitizeAnswer(respostaDocumental(prepared.context), prepared.context).answer
+      console.info(JSON.stringify({ evento: 'resposta_documental' }))
+    }
   }
-  // F1d: sem nenhum id válido não é resposta da base. O fallback só cobre pergunta de ligação sem seleção.
-  const semId = !answer.sem_base && answer.blocos.length > 0 && !hasValidId(answer.blocos)
+  // Sem id válido e sem texto substantivo continua fora da base. Resposta com fato não vira recusa.
+  const semId = answer.blocos.length > 0 && !hasValidId(answer.blocos)
   if (semId) console.info(JSON.stringify({ evento: 'sem_id_valido' }))
-  const semConteudo = answer.sem_base || answer.blocos.length === 0 || semId
+  const semConteudo = answer.blocos.length === 0 || (answer.sem_base && countValidDocumentado(answer.blocos) === 0) || semId
   const podeFallback = prepared.origem !== 'selecao' && prepared.entityIds.length === 0 && perguntaDeLigacao(prepared.mensagem)
   // CRED1: só a resposta trocada pelo fallback é sem_ligacao e não cobra.
   let semLigacao = false
@@ -3185,13 +3579,13 @@ async function streamPreparedInner(input: {
   answer = {
     ...answer,
     blocos: answer.blocos.map((bloco) => {
-      const texto = filtrarProsaVisivel(bloco.texto, avisoPrevisto)
+      const texto = filtrarProsaVisivel(bloco.texto, avisoPrevisto, prepared.context)
       if (bloco.tipo === 'documentado') return { ...bloco, texto }
-      return { ...bloco, texto, justificativa: filtrarProsaVisivel(bloco.justificativa, avisoPrevisto) }
+      return { ...bloco, texto, justificativa: filtrarProsaVisivel(bloco.justificativa, avisoPrevisto, prepared.context) }
     }).filter((bloco) => bloco.texto.trim()),
   }
   if (answer.em_aberto !== undefined) {
-    const pergunta = limparPergunta(answer.em_aberto, answer.blocos)
+    const pergunta = limparPergunta(answer.em_aberto, answer.blocos, prepared.context)
     if (pergunta.trim()) answer.em_aberto = pergunta
     else delete answer.em_aberto
   }

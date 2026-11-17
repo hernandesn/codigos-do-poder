@@ -172,7 +172,7 @@ function finalOf(result: { events: ChatSseEvent[] }): ChatFinal {
 }
 
 Deno.test('slugs e teto', () => {
-  eq(MODEL_SLUGS.basico, 'qwen/qwen3.7-flash', 'slug basico')
+  eq(MODEL_SLUGS.basico, 'deepseek/deepseek-v4.1-flash-1017', 'slug basico')
   eq(MODEL_SLUGS.avancado, 'z-ai/glm-5.3', 'slug avancado')
   eq(CHAT_DAILY_BUDGET_USD, 3, 'teto default')
   eq(CHAT_MAX_TOKENS.basico, 2600, 'max_tokens basico (hotfix1: acima do máximo observado 2194)')
@@ -254,7 +254,7 @@ Deno.test('T1 ok com chave limitada', async () => {
   eq(model.calls.length, 1, 'uma chamada paga')
   const body = model.calls[0] as { max_tokens?: number; model?: string }
   eq(body.max_tokens, CHAT_MAX_TOKENS.basico, 'max_tokens do Básico')
-  eq(body.model, 'qwen/qwen3.7-flash', 'slug')
+  eq(body.model, 'deepseek/deepseek-v4.1-flash-1017', 'slug')
   const final = finalOf(result)
   eq(final.custo_real, 0.02, 'custo informado, sem cortar')
   eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.02, 'grava o custo real')

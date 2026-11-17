@@ -27,6 +27,8 @@ globalThis.Deno = {
 let ignorados = 0
 globalThis.Deno.test.ignore = () => { ignorados += 1 }
 globalThis.fetch = () => { throw new Error('Network disabled in offline tests') }
+// Testes antigos não repetem resposta curta. Produção (env ausente) e repetirCurto:true repetem.
+process.env.CHAT_RETRY_CURTO = '0'
 await import('./chat_core_test.ts')
 await import('./chat_fix_selecao_test.ts')
 await import('./chat_r2_test.ts')
