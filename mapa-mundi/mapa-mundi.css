@@ -116,15 +116,27 @@ body.mapa-mundi-aberto #map-mode-count { display: none; }
   stroke-width: 1.8px;
   stroke-dasharray: none;
 }
+.mm-halo, .mm-halo-traco { pointer-events: none; }
+.mm-halo-traco {
+  fill: none;
+  stroke: #d47a6e;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+/* Três faixas translúcidas suavizam o halo (opacidade composta de ~35%). */
+.mm-halo-0 { stroke-width: 9px; stroke-opacity: .06; }
+.mm-halo-1 { stroke-width: 6px; stroke-opacity: .12; }
+.mm-halo-2 { stroke-width: 3.5px; stroke-opacity: .21; }
+.mm-halo-3 { stroke: #ede3cd; stroke-width: 1.8px; }
 .arco {
+  --mm-arco-peso: 1.25px;
   fill: none;
   stroke: url(#mm-tinta-pena) var(--blood-text);
-  stroke-width: 1.25px;
+  stroke-width: var(--mm-arco-peso);
   vector-effect: non-scaling-stroke;
   stroke-linecap: round;
   stroke-linejoin: round;
-  marker-start: url(#mm-ponta-pena);
-  marker-end: url(#mm-ponta-pena);
   pointer-events: none;
 }
 .arco.s { stroke-dasharray: none; }
@@ -132,13 +144,23 @@ body.mapa-mundi-aberto #map-mode-count { display: none; }
 .arco.p {
   stroke-dasharray: 1.5 5;
   stroke: var(--ink-3);
+}
+/* Os pesos continuam representando os grupos de quantidade preexistentes. */
+.arco.g1 { --mm-arco-peso: 1.65px; }
+.arco.g2 { --mm-arco-peso: 2.1px; }
+.arco.g3 { --mm-arco-peso: 2.7px; }
+.arco.inicio { stroke-width: calc(var(--mm-arco-peso) * 1.4); }
+.arco.fim { stroke-width: calc(var(--mm-arco-peso) * .55); }
+.arco.pontas {
+  stroke: none;
+  stroke-dasharray: none;
+  marker-start: url(#mm-ponta-pena);
+  marker-end: url(#mm-ponta-pena);
+}
+.arco.p.pontas {
   marker-start: url(#mm-ponta-hipotese);
   marker-end: url(#mm-ponta-hipotese);
 }
-/* Os pesos continuam representando os grupos de quantidade preexistentes. */
-.arco.g1 { stroke-width: 1.65px; }
-.arco.g2 { stroke-width: 2.1px; }
-.arco.g3 { stroke-width: 2.7px; }
 #mm-tinta-pena stop { stop-color: var(--blood-text); }
 #mm-tinta-pena .pena-borda { stop-opacity: .72; }
 #mm-tinta-pena .pena-centro { stop-color: var(--ink-2); }
@@ -156,8 +178,8 @@ body.mapa-mundi-aberto #map-mode-count { display: none; }
 #mm-fora .fora:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .pino .alvo { fill: transparent; cursor: pointer; }
 .pino .ponto { fill: var(--mm-c3); stroke: var(--ink); stroke-width: 1px; vector-effect: non-scaling-stroke; }
-.pino.sel .ponto { fill: var(--ink); }
 .pino.lig .ponto { stroke: var(--blood-text); stroke-width: 2px; }
+.pino.sel .ponto { fill: var(--ink); stroke: #ede3cd; stroke-width: 1.8px; }
 
 .legenda {
   position: absolute;

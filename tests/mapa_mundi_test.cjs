@@ -553,11 +553,61 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
           }
           const botoes = [...document.querySelectorAll('#mm-conteudo .ligados button[data-iso]')].map(el => el.getAttribute('data-iso'));
           const visiveis = botoes.filter(iso => window.__mapa.naTela(iso));
+          const svgNode = document.getElementById('mapa');
+          const ctm = svgNode.getScreenCTM();
+          function paraTela(x, y) {
+            const p = new DOMPoint(x, y).matrixTransform(ctm);
+            return [p.x, p.y];
+          }
+          const svgR = svgNode.getBoundingClientRect();
+          let vx0 = 0, vy0 = 0, vx1 = svgR.width, vy1 = svgR.height;
+          const painelEl = document.querySelector('#mapa-mundi-tela .mm-painel');
+          if (painelEl) {
+            const pr = painelEl.getBoundingClientRect();
+            const left = pr.left - svgR.left, top = pr.top - svgR.top;
+            const right = pr.right - svgR.left, bottom = pr.bottom - svgR.top;
+            const cobreX = right - left > 20 && left < svgR.width - 20 && right > 20;
+            const cobreY = bottom - top > 20 && top < svgR.height - 20 && bottom > 20;
+            if (cobreX && cobreY) {
+              if (top > svgR.height * 0.2) vy1 = Math.min(vy1, top);
+              else if (left > svgR.width * 0.2) vx1 = Math.min(vx1, left);
+            }
+          }
+          if (vx1 - vx0 < 80) { vx0 = 0; vx1 = svgR.width; }
+          if (vy1 - vy0 < 80) { vy0 = 0; vy1 = svgR.height; }
+          const centro = paraTela((vx0 + vx1) / 2, (vy0 + vy1) / 2);
+          function anguloReal(isos) {
+            let sx = 0, sy = 0, n = 0;
+            for (const iso of isos) {
+              const q = window.__mapa.ponto(iso);
+              if (!q) continue;
+              const s = paraTela(q[0], q[1]);
+              sx += s[0];
+              sy += s[1];
+              n++;
+            }
+            if (!n) return null;
+            return Math.atan2(sy / n - centro[1], sx / n - centro[0]) * 180 / Math.PI;
+          }
+          function difGrau(a, b) {
+            let d = Math.abs(a - b) % 360;
+            if (d > 180) d = 360 - d;
+            return d;
+          }
           const fora = [...document.querySelectorAll('#mm-fora .fora')].map(el => {
             const b = el.getBoundingClientRect();
+            const seta = el.querySelector('path.seta');
+            const m = seta.getScreenCTM();
+            const base = new DOMPoint(1, 6).matrixTransform(m);
+            const ponta = new DOMPoint(11, 6).matrixTransform(m);
+            const ang = Math.atan2(ponta.y - base.y, ponta.x - base.x) * 180 / Math.PI;
+            const isoChip = el.getAttribute('data-iso');
+            const resto = el.getAttribute('data-resto') || '';
+            const alvos = isoChip && isoChip !== '+' ? [isoChip] : resto.split(',').filter(Boolean);
+            const real = anguloReal(alvos);
             return {
-              iso: el.getAttribute('data-iso'),
-              resto: el.getAttribute('data-resto') || '',
+              iso: isoChip,
+              resto,
               nome: el.querySelector('text') ? el.querySelector('text').textContent : '',
               w: b.width,
               h: b.height,
@@ -565,6 +615,9 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
               zoom: cruza(b, zoom),
               nota: cruza(b, nota),
               folha: cruza(b, painel),
+              ang: Math.round(ang * 10) / 10,
+              real: real == null ? null : Math.round(real * 10) / 10,
+              delta: real == null ? null : Math.round(difGrau(ang, real) * 10) / 10,
               box: { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
             };
           });
@@ -599,6 +652,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
           assert.equal(f.zoom, false, JSON.stringify(f));
           assert.equal(f.nota, false, JSON.stringify(f));
           assert.equal(f.folha, false, JSON.stringify(f));
+          assert.ok(f.delta != null && f.delta < 30, JSON.stringify(f));
         }
         for (let i = 0; i < caixaPais.fora.length; i++) {
           for (let j = i + 1; j < caixaPais.fora.length; j++) {

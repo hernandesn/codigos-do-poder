@@ -77,7 +77,7 @@
       'aria-label': 'Mapa-múndi dos países com fichas. Alternativa acessível: lista de países no painel.'
     });
     var defs = svgElns('defs');
-    var tintaPena = svgElns('linearGradient', { id: 'mm-tinta-pena', x1: '0%', y1: '0%', x2: '100%', y2: '100%' });
+    var tintaPena = svgElns('linearGradient', { id: 'mm-tinta-pena', gradientUnits: 'userSpaceOnUse', x1: '0%', y1: '0%', x2: '100%', y2: '100%' });
     tintaPena.append(
       svgElns('stop', { offset: '0%', class: 'pena-borda' }),
       svgElns('stop', { offset: '38%' }),
@@ -423,11 +423,22 @@
     return a.x < b.x + b.w + folga && a.x + a.w + folga > b.x && a.y < b.y + b.h + folga && a.y + a.h + folga > b.y;
   }
 
-  function setaFora(dir) {
-    if (dir === 'd') return 'M1 1 L11 6 L1 11 Z';
-    if (dir === 'e') return 'M11 1 L1 6 L11 11 Z';
-    if (dir === 'c') return 'M1 11 L6 1 L11 11 Z';
-    return 'M1 1 L6 11 L11 1 Z';
+  function bordaRaio(cx, cy, vis) {
+    var mx = vis.x + vis.w / 2, my = vis.y + vis.h / 2;
+    var dx = cx - mx, dy = cy - my;
+    var ang = Math.atan2(dy, dx);
+    if (!isFinite(ang)) ang = 0;
+    var vx0 = vis.x, vy0 = vis.y, vx1 = vis.x + vis.w, vy1 = vis.y + vis.h;
+    var tMin = Infinity, dir = 'd', hx = mx, hy = my;
+    function considera(t, edge, x, y) {
+      if (t > 1e-4 && t < tMin) { tMin = t; dir = edge; hx = x; hy = y; }
+    }
+    if (dx > 1e-6) considera((vx1 - mx) / dx, 'd', vx1, my + dy * (vx1 - mx) / dx);
+    else if (dx < -1e-6) considera((vx0 - mx) / dx, 'e', vx0, my + dy * (vx0 - mx) / dx);
+    if (dy > 1e-6) considera((vy1 - my) / dy, 'b', mx + dx * (vy1 - my) / dy, vy1);
+    else if (dy < -1e-6) considera((vy0 - my) / dy, 'c', mx + dx * (vy0 - my) / dy, vy0);
+    var secund = (dir === 'e' || dir === 'd') ? (dy < 0 ? 'c' : 'b') : (dx < 0 ? 'e' : 'd');
+    return { dir: dir, secund: secund, ang: ang * 180 / Math.PI, cruzX: hx, cruzY: hy };
   }
 
   function pontoTela(iso) {
@@ -486,34 +497,51 @@
     return Math.max(44, Math.min(108, Math.round(28 + String(nome).length * 8.2)));
   }
 
-  function acharLugar(it, vis, bloqueios) {
-    var H = 44;
+  function varrerBorda(dir, W, H, vis, bloqueios, ideal) {
     var m = 4;
-    var larguras = [larguraChip(it.nome), 44];
     var vx0 = vis.x, vy0 = vis.y, vx1 = vis.x + vis.w, vy1 = vis.y + vis.h;
-    var meioX = (vx0 + vx1) / 2, meioY = (vy0 + vy1) / 2;
-    var prefs = [];
-    if (Math.abs(it.cx - meioX) >= Math.abs(it.cy - meioY)) prefs.push(it.cx < meioX ? 'e' : 'd');
-    else prefs.push(it.cy < meioY ? 'c' : 'b');
-    ['e', 'd', 'c', 'b'].forEach(function (e) { if (prefs.indexOf(e) < 0) prefs.push(e); });
-    var li, i, dir, W, x, y, r, yPasso, xPasso;
-    for (li = 0; li < larguras.length; li++) {
-      W = larguras[li];
-      for (i = 0; i < prefs.length; i++) {
-        dir = prefs[i];
-        if (dir === 'e' || dir === 'd') {
-          x = dir === 'e' ? vx0 + m : vx1 - m - W;
-          for (y = vy0 + m; y + H <= vy1 - m + 0.5; y += 4) {
-            r = { x: x, y: y, w: W, h: H };
-            if (cabeFora(r, vis, bloqueios)) return { x: x, y: y, w: W, h: H, dir: dir };
-          }
+    var vertical = dir === 'e' || dir === 'd';
+    var fixo = vertical ? (dir === 'e' ? vx0 + m : vx1 - m - W) : (dir === 'c' ? vy0 + m : vy1 - m - H);
+    var min = vertical ? vy0 + m : vx0 + m;
+    var max = vertical ? vy1 - m - H : vx1 - m - W;
+    if (max < min) return null;
+    var alvo = Math.max(min, Math.min(max, ideal));
+    var passo, k, val, r;
+    for (passo = 0; passo <= max - min + 4; passo += 4) {
+      var vals = passo === 0 ? [alvo] : [alvo - passo, alvo + passo];
+      for (k = 0; k < vals.length; k++) {
+        val = vals[k];
+        if (val < min - 0.5 || val > max + 0.5) continue;
+        r = vertical ? { x: fixo, y: val, w: W, h: H } : { x: val, y: fixo, w: W, h: H };
+        if (cabeFora(r, vis, bloqueios)) return r;
+      }
+    }
+    return null;
+  }
+
+  function acharLugar(it, vis, bloqueios) {
+    // Vale também na segunda tentativa, sem alterar a fila ou as direções.
+    var notaBox = caixaRel($('nota'), 8);
+    if (notaBox) bloqueios = bloqueios.concat([notaBox]);
+    var H = 44;
+    var larguras = [larguraChip(it.nome), 44];
+    var borda = bordaRaio(it.cx, it.cy, vis);
+    var dirs = [borda.dir];
+    if (dirs.indexOf(borda.secund) < 0) dirs.push(borda.secund);
+    var di, li, W, dir, ideal, achado;
+    for (di = 0; di < dirs.length; di++) {
+      dir = dirs[di];
+      for (li = 0; li < larguras.length; li++) {
+        W = larguras[li];
+        if (dir === borda.dir) {
+          ideal = (dir === 'e' || dir === 'd') ? borda.cruzY - H / 2 : borda.cruzX - W / 2;
+        } else if (dir === 'e' || dir === 'd') {
+          ideal = borda.dir === 'c' ? vis.y : vis.y + vis.h;
         } else {
-          y = dir === 'c' ? vy0 + m : vy1 - m - H;
-          for (x = vx0 + m; x + W <= vx1 - m + 0.5; x += 4) {
-            r = { x: x, y: y, w: W, h: H };
-            if (cabeFora(r, vis, bloqueios)) return { x: x, y: y, w: W, h: H, dir: dir };
-          }
+          ideal = borda.dir === 'e' ? vis.x : vis.x + vis.w;
         }
+        achado = varrerBorda(dir, W, H, vis, bloqueios, ideal);
+        if (achado) return { x: achado.x, y: achado.y, w: achado.w, h: achado.h, dir: dir, ang: borda.ang };
       }
     }
     return null;
@@ -546,7 +574,7 @@
       }
       function guardar(iso, nome, resto, lugar) {
         ocupados.push(lugar);
-        postos.push({ iso: iso, nome: nome, resto: resto, x: lugar.x, y: lugar.y, w: lugar.w, h: lugar.h, dir: lugar.dir });
+        postos.push({ iso: iso, nome: nome, resto: resto, x: lugar.x, y: lugar.y, w: lugar.w, h: lugar.h, dir: lugar.dir, ang: lugar.ang });
       }
       fila.forEach(function (iso) {
         var p = pontoTela(iso) || [vis.x, vis.y];
@@ -555,8 +583,20 @@
         if (lugar) guardar(iso, it.nome, '', lugar);
       });
       if (extras.length) {
+        var sx = 0, sy = 0, nMeio = 0, ie, pe;
+        for (ie = 0; ie < extras.length; ie++) {
+          pe = pontoTela(extras[ie]);
+          if (!pe) continue;
+          sx += pe[0];
+          sy += pe[1];
+          nMeio++;
+        }
         var nomeMais = '+' + extras.length;
-        var lugarMais = colocar({ nome: nomeMais, cx: vis.x + vis.w, cy: vis.y + vis.h / 2 });
+        var lugarMais = colocar({
+          nome: nomeMais,
+          cx: nMeio ? sx / nMeio : vis.x + vis.w,
+          cy: nMeio ? sy / nMeio : vis.y + vis.h / 2
+        });
         if (lugarMais) guardar('+', nomeMais, extras.join(','), lugarMais);
       }
     }
@@ -593,7 +633,10 @@
         cameras[location.hash] = { x: T.x, y: T.y, k: T.k };
       });
     all.select('rect').attr('width', function (d) { return d.w; }).attr('height', function (d) { return d.h; });
-    all.select('path').attr('d', function (d) { return setaFora(d.dir); }).attr('transform', 'translate(8,16)');
+    all.select('path').attr('d', 'M1 1 L11 6 L1 11 Z').attr('transform', function (d) {
+      var deg = isFinite(d.ang) ? d.ang : 0;
+      return 'translate(8,16) rotate(' + deg.toFixed(2) + ',6,6)';
+    });
     all.select('text').attr('x', 24).attr('y', 28).text(function (d) { return d.nome; });
   }
 
@@ -605,12 +648,27 @@
   }
   function arco(a, b) {
     var p1 = anchor[a], p2 = anchor[b];
-    if (!p1 || !p2) return '';
+    if (!p1 || !p2) return null;
     var x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1];
     var mx = (x1 + x2) / 2, my = (y1 + y2) / 2, dx = x2 - x1, dy = y2 - y1;
     var dist = Math.hypot(dx, dy) || 1;
     var o = Math.min(160, dist * 0.32);
-    return 'M' + x1 + ',' + y1 + ' Q' + (mx + dy / dist * o * (dx > 0 ? -1 : 1)) + ',' + (my - Math.abs(dx / dist) * o) + ' ' + x2 + ',' + y2;
+    var cx = mx + dy / dist * o * (dx > 0 ? -1 : 1), cy = my - Math.abs(dx / dist) * o;
+    var inteiro = 'M' + x1 + ',' + y1 + ' Q' + cx + ',' + cy + ' ' + x2 + ',' + y2;
+    // Subcurvas quadráticas exatas: mesmas âncoras, curvatura e tangentes.
+    function ponto(t) {
+      var u = 1 - t;
+      return [u * u * x1 + 2 * u * t * cx + t * t * x2, u * u * y1 + 2 * u * t * cy + t * t * y2];
+    }
+    var partes = [];
+    for (var i = 0; i < 3; i++) {
+      var t0 = i / 3, t1 = (i + 1) / 3, dt = t1 - t0;
+      var a0 = ponto(t0), b0 = ponto(t1);
+      var qx = a0[0] + dt * ((1 - t0) * (cx - x1) + t0 * (x2 - cx));
+      var qy = a0[1] + dt * ((1 - t0) * (cy - y1) + t0 * (y2 - cy));
+      partes.push('M' + a0 + ' Q' + qx + ',' + qy + ' ' + b0);
+    }
+    return { partes: partes, inteiro: inteiro };
   }
   function desenharArcos() {
     var data = [];
@@ -618,14 +676,20 @@
       Object.keys(P[sel].ligacoes).forEach(function (b) {
         if (!anchor[b]) return;
         var L = P[sel].ligacoes[b];
+        var curva = arco(sel, b);
+        if (!curva) return;
         ['s', 't', 'p'].forEach(function (k) {
-          if (L[k]) data.push({ b: b, k: k, n: L[k] });
+          if (!L[k]) return;
+          curva.partes.concat([curva.inteiro]).forEach(function (d, i) {
+            data.push({ b: b, k: k, n: L[k], i: i, d: d });
+          });
         });
       });
     }
-    gArc.selectAll('path').data(data, function (d) { return d.b + d.k; }).join('path')
-      .attr('class', function (d) { return 'arco ' + d.k + grupo(d.n); })
-      .attr('d', function (d) { return arco(sel, d.b); });
+    // Três larguras e um caminho sem traço para conservar só as pontas originais.
+    gArc.selectAll('path').data(data, function (d) { return d.b + d.k + d.i; }).join('path')
+      .attr('class', function (d) { return 'arco ' + d.k + grupo(d.n) + ' ' + ['inicio', 'meio', 'fim', 'pontas'][d.i]; })
+      .attr('d', function (d) { return d.d; });
   }
   function marcar() {
     var lig = sel && P[sel] ? P[sel].ligacoes : {};
@@ -636,6 +700,22 @@
     gPin.selectAll('g').classed('sel', function (a) { return a === sel; }).classed('lig', function (a) { return !!(lig && lig[a]); });
     gPais.selectAll('path.sel').raise();
     gHist.selectAll('path.sel').raise();
+    // Cópias só da seleção. Traços em pixels dispensam filtros e atualização no zoom.
+    var fHalo = sel && !PINOS[sel] ? featureDe(sel) : null;
+    var halo = g.selectAll('g.mm-halo').data(fHalo ? [fHalo] : []).join(function (enter) {
+      return enter.insert('g', '#arcos').attr('class', 'mm-halo').attr('aria-hidden', 'true');
+    });
+    var contorno = fHalo ? path(fHalo) : '';
+    halo.selectAll('path').data([0, 1, 2, 3]).join('path')
+      .attr('class', function (n) { return 'mm-halo-traco mm-halo-' + n; })
+      .attr('d', contorno);
+    // Os pinos já têm escala inversa ao zoom; o halo acompanha o mesmo círculo.
+    gPin.selectAll('g').each(function (a) {
+      d3.select(this).selectAll('circle.mm-halo-traco').data(a === sel ? [0, 1, 2] : []).join(function (enter) {
+        return enter.insert('circle', '.ponto');
+      }).attr('class', function (n) { return 'mm-halo-traco mm-halo-' + n; })
+        .attr('r', 3.5).attr('aria-hidden', 'true');
+    });
   }
 
   function linkFicha(id, nome) {
@@ -838,6 +918,10 @@
       quadro: quadro,
       ancora: function (a) { return ancoraGeo[a] ? ancoraGeo[a].slice() : null; },
       naTela: function (a) { return naTela(a); },
+      ponto: function (a) {
+        var p = pontoTela(a);
+        return p ? [p[0], p[1]] : null;
+      },
       mundo: W,
       caminho: function (geom) { return path ? path(geom) : ''; },
       fichas: function (a) { return P[a] ? P[a].fichas.length : 0; },
