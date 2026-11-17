@@ -169,8 +169,9 @@ Deno.test('campo errado vai para o conjunto do recorte e o prefixo não veta', (
   const sanitized = sanitizeAnswer(infer.raw, ctx)
   assert(!sanitized.removed, 'fonte do recorte não é mais removida')
   const base = sanitized.answer.blocos[0]
-  assert(base.tipo === 'inferencia', 'bloco de inferência')
-  eq(JSON.stringify(base.base), JSON.stringify(['golpe64', 'E219']), 'base fica com entidade e relação')
+  // R2 (prosa corrida): inferência vira parágrafo com as relações-base e suas fontes.
+  assert(base.tipo === 'documentado', 'inferência vira parágrafo')
+  eq(JSON.stringify(base.relacoes), JSON.stringify(['E219']), 'relação da base vira citação')
   eq(JSON.stringify(sanitized.answer.fontes), JSON.stringify(['B10']), 'fonte da base vira fonte citada no topo')
 
   const caso = normalizeCitations({
@@ -231,7 +232,7 @@ Deno.test('F1b: correção de campo determinística só com ids do recorte', () 
   const infOut = sanitizeAnswer(inf.raw, ctx)
   assert(infOut.removed, 'B99 continua removido pelo sanitize')
   const ib = infOut.answer.blocos[0]
-  eq(ib.tipo === 'inferencia' ? JSON.stringify(ib.base) : '', JSON.stringify(['E219']), 'base só com o recorte')
+  eq(ib.tipo === 'documentado' ? JSON.stringify(ib.relacoes) : '', JSON.stringify(['E219']), 'R2: só a relação do recorte vira citação')
 })
 
 Deno.test('id inventado ou parcial continua removido', () => {
@@ -257,7 +258,7 @@ Deno.test('id inventado ou parcial continua removido', () => {
   const doc = answer.blocos[0]
   assert(doc.tipo === 'documentado', 'bloco permanece')
   eq(JSON.stringify(doc.entidades), JSON.stringify([]), 'nenhum id inventado sobrevive')
-  eq(doc.texto, 'texto intacto id:Golpe de 1964', 'golpe64 tem dígito e vira o nome; citação inventada não vira id')
+  eq(doc.texto, 'Texto intacto id:Golpe de 1964', 'golpe64 tem dígito e vira o nome; citação inventada não vira id')
 })
 
 Deno.test('idKind classifica os padrões reais e nada além deles', () => {
@@ -356,10 +357,10 @@ Deno.test('lacunas_entre_raizes sobrevive ao boundContextJson, inclusive no últ
 
   const meio = boundContextJson({
     raizes: [{ id: 'golpe64', nome: 'Golpe' }, { id: 'jacob_r', nome: 'Jacob' }],
-    entidades: [{ id: 'golpe64', nota: 'n'.repeat(9000) }],
+    entidades: [{ id: 'golpe64', nota: 'n'.repeat(18000) }],
     relacoes: [], fontes: [],
   })
-  assert(meio.length <= 8000, 'degrau intermediário cabe')
+  assert(meio.length <= 16000, 'degrau intermediário cabe')
   const meioParsed = JSON.parse(meio)
   eq(meioParsed.lacunas_entre_raizes.length, 1, 'lacuna no degrau que encolhe nota')
   eq(meioParsed.lacunas_entre_raizes[0].de, 'golpe64', 'par preservado')
@@ -391,7 +392,8 @@ Deno.test('lacunas_entre_raizes sobrevive ao boundContextJson, inclusive no últ
 Deno.test('prompt pede id puro e a frase de lacuna sem crescer mais de 15%', () => {
   const vazio: ChatContextPayload = { raizes: [], entidades: [], relacoes: [], fontes: [] }
   // Prompt fixo sem o JSON. v12 media 1373/1341; as duas linhas de apelido sobem para 1412/1380.
-  const base = { basico: 1412, avancado: 1380 }
+  // R2: o prompt longo de tom acusatório + trava legal mede 5810/5811; o teto de 15% passa a valer sobre isso.
+  const base = { basico: 5810, avancado: 5811 }
   for (const modelo of ['basico', 'avancado'] as const) {
     const prompt = buildSystemPrompt(modelo, vazio)
     const json = boundContextJson(vazio)
@@ -405,15 +407,13 @@ Deno.test('prompt pede id puro e a frase de lacuna sem crescer mais de 15%', () 
     assert(prompt.includes('sem id:, nome, rótulo ou aspas'), 'sem prefixo, nome ou aspas')
     assert(prompt.includes('Relação em relacoes, fonte em fontes, entidade em entidades'), 'campo certo')
     assert(prompt.includes('Texto livre só em texto/justificativa'), 'texto livre isolado')
-    assert(prompt.includes("O atlas não documenta ligação direta entre <nome de> e <nome para>."), 'frase de lacuna')
-    assert(prompt.includes('lacunas_entre_raizes'), 'campo de lacuna')
+    // R2: a frase canônica de lacuna saiu do prompt fora da pauta.
+    assert(!prompt.includes("O atlas não documenta ligação direta entre <nome de> e <nome para>."), 'sem frase de lacuna')
     assert(prompt.includes('só quando o recorte não sustenta nenhum dos temas'), 'sem_base preservado')
     assert(prompt.includes('sem_base true só com blocos vazios'), 'F1c(b): sem_base só com blocos vazios')
-    if (modelo === 'basico') assert(prompt.includes('pergunta em aberto em em_aberto'), 'F1c(b): em_aberto no prompt')
-    assert(prompt.includes('explique o que documenta sobre cada um'), 'temas preservados')
-    assert(prompt.includes('a ligação direta não está documentada no atlas'), 'lacuna antiga preservada')
-    assert(prompt.includes('explique primeiro essa ligação, citando suas relações e fontes'), 'caminho preservado')
-    assert(prompt.includes('Um caminho por intermediário não prova ligação direta'), 'indireto não é direto')
+    // R2: em_aberto é a pergunta final provocativa; sem frase de lacuna; caminho indireto continua não sendo direto.
+    assert(prompt.includes('em_aberto: uma pergunta final provocativa'), 'F1c(b): em_aberto no prompt')
+    assert(/caminho por intermediário|intermediário não é ligação direta/i.test(prompt), 'indireto não é direto')
   }
   assert(!JSON.stringify(RESPOSTA_JSON_SCHEMA).includes('pattern'), 'schema sem pattern')
   eq(JSON.stringify(RESPOSTA_JSON_SCHEMA.properties.em_aberto.type), '["string","null"]', 'em_aberto opcional no strict')
@@ -446,8 +446,8 @@ Deno.test('streamPrepared normaliza antes do sanitize e manda lacunas ao modelo'
   })
   assert(prepared.ok, 'preparado')
   const system = (prepared.requestBody.messages as Array<{ content: string }>)[0].content
-  assert(system.includes('lacunas_entre_raizes'), 'o recorte enviado traz a lacuna')
-  assert(system.includes(MARCADOR), 'marcador no JSON')
+  // R2: fora da pauta o recorte não leva lacunas_entre_raizes (a resposta não fala de lacuna).
+  assert(!system.includes('lacunas_entre_raizes'), 'o recorte enviado não traz a lacuna')
   assert(system.includes('id puro'), 'regra no pedido real')
 
   const calls: Record<string, unknown>[] = []
@@ -484,11 +484,12 @@ Deno.test('streamPrepared normaliza antes do sanitize e manda lacunas ao modelo'
   const data = final.data as ChatFinal
   const doc = data.blocos[0]
   assert(doc.tipo === 'documentado', 'documentado')
-  eq(doc.texto, 'O recorte cita o golpe.', 'texto do modelo')
+  eq(doc.texto, 'A documentação cita o golpe.', 'texto do modelo (R2: «recorte» vira «documentação»)')
   eq(JSON.stringify(doc.entidades), JSON.stringify(['golpe64']), 'id:golpe64 virou golpe64')
   eq(JSON.stringify(doc.relacoes), JSON.stringify(['E219']), 'relação saiu de entidades')
   eq(JSON.stringify(doc.fontes), JSON.stringify(['B10']), 'fonte saiu de entidades')
   eq(JSON.stringify(data.entidades.map((item) => item.id)), JSON.stringify(['ipes', 'golpe64']), 'topo id:ipes também')
   assert(!JSON.stringify(data).includes('walther_m'), 'id inventado não passa')
-  assert(data.avisos.some((aviso) => aviso.tipo === 'citacao_removida'), 'aviso do que sobrou inválido')
+  // R2: nenhum aviso de sistema vai para a tela; a remoção do id inválido continua.
+  eq(data.avisos.length, 0, 'sem aviso na tela')
 })

@@ -37,6 +37,7 @@ export function lacunasEntreRaizes(ctx: ChatContextPayload): LacunaEntreRaizes[]
     vias.set(key, list)
   }
 
+  for (const p of ((ctx as any).pontes_entre_raizes ?? [])) if (p?.de && p?.para) direct.add(pairKey(p.de, p.para))
   const out: LacunaEntreRaizes[] = []
   for (let i = 0; i < roots.length; i++) {
     for (let j = i + 1; j < roots.length; j++) {
@@ -45,6 +46,7 @@ export function lacunasEntreRaizes(ctx: ChatContextPayload): LacunaEntreRaizes[]
       if (de === para) continue
       const key = pairKey(de, para)
       if (direct.has(key)) continue
+      if (mesmaFamilia(roots[i].nome, roots[j].nome)) continue
       const lacuna: LacunaEntreRaizes = { de, para, marcador: 'sem ligação direta documentada' }
       const via = vias.get(key)
       if (via && via.length) lacuna.via = via
@@ -52,4 +54,11 @@ export function lacunasEntreRaizes(ctx: ChatContextPayload): LacunaEntreRaizes[]
     }
   }
   return out
+}
+
+const VAZIAS = new Set(['fundacao','missao','medica','banco','instituto','companhia','familia','brasil','internacional','national','foundation','the','dos','das','del','von','van','corporation','company','international','sociedade','associacao','comissao'])
+function fold(s: unknown): string { return String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() }
+export function mesmaFamilia(a: unknown, b: unknown): boolean {
+  const ta = new Set(fold(a).split(/[^a-z]+/).filter((w) => w.length >= 4 && !VAZIAS.has(w)).map((w) => w.replace(/s$/, '')))
+  return fold(b).split(/[^a-z]+/).filter((w) => w.length >= 4 && !VAZIAS.has(w)).some((w) => ta.has(w.replace(/s$/, '')))
 }

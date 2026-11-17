@@ -175,10 +175,10 @@ Deno.test('slugs e teto', () => {
   eq(MODEL_SLUGS.basico, 'qwen/qwen3.7-flash', 'slug basico')
   eq(MODEL_SLUGS.avancado, 'z-ai/glm-5.3', 'slug avancado')
   eq(CHAT_DAILY_BUDGET_USD, 3, 'teto default')
-  eq(CHAT_MAX_TOKENS.basico, 800, 'max_tokens basico')
-  eq(CHAT_MAX_TOKENS.avancado, 1800, 'max_tokens avancado')
-  eq(CHAT_COST_ESTIMATE_USD.basico, 0.000444, 'preço de saída = 800 tokens a US$ 0,0005/900')
-  eq(CHAT_COST_ESTIMATE_USD.avancado, 0.004, 'preço de saída = 1800 tokens')
+  eq(CHAT_MAX_TOKENS.basico, 3600, 'max_tokens basico (R2: resposta longa)')
+  eq(CHAT_MAX_TOKENS.avancado, 6000, 'max_tokens avancado (R2)')
+  eq(CHAT_COST_ESTIMATE_USD.basico, 0.002, 'preço de saída = 3600 tokens a US$ 0,0005/900')
+  eq(CHAT_COST_ESTIMATE_USD.avancado, 0.013333, 'preço de saída = 6000 tokens')
   assert(CHAT_LEASE_HOLD_MS > CHAT_MODEL_TIMEOUT_MS, 'o lease cobre o aborto')
   const qwen = proveProviderSpend({
     pricing: { prompt: '0.00000003', completion: '0.00000013', input_cache_write: '0.000000038', overrides: [{ min_prompt_tokens: 32000, prompt: '0.0000001' }] },
@@ -253,7 +253,7 @@ Deno.test('T1 ok com chave limitada', async () => {
   eq(result.httpStatus, 200, 'chama')
   eq(model.calls.length, 1, 'uma chamada paga')
   const body = model.calls[0] as { max_tokens?: number; model?: string }
-  eq(body.max_tokens, 800, 'max_tokens modesto')
+  eq(body.max_tokens, CHAT_MAX_TOKENS.basico, 'max_tokens do Básico')
   eq(body.model, 'qwen/qwen3.7-flash', 'slug')
   const final = finalOf(result)
   eq(final.custo_real, 0.02, 'custo informado, sem cortar')
@@ -1039,7 +1039,7 @@ Deno.test('recorte grande é reduzido antes do envio', () => {
     fontes: [{ id: 's', titulo: '你'.repeat(20000) }],
   }
   const bound = boundContextJson(context)
-  assert(bound.length <= 8000, 'não manda o texto inteiro')
+  assert(bound.length <= 16000, 'não manda o texto inteiro')
   assert(!bound.includes('你你你'), 'o miolo não segue')
 })
 
@@ -1055,7 +1055,7 @@ Deno.test('recorte grande mantém raízes ao encolher listas', () => {
     })),
   }
   const bound = boundContextJson(context)
-  assert(bound.length <= 8000, 'cabe no teto')
+  assert(bound.length <= 16000, 'cabe no teto')
   assert(bound.includes('walther_ms'), 'mantém a raiz')
   assert(!bound.includes('excerpt_text'), 'remove evidências pesadas')
   const parsed = JSON.parse(bound)
@@ -1078,7 +1078,7 @@ Deno.test('SPEC3 recorte real Rockefeller cabe sem stub e mantém raízes', asyn
   const original = JSON.stringify(context)
   const bound = boundContextJson(context)
   const parsed = JSON.parse(bound)
-  assert(bound.length <= 8000, `recorte real: ${bound.length} caracteres`)
+  assert(bound.length <= 16000, `recorte real: ${bound.length} caracteres`)
   console.log(`SPEC3 fixture Rockefeller: ${original.length} -> ${bound.length} chars`)
   assert(!parsed.truncado, 'não cai no stub')
   eq(JSON.stringify(parsed.raizes), JSON.stringify(context.raizes), 'mantém raízes completas')
@@ -1107,7 +1107,7 @@ Deno.test('SPEC3 preserva caminhos, intermediários, relações e fontes ao redu
   const original = JSON.stringify(context)
   const bound = boundContextJson(context)
   const parsed: ChatContextPayload = JSON.parse(bound)
-  assert(bound.length <= 8000, `com caminhos: ${bound.length} caracteres`)
+  assert(bound.length <= 16000, `com caminhos: ${bound.length} caracteres`)
   console.log(`SPEC3 synthetic paths: ${original.length} -> ${bound.length} chars; paths=${parsed.ligacoes_entre_raizes?.length}`)
   assert(!('truncado' in parsed), 'sem stub')
   eq(JSON.stringify(parsed.raizes), JSON.stringify(context.raizes), 'preserva três raízes')
@@ -1133,7 +1133,7 @@ Deno.test('SPEC3 casos e notas muito longos ainda preservam recorte com raízes'
   }
   const bound = boundContextJson(context)
   const parsed = JSON.parse(bound)
-  assert(bound.length <= 8000 && !parsed.truncado, 'cabe sem stub')
+  assert(bound.length <= 16000 && !parsed.truncado, 'cabe sem stub')
   eq(parsed.raizes[0].id, 'rockefeller', 'mantém raiz')
   eq(parsed.casos.length, 0, 'pode remover todos os casos')
 })
@@ -1143,10 +1143,11 @@ Deno.test('SPEC3 prompt distingue temas documentados, ausência de ligação e c
   for (const modelo of ['basico', 'avancado'] as const) {
     const prompt = buildSystemPrompt(modelo, context)
     assert(prompt.includes('só quando o recorte não sustenta nenhum dos temas'), 'sem_base limitado à falta de temas')
-    assert(prompt.includes('explique o que documenta sobre cada um'), 'resposta útil sobre temas')
-    assert(prompt.includes('a ligação direta não está documentada no atlas'), 'explicita lacuna')
-    assert(prompt.includes('explique primeiro essa ligação, citando suas relações e fontes'), 'prioriza caminho com fontes')
-    assert(prompt.includes('Um caminho por intermediário não prova ligação direta'), 'não transforma contato em prova direta')
+    // R2: sem frase de lacuna; a resposta conta os caminhos documentados e marca a tese.
+    assert(prompt.includes('O que liga tudo:'), 'veredito no último parágrafo')
+    assert(prompt.includes('pontes_entre_raizes'), 'caminhos entre temas')
+    assert(/caminho por intermediário|intermediário não é ligação direta/i.test(prompt), 'não transforma contato em prova direta')
+    assert(prompt.includes('TRAVA LEGAL') || /crime|ilícit/.test(prompt), 'trava legal')
   }
 })
 
@@ -1306,7 +1307,7 @@ Deno.test('F1c(a): sem_base:true com documentado válido responde, cobra e loga 
 
 Deno.test('F1c(b): em_aberto fecha o último bloco sem chave nova; ausente ou null não muda nada; sem_base com blocos vazios segue fora_da_base', async () => {
   const pergunta = 'O que o recorte ainda deixa em aberto?'
-  for (const [over, fim] of [[{ em_aberto: pergunta }, `A leitura não cria fato novo.\n\n${pergunta}`], [{}, 'A leitura não cria fato novo.'], [{ em_aberto: null }, 'A leitura não cria fato novo.']] as const) {
+  for (const [over, fim] of [[{ em_aberto: pergunta }, `A leitura não cria fato novo.\n\n${pergunta.replace('o recorte', 'a documentação')}`], [{}, 'A leitura não cria fato novo.'], [{ em_aberto: null }, 'A leitura não cria fato novo.']] as const) {
     const model = scripted([{ delta: answerJson(over) }])
     const final = finalOf(await chat({ database: db(), openrouter: model.client, inferenceKey: acceptedKey() }))
     eq(final.blocos.length, 2, 'blocos mantidos')
@@ -1336,9 +1337,10 @@ Deno.test('F1d: nenhum id válido vira fora_da_base sem débito; 1 id cobra; sem
   eq(final.blocos.length, 1, 'resposta com 1 id mantida')
   eq(st2.snapshot(USER, CLOCK()).used, 1, 'cobrada')
   const lacuna = [{ tipo: 'documentado', texto: 'O atlas não documenta ligação direta.', entidades: [], relacoes: [], fontes: [] }]
+  // R2: o fallback canônico foi desligado; sem id válido vira fora_da_base sem débito.
   const { store, result: sl } = await streamSemLigacao(semLigacaoContext(), answerJson({ blocos: lacuna }))
-  eq(finalOf(sl).blocos.length, 3, 'sem_ligacao: fallback canônico')
-  eq(store.snapshot(USER, CLOCK()).used, 0, 'sem_ligacao não cobra (CRED1)')
+  eq((events(sl, 'error')[0]?.data as { code?: string })?.code, 'fora_da_base', 'sem_ligacao: fora_da_base')
+  eq(store.snapshot(USER, CLOCK()).used, 0, 'sem débito')
 })
 
 Deno.test('F1e: frase canônica de lacuna entre raízes; não duplica; não entra com ligação afirmada', async () => {
@@ -1346,8 +1348,9 @@ Deno.test('F1e: frase canônica de lacuna entre raízes; não duplica; não entr
   const canonica = 'O atlas não documenta ligação direta entre Golpe de 1964 e Heitor Lyra.'
   const { store, result } = await streamSemLigacao(semLigacaoContext(), answerJson({ blocos: [doc('O atlas não documenta parentesco entre Heitor Lyra e o golpe.')] }))
   const final = finalOf(result)
-  eq(final.blocos.length, 2, 'GS-009: bloco de lacuna acrescentado')
-  eq(final.blocos[1].texto, canonica, 'frase canônica da UI')
+  // R2: a frase canônica de lacuna não é mais acrescentada (pedido do Hernandes).
+  eq(final.blocos.length, 1, 'GS-009: sem bloco de lacuna')
+  assert(!final.blocos.some((b: ChatBloco) => b.texto === canonica), 'frase canônica fora da UI')
   eq(store.snapshot(USER, CLOCK()).used, 1, 'cobrança inalterada')
   const { result: dup } = await streamSemLigacao(semLigacaoContext(), answerJson({ blocos: [doc('O atlas nao documenta ligacao direta entre os dois.')] }))
   eq(finalOf(dup).blocos.length, 1, 'frase já presente: não duplica')
@@ -1363,12 +1366,13 @@ Deno.test('F1e(b): frase só em pergunta de ligação; caminho/inferência e GS-
     'O Walther Moreira Sales e o Heitor Lyra eram do IPES?']) {
     eq(tem((await streamSemLigacao(semLigacaoContext(), answerJson({ blocos: [doc] }), { mensagem: q })).result), false, `sem frase: ${q}`)
   }
-  eq(tem((await streamSemLigacao(semLigacaoContext(), answerJson({ blocos: [doc] }))).result), true, 'GS-009 (parente) mantém a frase')
+  eq(tem((await streamSemLigacao(semLigacaoContext(), answerJson({ blocos: [doc] }))).result), false, 'R2: GS-009 também sem a frase')
   eq(perguntaDeLigacao('Qual a relação entre Heitor Lyra e o golpe?'), true, 'relação')
   eq(perguntaDeLigacao('Há vínculo ou conexão entre eles?'), true, 'vínculo/conexão')
 })
 
-Deno.test('SPEC4 streamPrepared sem_base em dois temas sem ligação termina ok sem débito e libera reserva grátis', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('SPEC4 streamPrepared sem_base em dois temas sem ligação termina ok sem débito e libera reserva grátis', async () => {
   const store = db()
   store.setUsed(USER, 4)
   store.setPaid(USER, 32)
@@ -1403,7 +1407,8 @@ Deno.test('SPEC4 streamPrepared sem_base em dois temas sem ligação termina ok 
   eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'orçamento sem reserva pendente')
 })
 
-Deno.test('CRED1 sem_ligacao no Avançado devolve os oito pagos sem alterar cota grátis', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('CRED1 sem_ligacao no Avançado devolve os oito pagos sem alterar cota grátis', async () => {
   const store = db()
   store.setUsed(USER, 6)
   store.setPaid(USER, 24)
@@ -1431,7 +1436,8 @@ Deno.test('CRED1 sem_ligacao no Avançado devolve os oito pagos sem alterar cota
   eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'budget liquidado')
 })
 
-Deno.test('CRED1 sem_ligacao no Básico com cota esgotada também devolve o crédito pago', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('CRED1 sem_ligacao no Básico com cota esgotada também devolve o crédito pago', async () => {
   const store = db()
   store.setUsed(USER, 20)
   store.setPaid(USER, 16)
@@ -1450,7 +1456,8 @@ Deno.test('CRED1 sem_ligacao no Básico com cota esgotada também devolve o cré
   eq(state.ledger.filter((r) => r.reason === 'chat_debit').length, 0, 'sem débito confirmado')
 })
 
-Deno.test('CRED1 sem_ligacao retorna os saldos atuais após pedidos concorrentes', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('CRED1 sem_ligacao retorna os saldos atuais após pedidos concorrentes', async () => {
   for (const { modelo, used } of [
     { modelo: 'basico', used: 4 },
     { modelo: 'avancado', used: 4 },
@@ -1487,7 +1494,8 @@ Deno.test('CRED1 sem_ligacao retorna os saldos atuais após pedidos concorrentes
   }
 })
 
-Deno.test('REL1 ponta a ponta: fallback grátis, documentado + F1e cobra 1, fora_da_base grátis, saldos certos sob concorrência', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('REL1 ponta a ponta: fallback grátis, documentado + F1e cobra 1, fora_da_base grátis, saldos certos sob concorrência', async () => {
   const doc = { tipo: 'documentado', texto: 'Resposta do modelo.', entidades: ['golpe64', 'ipes'], relacoes: ['golpe_primeira'], fontes: ['G1'] }
   const recusa = [{ tipo: 'documentado', texto: 'Não há base para isso.', entidades: [], relacoes: [], fontes: [] }]
   const run = async (raw: string, ctx = semLigacaoContext(), concorrentes = 0) => {
@@ -1531,7 +1539,8 @@ Deno.test('REL1 ponta a ponta: fallback grátis, documentado + F1e cobra 1, fora
   }
 })
 
-Deno.test('CRED1 sem_ligacao com release noop sem saldos preserva o pós-reserva', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('CRED1 sem_ligacao com release noop sem saldos preserva o pós-reserva', async () => {
   for (const modelo of ['basico', 'avancado'] as const) {
     const store = db()
     store.setPaid(USER, 24)
@@ -1554,7 +1563,8 @@ Deno.test('CRED1 sem_ligacao com release noop sem saldos preserva o pós-reserva
   }
 })
 
-Deno.test('CRED1 falha no release não confirma nem repete a cobrança e mantém budget, final e log', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('CRED1 falha no release não confirma nem repete a cobrança e mantém budget, final e log', async () => {
   const calls: unknown[][] = []
   const originalError = console.error
   console.error = (...args: unknown[]) => { calls.push(args) }
@@ -1603,7 +1613,8 @@ Deno.test('CRED1 falha no release não confirma nem repete a cobrança e mantém
   assert(calls.every((args) => !JSON.stringify(args).includes('falha de teste')), 'sem detalhe do erro')
 })
 
-Deno.test('CRED1 sem_ligacao com release recusado avisa sem devolver e não cobra', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('CRED1 sem_ligacao com release recusado avisa sem devolver e não cobra', async () => {
   const calls: unknown[][] = []
   const originalError = console.error
   console.error = (...args: unknown[]) => { calls.push(args) }
@@ -1676,7 +1687,8 @@ Deno.test('CRED1 fora_da_base com release recusado segue erro sem cobrar', async
   }
 })
 
-Deno.test('SPEC4 streamPrepared com blocos vazios também usa fallback', async () => {
+// R2: fallback sem_ligacao desligado (o caminho não é mais alcançável); coberto por chat_r2_test.ts 'sem conteúdo vira fora_da_base'.
+Deno.test.ignore('SPEC4 streamPrepared com blocos vazios também usa fallback', async () => {
   for (const modelo of ['basico', 'avancado'] as const) {
     const store = db()
     store.setPaid(USER, 24)
@@ -1733,7 +1745,7 @@ Deno.test('SPEC4 streamPrepared preserva resposta válida do modelo em dois tema
       blocos: [{ tipo: 'documentado', texto: 'Resposta do modelo.', entidades: ['golpe64', 'ipes'], relacoes: ['golpe_primeira'], fontes: ['G1'] }],
     }), { store, modelo })
     const final = finalOf(result)
-    eq(final.blocos.length, 2, 'não acrescenta fallback; F1e acrescenta só a frase da lacuna')
+    eq(final.blocos.length, 1, 'R2: sem fallback e sem frase de lacuna')
     eq(final.blocos[0].texto, 'Resposta do modelo.', 'texto preservado')
     assert(!final.avisos.some((a) => a.texto === SEM_LIGACAO_AVISO), 'sem aviso de fallback')
     const state = store.snapshot(USER, CLOCK())
@@ -1761,7 +1773,7 @@ Deno.test('CRED1 resposta documentada no Básico pago cobra um crédito e preser
     blocos: [{ tipo: 'documentado', texto: 'Resposta do modelo.', entidades: ['golpe64', 'ipes'], relacoes: ['golpe_primeira'], fontes: ['G1'] }],
   }), { store, modelo: 'basico' })
   const final = finalOf(result)
-  eq(final.blocos.length, 2, 'não acrescenta fallback; F1e acrescenta só a frase da lacuna')
+  eq(final.blocos.length, 1, 'R2: sem fallback e sem frase de lacuna')
   eq(final.blocos[0].texto, 'Resposta do modelo.', 'texto preservado')
   assert(!final.avisos.some((a) => a.texto === SEM_COBRANCA_AVISO), 'resposta cobrada não avisa gratuidade')
   const state = store.snapshot(USER, CLOCK())

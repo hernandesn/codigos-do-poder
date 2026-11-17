@@ -441,7 +441,7 @@ Deno.test('9 em_aberto fecha o último bloco em parágrafo próprio', async () =
   const final = finalOf(fluxo.emitted)
   const ultimo = final.blocos.at(-1)
   assert(ultimo, 'último bloco')
-  assert(ultimo.texto.includes('\n\nO que o recorte ainda deixa em aberto?'), 'parágrafo próprio')
+  assert(ultimo.texto.includes('\n\nO que a documentação ainda deixa em aberto?'), 'parágrafo próprio (R2: «recorte» vira «documentação»)')
   assert(!ultimo.texto.includes('novo. O que'), 'não fica na mesma frase')
 })
 
@@ -641,11 +641,12 @@ Deno.test('tamanho do system prompt não cresce no sintético nem em Soros', () 
   }
   const soros = FIXTURE['|soros']
   for (const [nome, ctx] of [['sintetico', mini], ['soros', soros]] as const) {
-    const antes = FIXO_V12.basico + boundContextJson(ctx).length
+    // R2: o fixo passa a ser o prompt longo (5810); o teste segue travando crescimento além dele.
+    const antes = 5810 + boundContextJson(ctx).length
     const depois = buildSystemPrompt('basico', ctx).length
     const jsonAlias = apelidarRecorte(ctx).json.length
     console.log(`MEDIDA ${nome}: antes=${antes} depois=${depois} json=${boundContextJson(ctx).length} alias=${jsonAlias}`)
-    assert(jsonAlias <= 8000, `${nome} alias acima de 8000`)
+    assert(jsonAlias <= 16000, `${nome} alias acima de 16000`)
     assert(depois <= antes, `${nome} prompt cresceu ${antes} -> ${depois}`)
   }
   const vazioCtx = vazio()

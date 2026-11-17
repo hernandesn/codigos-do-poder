@@ -174,7 +174,7 @@ Deno.test('P7: pressão não transforma ilegalidade em Fato', async () => {
 Deno.test('pauta: prompt compacto, schema de hipótese, sanitização e contrato', async () => {
   const ctx = await rock(); const prompt = buildSystemPrompt('basico', ctx, true)
   assert(prompt.includes('Título') && prompt.includes('2+ Fatos') && prompt.includes('em_aberto'))
-  assert(CHAT_MAX_TOKENS.basico === 800 && CHAT_MAX_TOKENS.avancado === 1800 && MODEL_SLUGS.basico === 'qwen/qwen3.7-flash')
+  assert(CHAT_MAX_TOKENS.basico === 3600 && CHAT_MAX_TOKENS.avancado === 6000 && MODEL_SLUGS.basico === 'qwen/qwen3.7-flash')
   assert(JSON.stringify(RESPOSTA_JSON_SCHEMA).includes('hipotese'))
   const { answer } = sanitizeAnswer({ blocos: [{ tipo: 'hipotese', texto: 'A base não mostra o contrato. Próximo passo: buscar o contrato.', base: [], justificativa: 'Lacuna' }] }, ctx)
   assert(answer.blocos[0]?.tipo === 'hipotese'); assertBloco(answer.blocos[0])
@@ -194,7 +194,7 @@ Deno.test('P1 completo usa modelo mock, fonte real e final no contrato; pergunta
   assert(!result.events.some(e => e.event === 'delta'), 'prosa bruta do modelo não é publicada no SSE de pauta')
   const preparedDb = createMemoryDb({ clock }); preparedDb.chatContext = async () => ctx
   const prepared = await prepareChat({ userId: USER, body: request('me dá uma pauta sobre Rockefeller'), db: preparedDb, clock, inferenceKey: key })
-  assert(prepared.ok && prepared.pauta && prepared.estimate > 0 && prepared.requestBody.max_tokens === 800)
+  assert(prepared.ok && prepared.pauta && prepared.estimate > 0 && prepared.requestBody.max_tokens === CHAT_MAX_TOKENS.basico)
 })
 
 Deno.test('pauta: títulos distintos, limite quando existe, variedade de tipo e rótulo único', async () => {

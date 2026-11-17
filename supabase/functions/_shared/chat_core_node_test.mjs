@@ -24,9 +24,12 @@ globalThis.Deno = {
   async readTextFile(path) { return readFileSync(path, 'utf8') },
   env: { get: (key) => process.env[key], set: (key, value) => { process.env[key] = value }, delete: (key) => { delete process.env[key] } },
 }
+let ignorados = 0
+globalThis.Deno.test.ignore = () => { ignorados += 1 }
 globalThis.fetch = () => { throw new Error('Network disabled in offline tests') }
 await import('./chat_core_test.ts')
 await import('./chat_fix_selecao_test.ts')
+await import('./chat_r2_test.ts')
 await import('./chat_fix_selecao_r2_test.ts')
 await import('./pauta_test.ts')
 await import('./citation_ids_test.ts')
@@ -54,5 +57,5 @@ for (const { name, fn } of tests) {
     failed++
   }
 }
-console.log(`${passed} passed, ${failed} failed, ${skipped} skipped`)
+console.log(`${passed} passed, ${failed} failed, ${skipped} skipped, ${ignorados} ignored`)
 if (failed) process.exitCode = 1

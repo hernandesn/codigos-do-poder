@@ -115,7 +115,7 @@ Deno.test('Q3 usa o nome do BIB e pede o nome exato', async () => {
   const { prepared } = await preparar(Q3)
   const prompt = sistema(prepared)
   assert(prompt.includes('Banco de Investimento do Brasil'), 'nome do BIB')
-  assert(prompt.includes('Use os nomes exatamente como no recorte; não expanda nem traduza siglas.'), 'nomes exatos')
+  assert(prompt.includes('copie-o exatamente; não expanda nem traduza siglas.'), 'nomes exatos')
 })
 
 Deno.test('Soros/Lula com e sem seleção traz SOE30 a SOE33 e Lula ausente', async () => {

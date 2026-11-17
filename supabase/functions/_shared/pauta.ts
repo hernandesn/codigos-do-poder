@@ -28,7 +28,7 @@ export function publicChatText(text: string): string {
     .replace(/\b[a-z][a-z0-9]*_[a-z0-9_]+\b/g, 'registro')
 }
 export function safePublicClaim(text: string, ctx: ChatContextPayload, ids: string[]): boolean {
-  const terms = text.match(/\b(?:escândalo\w*|esquema\w*|lavagem|crime\w*|ilegal\w*|fraude\w*|conspira\w*|culpad\w*)\b/giu) || []
+  const terms = text.match(/\b(?:escândalo\w*|esquema\w*|lavagem|crime\w*|criminos\w*|ilegal\w*|il[ií]cit\w*|fraude\w*|conspira\w*|culpad\w*|corrup\w*|corrompe\w*|subor\w*|propina\w*)\b/giu) || []
   if (!terms.length) return true
   const sourceText = ctx.fontes.filter(f => ids.includes(f.id)).map(f => JSON.stringify(f)).join(' ')
   return terms.every(term => (text.includes(`“${term}”`) || text.includes(`«${term}»`) || text.includes(`"${term}"`)) && fold(sourceText).includes(fold(term)))
