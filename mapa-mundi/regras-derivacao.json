@@ -1,0 +1,174 @@
+{
+ "versao": "2026-11-17",
+ "nucleos_geograficos": {
+  "brasil": "BR",
+  "brasil_2026": "BR",
+  "br_bancos": "BR",
+  "br_midia": "BR",
+  "br_ipes": "BR",
+  "br_politica": "BR",
+  "br_imperio": "BR",
+  "br_diplomacia": "BR",
+  "br_igreja": "BR",
+  "br_mineracao": "BR",
+  "br_empresas": "BR",
+  "br_industria": "BR",
+  "br_estatais": "BR",
+  "br_divida": "BR",
+  "br_cultura": "BR",
+  "IPES_contribuintes": "BR",
+  "IPES_captacao": "BR",
+  "IPES": "BR",
+  "Aranha_Campinas": "BR",
+  "Aranha_RS": "BR",
+  "eua": "US",
+  "eua_estado": "US",
+  "eua_financas": "US",
+  "eua_empresas": "US",
+  "china": "CN",
+  "libia": "LY",
+  "reino_unido": "GB"
+ },
+ "aliases": {
+  "eua": "US",
+  "estados unidos": "US",
+  "united states": "US",
+  "u.s.": "US",
+  "usa": "US",
+  "reino unido": "GB",
+  "inglaterra": "GB",
+  "england": "GB",
+  "britain": "GB",
+  "britanic": "GB",
+  "escocia": "GB",
+  "santa se": "VA",
+  "holy see": "VA",
+  "vaticano": "VA",
+  "vatican": "VA",
+  "suica": "CH",
+  "switzerland": "CH",
+  "alemanha": "DE",
+  "germany": "DE",
+  "holanda": "NL",
+  "paises baixos": "NL",
+  "netherlands": "NL",
+  "russia": "RU",
+  "coreia do sul": "KR",
+  "south korea": "KR",
+  "emirados arabes": "AE",
+  "arabia saudita": "SA",
+  "saudi": "SA",
+  "nova york": "US",
+  "new york": "US",
+  "londres": "GB",
+  "london": "GB",
+  "paris": "FR",
+  "sao paulo": "BR",
+  "rio de janeiro": "BR",
+  "brasilia": "BR",
+  "frankfurt": "DE",
+  "genebra": "CH",
+  "geneva": "CH",
+  "zurique": "CH",
+  "zurich": "CH",
+  "tripoli": "LY",
+  "pequim": "CN",
+  "beijing": "CN",
+  "hong kong": "HK",
+  "toquio": "JP",
+  "tokyo": "JP",
+  "filipin": "PH",
+  "philippines": "PH"
+ },
+ "nomes_ignorados": [
+  "georgia",
+  "jordan",
+  "chad",
+  "turkey",
+  "guinea",
+  "dominica",
+  "jersey",
+  "man",
+  "niger",
+  "mali",
+  "togo",
+  "peru",
+  "cuba",
+  "chile",
+  "india",
+  "china town",
+  "granada",
+  "monaco",
+  "san marino",
+  "taiwan",
+  "reuniao",
+  "reunion"
+ ],
+ "nucleos_nunca_pais": [
+  "roma",
+  "urss",
+  "oriente",
+  "america_latina",
+  "america_do_sul"
+ ],
+ "tipos_sem_regra_por_nome": [
+  "pessoa"
+ ],
+ "prefixo_fec": "fec_C",
+ "regras_historicas": {
+  "VA": {
+   "quando": "a própria Santa Sé como instituição",
+   "rotulos": [
+    [
+     "ate",
+     1870,
+     "Estados Pontifícios"
+    ],
+    [
+     "de",
+     1870,
+     "ate",
+     1929,
+     "Santa Sé"
+    ]
+   ],
+   "obs": "sede em Roma que não é a Santa Sé = IT"
+  },
+  "URSS": {
+   "sede": "país de hoje da sede",
+   "rotulos": [
+    [
+     "ate",
+     1917,
+     "Império Russo"
+    ],
+    [
+     "de",
+     1922,
+     "ate",
+     1991,
+     "URSS"
+    ]
+   ],
+   "proibido": "nunca «Rússia» para fato soviético"
+  },
+  "XP": {
+   "quando": "Palestina antes de 1948",
+   "rotulos": [
+    [
+     "ate",
+     1917,
+     "Palestina otomana"
+    ],
+    [
+     "de",
+     1920,
+     "ate",
+     1948,
+     "Palestina sob Mandato Britânico"
+    ]
+   ],
+   "desenho": "união IL(376)+PS(275), sem atribuir a IL nem PS"
+  }
+ }
+}

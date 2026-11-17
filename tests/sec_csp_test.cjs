@@ -11,7 +11,7 @@ const prints = path.resolve(root, '../../prints');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const ref = html.match(/data-src="([^"]+)"/)[1].split('?')[0];
 const entity = JSON.parse(fs.readFileSync(path.join(root, ref), 'utf8')).nos[0].id;
-const allowed = new Set(['/index.html', '/dados-nucleo.json', '/dados-extensao.json']);
+const allowed = new Set(['/index.html', '/dados-nucleo.json', '/dados-extensao.json', '/mapa-mundi/carregar.js']);
 
 test('SEC-06 CSP sem violações: temas, #all, entidade e login em desktop e celular', { timeout: 120000 }, async () => {
   let browser;
@@ -27,7 +27,7 @@ test('SEC-06 CSP sem violações: temas, #all, entidade e login em desktop e cel
     if (!allowed.has(file) && !/^\/fonts\/[a-z0-9-]+\.woff2$/.test(file)) { res.writeHead(404); res.end(); return; }
     try {
       const body = await fs.promises.readFile(root + file);
-      res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.json') ? 'application/json' : 'font/woff2' });
+      res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.json') ? 'application/json' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'font/woff2' });
       res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });
