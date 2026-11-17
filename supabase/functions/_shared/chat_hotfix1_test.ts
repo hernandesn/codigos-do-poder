@@ -350,6 +350,7 @@ Deno.test('hotfix1 laço aos 30s não repete, laço aos 5s repete uma vez, trunc
       } },
       signal: new AbortController().signal,
       emit: (event) => emitted.push(event),
+      repetirCurto: false,
     })
     return { chamadas, emitted }
   }
@@ -961,6 +962,10 @@ Deno.test('hotfix1d seleção genérica vai ao modelo; receita continua fora', a
     ['contrato', 'Explique o contrato detalhadamente', 1],
     ['fatos', 'Quais os principais fatos?', 1],
     ['eles', 'resuma isso sobre eles', 1],
+    ['acontecimentos', 'Analise os acontecimentos', 1],
+    ['cronologia', 'Faça uma síntese cronológica', 1],
+    ['linha', 'Monte a linha do tempo.', 1],
+    ['contexto', 'sintetize o contexto', 1],
     ['bolo', 'explique uma receita de bolo', 0],
   ]
   for (const [nome, mensagem, chamadas] of casos) {
@@ -1000,7 +1005,8 @@ Deno.test('hotfix1d idioma, ficha, URL, nome e anáfora', () => {
   const t = (texto: string) => sanitizeAnswer({
     blocos: [docCampanha(texto)],
   }, ctx).answer.blocos.map((bloco) => bloco.texto).join('\n')
-  eq(t('O "funding loan" pagou o contrato.'), 'O empréstimo de consolidação (funding loan) pagou o contrato.', 'funding loan entre aspas')
+  eq(t('O "funding loan" pagou o contrato.'), 'O "funding loan" pagou o contrato.', 'funding loan entre aspas fica')
+  eq(t('O "ownership and management" da casa.'), 'O "ownership and management" da casa.', 'ownership entre aspas fica')
   eq(t('O funding loan pagou o contrato.'), 'O empréstimo de consolidação pagou o contrato.', 'funding loan solto')
   eq(t('O financiamento loan pagou.'), 'O empréstimo pagou.', 'financiamento loan')
   eq(t('O loan pagou o contrato.'), 'O empréstimo pagou o contrato.', 'loan')
@@ -1035,15 +1041,29 @@ Deno.test('hotfix1d idioma, ficha, URL, nome e anáfora', () => {
 
 Deno.test('hotfix1d pergunta final e fecho sem insinuação', async () => {
   const prompt = buildSystemPrompt('avancado', vazio())
+  const basico = buildSystemPrompt('basico', vazio())
   assert(prompt.includes('A pergunta final só liga nomes que o recorte liga; nunca insinue controle, comando ou financiamento entre entidades sem relação no recorte.'), 'frase antiga do prompt')
   assert(prompt.includes('Não insinue ocultação, culpa, conhecimento prévio de fraude nem quem sabia'), 'prompt sem insinuação')
   assert(prompt.includes('Não afirme o que alguém nunca fez.'), 'prompt sem nunca')
+  const regras = [
+    'A pergunta final pede só um documento ou detalhe que falta sobre uma relação já citada; nunca sugere ocultação, motivo escondido, contrato, lucro ou culpa.',
+    'O parágrafo "O que liga tudo" só junta relações já citadas acima; não cria ligação nova entre entidades.',
+    'Fique nas entidades da pergunta; não traga outro caso (ex.: imprensa, outra família, outro país) que a pergunta não pediu.',
+  ]
+  for (const regra of regras) {
+    assert(prompt.includes(regra), regra)
+    assert(basico.includes(regra), `básico: ${regra}`)
+  }
   const fatos = 'O contrato de 1936 ficou registrado.\n\nA casa bancária pagou no mesmo ano.\n\nO que liga tudo: critérios ocultos de repasse entre as casas.'
   const perguntas = [
     'por que a família Marinho nunca abriu os arquivos internos da casa?',
     'quem dentro do grupo de controle da Americanas sabia do tamanho do buraco?',
     'quem mais recebeu o dinheiro do contrato e ainda não apareceu?',
     'critérios ocultos',
+    'Se a agência exclusiva de 1855 subordinou o Império à casa Rothschild, quem dentro do governo brasileiro assinou e sustentou esse contrato, e que termos ficaram fora dos registros oficiais?',
+    'Se o BTG acusou os parceiros da 3G em 2023, quem dentro do banco decidiu transformar a mentoria de 2012 em peça judicial contra Lemann?',
+    'Se a rede Open Society já repassava dinheiro ao Fundo Brasil em 2021 e 2022, quem dentro do governo brasileiro recebeu a estratégia anunciada em 20/08/2025 e quais contratos ela produziu?',
+    'Quem pagou o contrato de 1936?',
   ]
   for (const em_aberto of perguntas) {
     const r = await rodarModelo({
@@ -1055,8 +1075,212 @@ Deno.test('hotfix1d pergunta final e fecho sem insinuação', async () => {
       }), 0.0002)],
     })
     const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
-    assert(/Que outros vínculos documentados ligam .+ a .+ no atlas\?/.test(visivel), em_aberto)
-    assert(!/nunca abriu|sabia do tamanho|quem mais recebeu|critérios ocultos|não apareceu/i.test(visivel), em_aberto)
+    const neutra = em_aberto !== 'Quem pagou o contrato de 1936?'
+    if (neutra) assert(/Que outros documentos do atlas detalham a relação entre .+ e .+\?/.test(visivel), em_aberto)
+    else assert(visivel.includes('Quem pagou o contrato de 1936?'), 'pergunta factual fica')
+    assert(!/nunca abriu|sabia do tamanho|quem mais recebeu|critérios ocultos|não apareceu|fora dos registros|quem dentro do|quais contratos|peça judicial/i.test(visivel), em_aberto)
     assert(visivel.includes('contrato de 1936'), 'fato fica')
+    assert(visivel.trimEnd().endsWith('?'), 'fecha com pergunta')
   }
+})
+
+Deno.test('hotfix1e insinuação no bloco, par sem aresta e nome inteiro', async () => {
+  const bloco = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado. Por que nunca abriu os arquivos? A casa pagou no mesmo ano.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const textoBloco = finalDe(bloco.emitted).blocos.map((item) => item.texto).join('\n')
+  assert(!/nunca abriu/i.test(textoBloco), 'frase do bloco sai')
+  assert(textoBloco.includes('contrato de 1936'), 'fato do bloco fica')
+  assert(textoBloco.includes('A casa pagou'), 'frase seguinte fica')
+
+  const solto = campanhaCtx()
+  solto.entidades = [
+    { id: 'casa_ms', nome: 'Grupo Alfa', tipo: 'instituicao' },
+    { id: 'c1', nome: 'Instituição Beta', tipo: 'instituicao' },
+    { id: 'b1', nome: 'Casa B', tipo: 'instituicao' },
+    { id: 'd1', nome: 'Casa D', tipo: 'instituicao' },
+  ]
+  solto.relacoes = [
+    { id: 'E1', origem: 'casa_ms', destino: 'b1', afirmacao: 'Contrato de 1936.', estado: 'retrato_documental', fontes: ['B01'] },
+    { id: 'E2', origem: 'c1', destino: 'd1', afirmacao: 'Outro registro de 1936.', estado: 'retrato_documental', fontes: ['B01'] },
+  ]
+  const desligado = await rodarModelo({
+    ctx: solto,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [
+        { tipo: 'documentado', texto: 'O contrato de 1936 ficou no grupo.', entidades: ['casa_ms'], relacoes: [], fontes: ['B01'] },
+        { tipo: 'documentado', texto: 'O grupo aparece de novo no registro.', entidades: ['casa_ms', 'c1'], relacoes: [], fontes: ['B01'] },
+      ],
+      sem_base: false,
+      em_aberto: 'Por que nunca abriu os arquivos?',
+    }), 0.0002)],
+  })
+  const textoSolto = finalDe(desligado.emitted).blocos.map((item) => item.texto).join('\n')
+  assert(textoSolto.includes('Que outros documentos do atlas detalham o papel de Grupo Alfa?'), textoSolto)
+  assert(!/Instituição Beta|ligam Grupo Alfa/i.test(textoSolto), 'par sem aresta não entra na pergunta')
+
+  const longo = `${'Campanha Internacional '.repeat(20).trim()}`
+  const ctxLongo = campanhaCtx()
+  ctxLongo.raizes = [{ id: 'campanha', nome: longo, tipo: 'instituicao' }]
+  ctxLongo.entidades = [{ id: 'campanha', nome: longo, tipo: 'instituicao' }]
+  ctxLongo.relacoes = []
+  const nomeLongo = await rodarModelo({
+    ctx: ctxLongo,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [{ tipo: 'documentado', texto: 'O contrato de 1936 ficou registrado no papel citado.', entidades: ['campanha'], relacoes: [], fontes: ['B01'] }],
+      sem_base: false,
+      em_aberto: 'Por que nunca abriu os arquivos?',
+    }), 0.0002)],
+  })
+  const textoLongo = finalDe(nomeLongo.emitted).blocos.map((item) => item.texto).join('\n')
+  assert(textoLongo.includes(longo), 'nome curto inteiro')
+  assert(textoLongo.trimEnd().endsWith('?'), 'não corta a pergunta')
+  assert(textoLongo.length > 300, 'sem teto de 300 no meio da palavra')
+})
+
+Deno.test('hotfix1e mapa idempotente e citação solta sem buraco', () => {
+  const ctx = campanhaCtx()
+  const t = (texto: string) => sanitizeAnswer({
+    blocos: [docCampanha(texto)],
+  }, ctx).answer.blocos.map((bloco) => bloco.texto).join('\n')
+  const frases = [
+    'O "ownership and management" pagou o contrato.',
+    'O "funding loan" pagou o contrato.',
+    'O funding loan pagou o contrato.',
+    'O ownership and management da casa.',
+    'Um grant pago fechou o contrato.',
+  ]
+  for (const frase of frases) {
+    const uma = t(frase)
+    eq(t(uma), uma, `idempotente: ${frase}`)
+  }
+  eq(t('O contrato de 1936 consta em F14 e em R13.'), 'O contrato de 1936 consta.', 'F14 e R13 saem sem buraco')
+  eq(t('O acordo está em [2] e em E99.'), 'O acordo está.', 'colchete e E saem sem buraco')
+  eq(t('O caça F-16 custou R$ 15 milhões em 1936.'), 'O caça F-16 custou R$ 15 milhões em 1936.', 'valor, F-16 e ano ficam')
+  const comSigla = campanhaCtx()
+  comSigla.fontes[0].titulo = 'Anexo R13 oficial'
+  comSigla.entidades.push({ id: 'prog', nome: 'Programa F14', tipo: 'instituicao' })
+  const sigla = sanitizeAnswer({
+    blocos: [{ tipo: 'documentado', texto: 'O Programa F14 cita o Anexo R13 oficial em 1936.', entidades: ['casa_ms'], relacoes: ['E150'], fontes: ['B01'] }],
+  }, comSigla).answer.blocos.map((bloco) => bloco.texto).join('\n')
+  assert(sigla.includes('Programa F14') && sigla.includes('Anexo R13') && sigla.includes('1936'), sigla)
+})
+
+Deno.test('hotfix1e custo acima da reserva, parcial depois de zero e um bloco longo', async () => {
+  const tres = JSON.stringify({
+    blocos: [
+      docCampanha('O contrato de 1936 aproximou as casas no primeiro registro.'),
+      docCampanha('A casa bancária pagou no mesmo ano citado.'),
+      docCampanha('O segundo registro confirma o mesmo contrato de 1936.'),
+    ],
+    sem_base: false,
+    em_aberto: null,
+  })
+  const store = bancoFixo(campanhaCtx())
+  store.setPaid(USER, 40)
+  const prepared = await prepareChat({
+    userId: USER,
+    body: { mensagem: 'qual a relacao da campanha?', contexto: { entidades: [] }, modelo: 'avancado' },
+    db: store, clock: CLOCK, inferenceKey: key(),
+  })
+  if (!prepared.ok) throw new Error('prepare')
+  prepared.estimate = 0.132960
+  const orcamento = espiar(store)
+  const info: string[] = []
+  const emitted: ChatSseEvent[] = []
+  const prev = console.info
+  console.info = (msg?: unknown) => { info.push(String(msg)) }
+  try {
+    await streamPrepared({
+      prepared, db: store, startedAt: INICIO_1C, now: () => INICIO_1C + 5_000,
+      openrouter: { async *stream() { yield { delta: tres, usage: { prompt_tokens: 11, completion_tokens: 20, cost: 0.133960 } } } },
+      signal: new AbortController().signal,
+      emit: (event) => emitted.push(event),
+      repetirCurto: true,
+    })
+  } finally {
+    console.info = prev
+  }
+  eq(orcamento.commits[0], 0.132960, 'commit na reserva')
+  eq(finalDe(emitted).custo_real, 0.133960, 'custo_real integral')
+  eq(store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, 0.133960, 'log com o real')
+  const evento = info.map((linha) => { try { return JSON.parse(linha) as { evento?: string; reserva?: number; real?: number } } catch { return null } })
+    .find((item) => item?.evento === 'chat_custo_acima_reserva')
+  eq(evento?.reserva, 0.132960, 'evento reserva')
+  eq(evento?.real, 0.133960, 'evento real')
+
+  const um = JSON.stringify({ blocos: [docCampanha('O contrato de 1936 aproximou as casas.')], sem_base: false, em_aberto: null })
+  const depoisDeZero = await rodarModelo({
+    agora: 0,
+    respostas: [
+      gerar(um, 0),
+      async function* () { throw new OpenRouterError('rede', 'sem delta', false) },
+    ],
+  })
+  assert(depoisDeZero.orcamento.commits[0] > 0, `parcial depois de cost 0: ${depoisDeZero.orcamento.commits[0]}`)
+  eq(depoisDeZero.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, depoisDeZero.orcamento.commits[0], 'log acompanha a soma')
+
+  const palavras = ['Contrato', ...Array.from({ length: 59 }, () => 'registrado')].join(' ')
+  const longo = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [{ tipo: 'documentado', texto: `${palavras}.`, entidades: ['zzz_sem_nome'], relacoes: ['zzz_sem_nome'], fontes: ['zzz_sem_nome'] }],
+      sem_base: false, em_aberto: null,
+    }), 0.0002), gerar('{}', 0.0009)],
+  })
+  eq(longo.chamadas, 1, 'um bloco de 60 palavras aos 30s não repete')
+  assert(!longo.emitted.some((event) => event.event === 'error'), 'não é fora_da_base')
+  assert(finalDe(longo.emitted).blocos.some((bloco) => bloco.texto.includes('Contrato de 1936')), 'cai no recorte')
+})
+
+Deno.test('hotfix1e fallback documental não afirma acusação e guarda limite', async () => {
+  const semNome = JSON.stringify({
+    blocos: [
+      { tipo: 'documentado', texto: 'O pagamento ocorreu no ano citado pelo registro.', entidades: ['zzz_sem_nome'], relacoes: ['zzz_sem_nome'], fontes: ['zzz_sem_nome'] },
+      { tipo: 'documentado', texto: 'O segundo parágrafo também não cita entidade alguma.', entidades: ['yyy_sem_nome'], relacoes: ['yyy_sem_nome'], fontes: ['yyy_sem_nome'] },
+    ],
+    sem_base: false, em_aberto: null,
+  })
+  const acusacao = campanhaCtx()
+  acusacao.entidades.push({ id: 'pessoa_viva', nome: 'Pessoa Fictícia', tipo: 'pessoa' })
+  acusacao.relacoes = [{
+    id: 'E150', origem: 'casa_ms', destino: 'campanha',
+    afirmacao: 'Pessoa Fictícia desviou recursos do contrato.',
+    limite: 'Não há prova de participação individual; o texto acima é alegação contestada.',
+    fontes: ['B01'],
+  }]
+  const soAcusacao = await rodarModelo({ ctx: acusacao, agora: 30_000, respostas: [gerar(semNome, 0.0002)] })
+  eq(erroDe(soAcusacao.emitted).code, 'fora_da_base', 'sem relação documentada recusa')
+  assert(!JSON.stringify(soAcusacao.emitted).includes('desviou'), 'acusação não vira fato')
+
+  const misto = campanhaCtx()
+  misto.entidades.push({ id: 'pessoa_viva', nome: 'Pessoa Fictícia', tipo: 'pessoa' })
+  misto.relacoes = [
+    {
+      id: 'E150', origem: 'casa_ms', destino: 'campanha',
+      afirmacao: 'Pessoa Fictícia desviou recursos do contrato.',
+      limite: 'Não há prova de participação individual; o texto acima é alegação contestada.',
+      fontes: ['B01'],
+    },
+    {
+      id: 'E151', origem: 'casa_ms', destino: 'campanha',
+      afirmacao: 'Contrato de 1936.',
+      estado: 'retrato_documental', confianca: 'alta',
+      limite: 'Não quantifica a parte.',
+      fontes: ['B01'],
+    },
+  ]
+  const comLimite = await rodarModelo({ ctx: misto, agora: 30_000, respostas: [gerar(semNome, 0.0002)] })
+  const texto = finalDe(comLimite.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(texto.includes('Contrato de 1936'), texto)
+  assert(texto.includes('confiança alta'), texto)
+  assert(texto.includes('Não quantifica a parte.'), texto)
+  assert(!texto.includes('desviou'), texto)
 })

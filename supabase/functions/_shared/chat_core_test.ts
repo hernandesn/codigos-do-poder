@@ -134,6 +134,8 @@ async function chat(opts: {
   userId?: string | null
   clock?: () => Date
   inferenceKey?: KeyAssessment
+  /** Testes antigos não são sobre resposta curta. false mantém uma chamada; a produção omite o campo e repete. */
+  repetirCurto?: boolean
 }) {
   return await runChat({
     userId: opts.userId === undefined ? USER : opts.userId,
@@ -147,6 +149,7 @@ async function chat(opts: {
     budgetUsd: opts.budgetUsd,
     inferenceKey: opts.inferenceKey,
     onEvent: opts.onEvent,
+    repetirCurto: opts.repetirCurto ?? false,
   })
 }
 
@@ -249,7 +252,7 @@ Deno.test('T1 ok com chave limitada', async () => {
   ])
   const key = acceptedKey()
   assert(key.ok, 'chave de teste')
-  const result = await chat({ database: store, openrouter: model.client, inferenceKey: key })
+  const result = await chat({ database: store, openrouter: model.client, inferenceKey: key, repetirCurto: false })
   eq(result.httpStatus, 200, 'chama')
   eq(model.calls.length, 1, 'uma chamada paga')
   const body = model.calls[0] as { max_tokens?: number; model?: string }
@@ -260,7 +263,7 @@ Deno.test('T1 ok com chave limitada', async () => {
   eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, 0.02, 'grava o custo real')
   eq(store.snapshot(USER, CLOCK()).used, 1, 'debita depois da resposta')
   const again = scripted([{ delta: answerJson() }, { usage: { cost: 0.0001 } }])
-  const second = await chat({ database: store, openrouter: again.client, inferenceKey: key })
+  const second = await chat({ database: store, openrouter: again.client, inferenceKey: key, repetirCurto: false })
   eq(second.httpStatus, 200, 'lease solto depois da primeira')
   eq(again.calls.length, 1, 'segunda chamada após a liberação')
 })
@@ -1258,7 +1261,7 @@ Deno.test('SPEC4 fallback retorna null sem dois temas aproveitáveis ou com liga
 })
 
 const GS009 = 'O Oswaldo Aranha era parente dos Egydio de Souza Aranha do Itaú?'
-async function streamSemLigacao(context: ChatContextPayload, raw: string, opts: { store?: MemoryChatDb; modelo?: Modelo; mensagem?: string } = {}) {
+async function streamSemLigacao(context: ChatContextPayload, raw: string, opts: { store?: MemoryChatDb; modelo?: Modelo; mensagem?: string; repetirCurto?: boolean } = {}) {
   const store = opts.store ?? db()
   store.chatContext = async () => context
   const prepared = await prepareChat({ userId: USER, body: request({ modelo: opts.modelo ?? 'basico', mensagem: opts.mensagem ?? GS009, contexto: { entidades: [] } }), db: store, clock: CLOCK, inferenceKey: acceptedKey() })
@@ -1268,6 +1271,7 @@ async function streamSemLigacao(context: ChatContextPayload, raw: string, opts: 
   const httpStatus = await streamPrepared({
     prepared, db: store, openrouter: model.client,
     signal: new AbortController().signal, emit: (event) => emitted.push(event),
+    repetirCurto: opts.repetirCurto ?? false,
   })
   return { store, model, result: { httpStatus, events: emitted } }
 }
@@ -1279,7 +1283,7 @@ Deno.test('F1c(a): sem_base:true com documentado válido responde, cobra e loga 
   console.info = (msg: string) => info.push(msg)
   try {
     const model = scripted([{ delta: answerJson({ sem_base: true }) }, { usage: { prompt_tokens: 11, completion_tokens: 7, cost: 0.0002 } }])
-    const result = await chat({ database: store, openrouter: model.client, inferenceKey: acceptedKey() })
+    const result = await chat({ database: store, openrouter: model.client, inferenceKey: acceptedKey(), repetirCurto: false })
     eq(result.httpStatus, 200, 'http')
     const final = finalOf(result)
     eq(final.blocos.length, 2, 'resposta do modelo mantida')
@@ -1301,7 +1305,7 @@ Deno.test('F1c(a): sem_base:true com documentado válido responde, cobra e loga 
   ]) {
     const st = db()
     const model = scripted([{ delta: answerJson({ sem_base: true, blocos }) }])
-    const result = await chat({ database: st, openrouter: model.client, inferenceKey: acceptedKey() })
+    const result = await chat({ database: st, openrouter: model.client, inferenceKey: acceptedKey(), repetirCurto: false })
     eq((events(result, 'error')[0]?.data as { code?: string })?.code, 'fora_da_base', `fora_da_base com ${blocos.length} bloco(s) inválido(s)`)
     eq(st.snapshot(USER, CLOCK()).used, 0, 'sem débito')
   }
@@ -1745,7 +1749,7 @@ Deno.test('SPEC4 streamPrepared preserva resposta válida do modelo em dois tema
     const { result } = await streamSemLigacao(semLigacaoContext(), answerJson({
       entidades: [], fontes: [], avisos: [],
       blocos: [{ tipo: 'documentado', texto: 'Resposta do modelo.', entidades: ['golpe64', 'ipes'], relacoes: ['golpe_primeira'], fontes: ['G1'] }],
-    }), { store, modelo })
+    }), { store, modelo, repetirCurto: false })
     const final = finalOf(result)
     eq(final.blocos.length, 1, 'R2: sem fallback e sem frase de lacuna')
     eq(final.blocos[0].texto, 'Resposta do modelo.', 'texto preservado')
@@ -1974,9 +1978,9 @@ Deno.test('SEC-01 custo ausente, interrupção sem delta e custo real integral',
       yield { delta: answerJson() }
       if (mode === 'real') yield { usage: { cost: 0.5 } }
     })
-    const result = await chat({ database: store, openrouter: model.client, inferenceKey: acceptedKey(), signal: controller.signal })
+    const result = await chat({ database: store, openrouter: model.client, inferenceKey: acceptedKey(), signal: controller.signal, repetirCurto: false })
     const ceiling = chatSpendCeilingUsd('basico', model.calls[0])
-    eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, mode === 'real' ? 0.5 : ceiling, 'sem custo usa teto; custo real não é truncado')
+    eq(store.budgetOf(saoPauloDay(CLOCK())).gasto, mode === 'real' ? Math.min(0.5, ceiling) : ceiling, 'sem custo usa teto; acima da reserva o orçamento fica na reserva')
     eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'reserva liquidada conservadoramente')
     if (mode !== 'interrupt' && mode !== 'abort') eq(finalOf(result).custo_real, mode === 'real' ? 0.5 : ceiling, 'retorno consistente')
   }

@@ -347,3 +347,82 @@ A mesma repetição do item 6, com soma de custo. A asserção que era «Básico
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **158 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Os 8 testes a mais são os deste hotfix.
+
+## Hotfix1e
+
+Sobre `5f1cd25`. A revisão Codex desse commit deu REPROVADO e a simulação ficou em 3,69 (meta ≥ 3,9). Na função só muda `chat_core.ts`. Auth, CORS, SQL e limites não mudam. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O que o Hotfix1d diz sobre liquidar um `usage.cost` acima da reserva fica como histórico; esta seção substitui esse comportamento.
+
+### 1. ALTA — liquidação acima da reserva
+
+Achado Codex `:3254`. `liquidar` (`chat_core.ts:3347`) devolve `min(real, reserva)`. O real integral segue para `custo_real` (`3704`) e para `custo_usd` do log. Quando o real passa a reserva em mais de 1e-9, um `console.info` grava `{ evento: 'chat_custo_acima_reserva', reserva, real }` (`3351`). `commitBudget` na saída boa usa `liquidar(custo)` (`3656`); `unwind` liquida do mesmo jeito. SSE aceito sem delta e sem custo conhecido continua no teto (`custoNoCatch`, `3364`).
+
+Teste: `chat_hotfix1_test.ts:1176` (`hotfix1e custo acima da reserva…`). Reserva forçada `0.132960`, cost `0.133960` → commit `0.132960`, `custo_real` e log `0.133960`, evento com os dois números.
+
+SEC-01 modo `real` (`chat_core_test.ts:1971`): a reserva do Básico é ~0,030347, então `gasto` passou a `Math.min(0.5, ceiling)`. `custo_real` continua `0.5`. As outras três modalidades (sucesso sem usage, interrupção, aborto) continuam no teto.
+
+### 2. ALTA — fallback documental
+
+Achado Codex `:2695`. `respostaDocumental` (`2789`) só publica relação com confiança alta ou estado `retrato_documental` / `historico` / `identificacao` (`relacaoDocumentada`, `2774`). Contestada, sem prova, alegação, acusação, hipótese, inferência, rascunho ou confiança baixa sai (`relacaoContestada`). Acusação contra pessoa (id ou nome no texto) também sai (`acusaPessoa`, `2763`), inclusive na nota. Relação aproveitada leva `limite` e `confiança` no texto: `afirmação (confiança alta; limite)`. A campanha de 1936 continua `retrato_documental` sem esses campos, então o texto segue «Contrato de 1936.».
+
+Teste: `chat_hotfix1_test.ts:1243`. Só a acusação da Pessoa Fictícia → `fora_da_base` e o texto emitido não contém «desviou». Com a relação documentada ao lado, o visível traz «Contrato de 1936», «confiança alta» e «Não quantifica a parte.», e não traz «desviou».
+
+### 3. MÉDIA — tentativa sem custo depois de cost 0
+
+Achado Codex `:3288`. `registrarFalha` (`3383`) soma `parcialDe(chars)` em toda tentativa `noCharge=false` sem `usage.cost`, mesmo quando o livro anterior é só zero. `noCharge` continua somando zero.
+
+Teste: o mesmo `chat_hotfix1_test.ts:1176`, trecho cost `0` + `OpenRouterError(..., false)` sem delta → commit > 0.
+
+### 4. MÉDIA — ids em um bloco longo e seleção
+
+Achados Codex `:3356` e `:2645`. `respostaComFato` (`2579`) vale para ≥ 2 blocos substantivos ou ≥ 1 bloco com ≥ 60 palavras. Usada na repetição (`3455`) e depois do sanitize (`3603`). `pedidoGenericoSelecao` (`2697`) também deixa passar analise, sintetize, síntese, cronologia, acontecimentos, contexto e «linha do tempo». Receita de bolo continua fora.
+
+Testes: um bloco de 60 palavras aos 30 s, no mesmo `chat_hotfix1_test.ts:1176`, cai em «Contrato de 1936» sem `fora_da_base`. Seleção em `chat_hotfix1_test.ts:960`: «Analise os acontecimentos», «Faça uma síntese cronológica», «Monte a linha do tempo.» e «sintetize o contexto» chamam o modelo; «explique uma receita de bolo» segue «Não encontrei isso na base do atlas.».
+
+### 5. MÉDIA — insinuação, e a baixa do corte no meio da palavra
+
+Achado Codex `:2187` (e `:2189`). `FRASE_INSINUA` (`2131`) compara o texto sem acento. A lista do 1d continua, mais «fora dos registros», «termos ficaram fora», «quais/que contratos», «quem decidiu/audita/responde/lucrou/ganhou/recebeu», «quem se beneficiou», «quem assinou … como seus», «quem dentro do/da», «em troca», «transformar … em peça/arma», «por trás», «de fato mandou» e «verdadeiro dono/interesse/motivo». A frase que casa sai de qualquer bloco (`filtrarProsaVisivel` e `semForaDaBase`), inclusive «O que liga tudo». A anáfora do 1d permanece. `em_aberto` só fica se passar; senão `limparPergunta` (`2246`) troca pela pergunta neutra, sem `slice`.
+
+`perguntaNeutra` (`2207`) usa o nome antes de « · ». Com aresta direta entre as duas entidades mais citadas: «Que outros documentos do atlas detalham a relação entre X e Y?». Sem par ligado: «Que outros documentos do atlas detalham o papel de X?». Sem entidade: «…detalham esse registro?». A pergunta termina em «?».
+
+Prompt, Básico e Avançado (`1360-1362`):
+
+- «A pergunta final pede só um documento ou detalhe que falta sobre uma relação já citada; nunca sugere ocultação, motivo escondido, contrato, lucro ou culpa.»
+- «O parágrafo "O que liga tudo" só junta relações já citadas acima; não cria ligação nova entre entidades.»
+- «Fique nas entidades da pergunta; não traga outro caso (ex.: imprensa, outra família, outro país) que a pergunta não pediu.»
+
+O trecho «Proibido o vocabulário morno…» saiu da voz para o prompt fixo caber. Ficou em 5773 (Básico) e 5774 (Avançado), abaixo de 5810 e do teto de 15%.
+
+Testes: `chat_hotfix1_test.ts:1042` (as quatro frases do 1d, as três da simulação, e «Quem pagou o contrato de 1936?» que fica) e `:1087` («Por que nunca abriu os arquivos?» dentro do bloco sai; par sem aresta usa uma entidade; nome longo passa de 300 caracteres e termina em «?»).
+
+### 6. MÉDIA — citação entre aspas
+
+Achado Codex `:1933`. `deslizesDeIdioma` (`1913`) mascara `"…"`, `“…”`, `«…»` e aspas simples antes do mapa e devolve o trecho byte a byte. Não há mais «empréstimo de consolidação (funding loan)». `spansProtegidos` também cobre aspas simples, então o marcador inglês dentro delas não derruba a frase. Aplicar o saneamento duas vezes devolve o mesmo texto.
+
+Teste: `chat_hotfix1_test.ts:1003` («"funding loan"» e «"ownership and management"» intactos; o solto continua traduzido) e `:1148` (idempotência nas cinco frases). A asserção antiga do parêntese foi trocada pela forma intacta: é a regra nova.
+
+### 7. CHAT_RETRY_CURTO
+
+A chave saiu de `querRetryCurto` (`2832`): sem o campo, a produção repete; `repetirCurto: false` desliga na chamada. A linha `process.env.CHAT_RETRY_CURTO = '0'` saiu de `chat_core_node_test.mjs`. `chat()` e `streamSemLigacao` passam `false` quando o teste não diz o contrário, porque essa suíte antiga foi escrita para uma chamada. `rodarModelo` continua com `true`.
+
+Os seis testes que falhariam com a repetição curta ligada mantêm as mesmas asserções. Cada um recebe `repetirCurto: false`:
+
+1. `T1 ok com chave limitada` (`chat_core_test.ts:247`, chamadas em `255` e `266`). `answerJson` tem dois blocos curtos. Continua 1 chamada, `custo_real` 0,02 e gasto 0,02. A reserva do Básico (~0,030) fica acima de 0,02, então o teto novo não mexe nesse número.
+2. `F1c(a)` (`1279`, chamadas em `1286` e `1308`). O custo segue 0,0002. O laço inválido segue `fora_da_base` sem débito.
+3. `SPEC4 streamPrepared preserva resposta válida do modelo em dois temas` (`1744`, flag em `1752`). Um bloco, custo 0,0002.
+4. `SEC-01 custo ausente…` (`1971`, flag em `1981`). Sucesso sem usage, interrupção e aborto seguem no teto. Só o modo `real` mudou o gasto do orçamento, como no item 1. `custo_real` segue 0,5.
+5. `hotfix1 laço aos 30s…` (`chat_hotfix1_test.ts:320`, `fluir` em `353`). A truncada reparável segue em 1 chamada. O laço aos 5 s segue repetindo porque o JSON é ilegível.
+6. `streamPrepared normaliza antes do sanitize…` (`citation_ids_test.ts:423`, flag em `479`). O texto e os ids seguem iguais.
+
+### 8. Vazamento de F14, e o delta SSE que não mudou
+
+No texto visível, `ocultarIdsVisiveis` (`1593`, token em `1643`) tira `R\d+`, `F\d+`, `E\d+`, `B\d+`, `[n]` e `#n`, junto com a preposição (`em`, `na`, `e`, `ver`, `cf`, `ref`). Id conhecido sem nome e com esse formato espera esse passo, para não sobrar «em .». `R$`, `F-16` e a sigla que já está em nome, nota, título ou editor ficam.
+
+Teste: `chat_hotfix1_test.ts:1148`. «consta em F14 e em R13» vira «consta.». «em [2] e em E99» vira «está.». Ficam «R$ 15 milhões», «F-16», 1936, «Programa F14» e «Anexo R13».
+
+O delta SSE cru continua em `chat_core.ts:3482` (`emit({ event: 'delta', data: { text: chunk.delta } })`). É preexistente. O streaming não foi alterado. O filtro só corre no texto final.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**162 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Os 4 testes a mais são os deste hotfix. Nada foi desligado no runner.

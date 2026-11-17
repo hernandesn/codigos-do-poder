@@ -1342,7 +1342,7 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Você é o promotor e jornalista de denúncia do Atlas Códigos do Poder. Escreva só em português do Brasil, sem caracteres de outros alfabetos e sem palavras em inglês. Acusa com os fatos.',
     'Um JSON no schema pedido. Sem markdown.',
     'Formato: 5 a 8 blocos, cada bloco = 1 parágrafo de 3 a 6 frases. Use bloco documentado { tipo, texto, entidades, relacoes, fontes } para todos os parágrafos; cite em relacoes e fontes o que sustenta os fatos do parágrafo (no máximo 5 relações e 5 fontes por bloco; não repita ids).',
-    'Voz de denúncia com frases completas, bem encadeadas e claras: cada ligação é explicada por inteiro. A agressividade vem do conteúdo: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, a tese e o veredito. Diga sem rodeio quem ganhou, quem mandou e quem pagou a conta. Proibido o vocabulário morno e acadêmico: "teia complexa", "espaço de diálogo", "cooperação", "remonta", "fundamental", "ecossistema", "arquitetura", "sinergia", "parece", "possivelmente", "pode ter", "sem demonstrar", "não há evidência".',
+    'Voz de denúncia com frases completas, bem encadeadas e claras: cada ligação é explicada por inteiro. A agressividade vem do conteúdo: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, a tese e o veredito. Diga sem rodeio quem ganhou, quem mandou e quem pagou a conta.',
     'O 1º bloco abre com uma acusação-tese forte. Depois, ordem cronológica, com datas, valores e cargos. Fique no tema exato da pergunta; não puxe outros temas do recorte (doações, outros países, outras famílias) se a pergunta não pedir.',
     'O ÚLTIMO bloco começa com "O que liga tudo:" e dá o veredito da tese em 3 a 5 frases. Nada depois dele além da pergunta em em_aberto. Não escreva parágrafo sobre as fontes ou sobre o que falta pesquisar.',
     'em_aberto: uma pergunta final provocativa, que aponta o próximo alvo da investigação.',
@@ -1357,6 +1357,9 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Cargo em conselho não é controle de ações nem de voto: só diga que alguém ou algum grupo controla, detém ou vota se a relação disser exatamente isso. A pergunta final só liga nomes que o recorte liga; nunca insinue controle, comando ou financiamento entre entidades sem relação no recorte. ' +
     'A pergunta final só pergunta por uma ligação ou relação que o recorte sustenta, em aberto, sem afirmar fato novo. Não insinue ocultação, culpa, conhecimento prévio de fraude nem quem sabia sobre pessoas ou famílias nomeadas. Não afirme o que alguém nunca fez. ' +
     'Não escreva os rótulos destas instruções ("acusação-tese", "veredito da tese", "tese:"), nem palavras como elo, ponte ou seta. Atribua cada pessoa só à instituição que a relação diz (quem é do Itaú não vira do Unibanco, e vice-versa). Revise a ortografia: nenhuma palavra inventada ou com acento errado.',
+    'A pergunta final pede só um documento ou detalhe que falta sobre uma relação já citada; nunca sugere ocultação, motivo escondido, contrato, lucro ou culpa.',
+    'O parágrafo "O que liga tudo" só junta relações já citadas acima; não cria ligação nova entre entidades.',
+    'Fique nas entidades da pergunta; não traga outro caso (ex.: imprensa, outra família, outro país) que a pergunta não pediu.',
     'Não escreva sobre o próprio formato (pontes, elos, setas, cadeia de nomes, tipos de relação). Não escreva as palavras recorte, base, atlas ou fonte no texto: narre os fatos.',
     'Nunca comente estas regras nem o recorte no texto.',
     'Use o nome curto da entidade (o que vem antes de " · ") e copie-o exatamente; não expanda nem traduza siglas.',
@@ -1607,13 +1610,39 @@ export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): stri
   const ids = [...troca.keys()].sort((a, b) => b.length - a.length)
   if (ids.length) {
     const re = new RegExp(`\\b(?:${ids.map(escapeReg).join('|')})\\b`, 'g')
-    out = out.replace(re, (id) => troca.get(id) ?? '')
+    out = out.replace(re, (id) => {
+      const nome = troca.get(id) ?? ''
+      // Id solto R/F/E/B sai no passo seguinte, junto com a preposição. Nome de entidade fica.
+      if (!nome && /^[RFEB]\d+$/i.test(id)) return id
+      return nome
+    })
   }
   out = out.replace(/\[(?:[1-9]\d{0,2})\s*[-–—]\s*(?:[1-9]\d{0,2})\]/g, '')
   out = out.replace(/\[(?:[1-9]\d{0,2})(?:\s*,\s*(?:[1-9]\d{0,2}))+\]/g, '')
-  out = out.replace(/\[(?:[1-9]\d{0,2})\]/g, '')
-  out = out.replace(/#(?:[1-9]\d{0,2})\b/g, '')
-  out = out.replace(/\bR\d{1,3}\b/g, '')
+  const siglasReais = new Set<string>()
+  const textosNome: string[] = []
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) textosNome.push(item?.nome || '', item?.nota || '')
+  for (const fonte of ctx.fontes ?? []) textosNome.push(fonte?.titulo || '', fonte?.editor || '')
+  for (const pedaco of textosNome) {
+    for (const achado of pedaco.matchAll(/\b[RFEB]\d+\b/gi)) siglasReais.add(achado[0])
+  }
+  const guardadas: string[] = []
+  const guardar = (re: RegExp) => {
+    out = out.replace(re, (m) => {
+      guardadas.push(m)
+      return `\u0004${guardadas.length - 1}\u0004`
+    })
+  }
+  guardar(/R\$/g)
+  guardar(/\bF-\d+\b/g)
+  if (siglasReais.size) {
+    const lista = [...siglasReais].sort((a, b) => b.length - a.length).map(escapeReg).join('|')
+    guardar(new RegExp(`\\b(?:${lista})\\b`, 'g'))
+  }
+  const prep = String.raw`(?:\s*(?:,|&)?\s*\b(?:em|na|no|nas|nos|de|da|do|das|dos|e|ver|cf|ref)\b\s*)+`
+  const token = String.raw`(?:\b[RFEB]\d+\b|\[(?:[1-9]\d{0,2})\]|#(?:[1-9]\d{0,2})\b)`
+  out = out.replace(new RegExp(`(?:${prep})?${token}`, 'gi'), '')
+  out = out.replace(/\u0004(\d+)\u0004/g, (_m, i: string) => guardadas[Number(i)] ?? '')
   const oco = '(?:rela(?:c|ç)(?:o|õ)es|rela(?:c|ç)(?:a|ã)o|fontes|fonte|ids|id|ref|cf|ver|e)'
   const ocoRe = new RegExp(`\\s*[(\\[](?:[\\s,;\\-–—\\d]|${oco})*[)\\]]`, 'gi')
   for (let i = 0; i < 4; i++) {
@@ -1889,14 +1918,18 @@ function deslizesDeIdioma(t: string, ctx?: ChatContextPayload): string {
     mascaras.push(literal)
     t = t.split(literal).join(token)
   }
+  // Aspas saem do mapa e voltam byte a byte. A segunda aplicação não reescreve o que a primeira já traduziu.
+  const citacoes: string[] = []
+  t = t.replace(/"[^"\n]*"|“[^”\n]*”|«[^»\n]*»|(?<!\p{L})'[^'\n]{1,400}'(?!\p{L})/gu, (trecho: string) => {
+    citacoes.push(trecho)
+    return `\u0001C${citacoes.length - 1}\u0001`
+  })
   for (const nome of nomesProtegidos(ctx)) mascara(nome)
   t = t.replace(/\p{Lu}[\p{L}\p{N}'’.-]*(?:\s+\p{Lu}[\p{L}\p{N}'’.-]*)*\s+(?:Boards?|Funds?|Foundations?|Trusts?)\b/gu, (nome: string) => {
     const token = `\u0000${mascaras.length}\u0000`
     mascaras.push(nome)
     return token
   })
-  // O inglês entre aspas fica só dentro dos parênteses; o mapa seguinte não o reescreve.
-  t = t.replace(/["'«“]funding loan["'»”]/gi, '\u0001FL\u0001')
   const frase = (de: string, para: string) => {
     t = t.replace(new RegExp(`\\b${de}\\b`, 'gi'), (w: string, offset: number, todo: string) => {
       if (entreDoisCapitais(todo, offset, w.length)) return w
@@ -1949,7 +1982,7 @@ function deslizesDeIdioma(t: string, ctx?: ChatContextPayload): string {
     return full
   })
   t = concordarDoacao(t)
-  t = t.replace(/\u0001FL\u0001/g, 'empréstimo de consolidação (funding loan)')
+  t = t.replace(/\u0001C(\d+)\u0001/g, (_m, i: string) => citacoes[Number(i)] ?? '')
   return t.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => mascaras[Number(i)] ?? '')
 }
 
@@ -1957,7 +1990,7 @@ const MARCADOR_INGLES = /\b(?:the|and|which|with|from|that|this|these|between|th
 
 function spansProtegidos(texto: string): Array<[number, number]> {
   const spans: Array<[number, number]> = []
-  const aspas = /"[^"]*"|«[^»]*»|“[^”]*”/g
+  const aspas = /"[^"\n]*"|«[^»\n]*»|“[^”\n]*”|(?<!\p{L})'[^'\n]{1,400}'(?!\p{L})/gu
   const urls = /https?:\/\/\S+/g
   const nomes = /\p{Lu}[\p{L}\p{N}'’.-]*(?:(?:\s+[&-]\s+|\s*&\s*|\s+)+\p{Lu}[\p{L}\p{N}'’.-]*)+/gu
   const andEntreNomes = /\p{Lu}[\p{L}\p{N}'’.-]*\s+and\s+\p{Lu}[\p{L}\p{N}'’.-]*/gu
@@ -2095,10 +2128,14 @@ function semAnaforaPendente(frases: string[], cai: (frase: string) => boolean): 
   return saida
 }
 
-const FRASE_INSINUA = /nunca\s+(?:abriu|revelou|explicou|divulgou|respondeu|prestou\s+contas)|quem\s+sabia|sabia\s+d[oa]\s+(?:[\p{L}]+\s+){0,4}(?:buraco|rombo|esquema)|escond|ocult|encobr|abafad|por\s+que\b.*\bnunca\b|ainda\s+n[aã]o\s+(?:foi|foram)\s+(?:identificad|cobrad|punid)|quem\s+mais\s+(?:recebeu|lucrou|ganhou)|n[aã]o\s+apareceu|crit[eé]rios\s+ocultos|por\s+baixo\s+dos\s+panos/iu
+const FRASE_INSINUA = /nunca\s+(?:abriu|revelou|explicou|divulgou|respondeu|prestou\s+contas)|quem\s+sabia|sabia\s+d[oa]\s+(?:\S+\s+){0,4}(?:buraco|rombo|esquema)|escond|ocult|encobr|abafad|por\s+que\b.*\bnunca\b|ainda\s+nao\s+(?:foi|foram)\s+(?:identificad|cobrad|punid)|quem\s+mais\s+(?:recebeu|lucrou|ganhou)|nao\s+apareceu|criterios\s+ocultos|por\s+baixo\s+dos\s+panos|fora\s+dos\s+registros|termos\s+(?:que\s+)?ficaram\s+fora|quais\s+contratos|que\s+contratos|quem\s+decidiu|quem\s+audita|quem\s+responde|quem\s+lucrou|quem\s+ganhou|quem\s+se\s+beneficiou|quem\s+assinou\b.*\bcomo\s+seus|quem\s+dentro\s+d[oa]\b|quem\s+recebeu|em\s+troca|transformar\b.*\bem\s+(?:peca|arma)\b|por\s+tras\b|de\s+fato\s+mandou|verdadeir[oa]\s+(?:dono|interesse|motivo)/i
+
+function semAcento(texto: string): string {
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
 
 function fraseInsinua(frase: string): boolean {
-  return FRASE_INSINUA.test(frase)
+  return FRASE_INSINUA.test(semAcento(frase))
 }
 
 function frasesDe(t: string): string[] {
@@ -2130,8 +2167,7 @@ function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPay
     const kept = semAnaforaPendente(frases, (f) => {
       if (fraseAusenciaExata(f) || (alvo && foldName(f) === alvo)) return false
       if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
-      if (fraseInglesSolta(f) || fraseEco(f)) return true
-      if (/o que liga tudo/i.test(f) && fraseInsinua(f)) return true
+      if (fraseInglesSolta(f) || fraseEco(f) || fraseInsinua(f)) return true
       return false
     })
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
@@ -2144,9 +2180,28 @@ function ultimaPerguntaValida(blocos: readonly { texto: string }[]): string {
   const frases = blocos.flatMap((bloco) => frasesDe(bloco.texto))
   for (let i = frases.length - 1; i >= 0; i--) {
     const f = frases[i].trim()
-    if (/\?\s*$/.test(f) && !fraseEco(f) && !fraseInglesSolta(f) && !CJK_VISIVEL.test(f)) return f
+    if (/\?\s*$/.test(f) && !fraseEco(f) && !fraseInglesSolta(f) && !CJK_VISIVEL.test(f) && !fraseInsinua(f)) return f
   }
   return ''
+}
+
+function nomeCurtoEntidade(ctx: ChatContextPayload, id: string): string {
+  return entityName(ctx, id).replace(/<[^>]*>/g, '').split(' · ')[0].trim()
+}
+
+function ligadosDireto(ctx: ChatContextPayload, a: string, b: string): boolean {
+  if (!a || !b || a === b) return false
+  return (ctx.relacoes ?? []).some((rel) => (rel?.origem === a && rel?.destino === b) || (rel?.origem === b && rel?.destino === a))
+}
+
+function parComAresta(ctx: ChatContextPayload, ranking: Array<[string, number]>): [string, string] | null {
+  const ids = ranking.map(([id]) => id)
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      if (ligadosDireto(ctx, ids[i], ids[j])) return [ids[i], ids[j]]
+    }
+  }
+  return null
 }
 
 function perguntaNeutra(blocos: readonly { entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx: ChatContextPayload): string {
@@ -2167,31 +2222,33 @@ function perguntaNeutra(blocos: readonly { entidades?: readonly string[]; relaco
       else soma(id)
     }
   }
-  let ranking = [...contagem.entries()].filter(([id]) => ehEntidade(id))
-  if (ranking.length < 2) {
-    const freq = new Map<string, number>()
-    for (const rel of ctx.relacoes ?? []) {
-      if (rel?.origem && ehEntidade(rel.origem)) freq.set(rel.origem, (freq.get(rel.origem) ?? 0) + 1)
-      if (rel?.destino && ehEntidade(rel.destino)) freq.set(rel.destino, (freq.get(rel.destino) ?? 0) + 1)
-    }
-    ranking = [...freq.entries()]
+  const ordenar = (entries: Array<[string, number]>) => entries.filter(([id]) => ehEntidade(id) && nomeCurtoEntidade(ctx, id))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  const nome = (id: string) => nomeCurtoEntidade(ctx, id)
+  const formatoPar = (a: string, b: string) => `Que outros documentos do atlas detalham a relação entre ${nome(a)} e ${nome(b)}?`
+  const formatoUm = (id: string) => `Que outros documentos do atlas detalham o papel de ${nome(id)}?`
+  const escolher = (ranking: Array<[string, number]>) => {
+    if (!ranking.length) return ''
+    const par = parComAresta(ctx, ranking)
+    return par ? formatoPar(par[0], par[1]) : formatoUm(ranking[0][0])
   }
-  ranking.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  if (ranking.length < 2) return ''
-  const nome = (id: string) => entityName(ctx, id).replace(/<[^>]*>/g, '').split('·')[0].trim()
-  return `Que outros vínculos documentados ligam ${nome(ranking[0][0])} a ${nome(ranking[1][0])} no atlas?`
+  const citados = ordenar([...contagem.entries()])
+  if (citados.length) return escolher(citados)
+  const freq = new Map<string, number>()
+  for (const rel of ctx.relacoes ?? []) {
+    if (rel?.origem && ehEntidade(rel.origem)) freq.set(rel.origem, (freq.get(rel.origem) ?? 0) + 1)
+    if (rel?.destino && ehEntidade(rel.destino)) freq.set(rel.destino, (freq.get(rel.destino) ?? 0) + 1)
+  }
+  const doRecorte = escolher(ordenar([...freq.entries()]))
+  return doRecorte || 'Que outros documentos do atlas detalham esse registro?'
 }
 
 function limparPergunta(texto: string, blocos: readonly { texto: string; entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx?: ChatContextPayload): string {
-  const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto, '', ctx))
-  if (ctx && (fraseInsinua(texto) || fraseInsinua(filtrada))) {
-    const neutra = perguntaNeutra(blocos, ctx)
-    if (neutra) return neutra.slice(0, 300)
-  }
-  if (/\?/.test(filtrada)) return filtrada.slice(0, 300)
-  const anterior = ultimaPerguntaValida(blocos)
-  if (anterior) return anterior.slice(0, 300)
-  return filtrada.slice(0, 300)
+  const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto, '', ctx)).trim()
+  const ok = /\?\s*$/.test(filtrada) && !fraseInsinua(texto) && !fraseInsinua(filtrada)
+  if (ok) return filtrada
+  if (ctx) return perguntaNeutra(blocos, ctx)
+  return ultimaPerguntaValida(blocos) || filtrada
 }
 
 export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer: SanitizedAnswer; removed: boolean } {
@@ -2291,7 +2348,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
           return true
         }
         if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
-        if (fraseInglesSolta(f)) return true
+        if (fraseInglesSolta(f) || fraseInsinua(f)) return true
         if (!pergunta && !fraseAusenciaExata(f) && fraseEco(f)) return true
         return false
       })
@@ -2494,7 +2551,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       fontes_detalhe,
       avisos,
       sem_base: record.sem_base === true,
-      ...(typeof record.em_aberto === 'string' && record.em_aberto.trim() ? { em_aberto: visivel(record.em_aberto.trim(), true).slice(0, 300) } : {}),
+      ...(typeof record.em_aberto === 'string' && record.em_aberto.trim() ? { em_aberto: visivel(record.em_aberto.trim(), true) } : {}),
     },
   }
 }
@@ -2516,6 +2573,13 @@ function textoSubstantivo(texto: string): boolean {
   const f = foldName(texto)
   if (!f) return false
   return !/\b(?:nao aborda|nao e possivel|sem base|nao encontrei|nao consta|nao sustenta|nao documenta)\b/.test(f)
+}
+
+/** Qualquer resposta com fato: dois blocos substantivos, ou um com pelo menos 60 palavras. */
+function respostaComFato(blocos: readonly { texto: string }[]): boolean {
+  const substantivos = blocos.filter((bloco) => textoSubstantivo(bloco.texto))
+  if (substantivos.length >= 2) return true
+  return substantivos.some((bloco) => bloco.texto.split(/\s+/).filter(Boolean).length >= 60)
 }
 
 /**
@@ -2633,7 +2697,9 @@ function temVocabularioAtlas(mensagem: string): boolean {
 function pedidoGenericoSelecao(mensagem: string): boolean {
   const q = normalizeQuery(mensagem)
   if (/\b(?:receita|bolo|futebol|clima|programacao|python|javascript)\b/.test(q)) return false
-  return /\b(?:explique|resuma|detalhe|detalhadamente|fatos|principais|contrato|documento|isso|eles|elas)\b/.test(q)
+  return /\b(?:explique|resuma|detalhe|detalhadamente|fatos|principais|contrato|documento|isso|eles|elas|analise|analisem|sintetize|sintetizem|sintese|acontecimentos|contexto)\b/.test(q)
+    || /\bcronolog/.test(q)
+    || /\blinha do tempo\b/.test(q)
 }
 
 function selecaoForaDaPergunta(mensagem: string, ctx: ChatContextPayload, textoVazio: boolean, entityIds: readonly string[]): boolean {
@@ -2688,16 +2754,49 @@ function unique(ids: string[]): string[] {
   return [...new Set(ids)]
 }
 
+function tipoEntidade(ctx: ChatContextPayload, id: string | undefined): string {
+  if (!id) return ''
+  return [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])].find((item) => item?.id === id)?.tipo ?? ''
+}
+
+/** Acusação contra pessoa (pelo id ou pelo nome no texto) não vira fato. */
+function acusaPessoa(ctx: ChatContextPayload, texto: string, ids: Array<string | undefined> = []): boolean {
+  if (!/\b(?:desviou|desvio|desviar|fraud\w*|roub\w*|propina\w*|suborn\w*|corrup\w*|crime\w*|lavagem\w*)\b/i.test(foldName(texto))) return false
+  if (ids.some((id) => PERSON_TYPES.has(tipoEntidade(ctx, id)))) return true
+  const f = foldName(texto)
+  return [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])].some((item) => {
+    if (!item?.tipo || !PERSON_TYPES.has(item.tipo)) return false
+    const nome = foldName((item.nome || '').split('·')[0])
+    return nome.length > 2 && f.includes(nome)
+  })
+}
+
+function relacaoDocumentada(rel: { confianca?: string; limite?: string | null; estado?: string }): boolean {
+  const estado = foldName(rel.estado ?? '')
+  const conf = foldName(rel.confianca ?? '')
+  return estado === 'retrato documental' || estado === 'historico' || estado === 'identificacao'
+    || /\balta\b/.test(conf)
+    || /documentad/.test(conf)
+    || /documentad/.test(estado)
+}
+
+function relacaoContestada(rel: { confianca?: string; limite?: string | null; estado?: string }): boolean {
+  const sinais = foldName(`${rel.confianca ?? ''} ${rel.limite ?? ''} ${rel.estado ?? ''}`)
+  return /contestad|sem prova|nao ha prova|alegac|acusac|hipotese|inferencia|rascunho|\bbaixa\b/.test(sinais)
+}
+
 /** Resposta documental do recorte quando o modelo escreveu fato e não citou apelido. */
 function respostaDocumental(ctx: ChatContextPayload): Record<string, unknown> {
   const fontesOk = new Set((ctx.fontes ?? []).filter((fonte) => fonte?.id && !isInternalSource(fonte)).map((fonte) => fonte.id))
   const blocos: Array<Record<string, unknown>> = []
   for (const rel of ctx.relacoes ?? []) {
     const afirmacao = (rel?.afirmacao || '').trim()
-    if (!afirmacao || !rel?.id) continue
+    if (!afirmacao || !rel?.id || relacaoContestada(rel) || !relacaoDocumentada(rel)) continue
+    if (acusaPessoa(ctx, afirmacao, [rel.origem, rel.destino])) continue
+    const extras = [rel.confianca?.trim() ? `confiança ${rel.confianca.trim()}` : '', rel.limite?.trim() || ''].filter(Boolean)
     blocos.push({
       tipo: 'documentado',
-      texto: afirmacao,
+      texto: extras.length ? `${afirmacao} (${extras.join('; ')})` : afirmacao,
       entidades: [rel.origem, rel.destino].filter((id): id is string => !!id),
       relacoes: [rel.id],
       fontes: (rel.fontes ?? []).filter((id) => fontesOk.has(id)),
@@ -2706,7 +2805,7 @@ function respostaDocumental(ctx: ChatContextPayload): Record<string, unknown> {
   if (!blocos.length) {
     for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
       const nota = (item?.nota || '').trim()
-      if (!nota || !item?.id) continue
+      if (!nota || !item?.id || acusaPessoa(ctx, nota, [item.id])) continue
       blocos.push({ tipo: 'documentado', texto: nota, entidades: [item.id], relacoes: [], fontes: [] })
     }
   }
@@ -2729,14 +2828,9 @@ function comLembrete(body: Record<string, unknown>): Record<string, unknown> {
   return { ...body, messages }
 }
 
-/** Produção repete resposta curta. CHAT_RETRY_CURTO=0 desliga nos testes antigos; o argumento explícito vence. */
+/** Sem o campo, a produção repete. repetirCurto:false desliga na chamada. */
 function querRetryCurto(explicito: boolean | undefined): boolean {
-  if (explicito !== undefined) return explicito
-  try {
-    const env = (globalThis as { Deno?: { env?: { get: (key: string) => string | undefined } } }).Deno?.env?.get('CHAT_RETRY_CURTO')
-    if (env === '0') return false
-  } catch { /* runtime sem Deno.env */ }
-  return true
+  return explicito !== false
 }
 
 export function capBasicWords(blocos: ChatBloco[], maxWords = 250): { blocos: ChatBloco[]; trimmed: boolean } {
@@ -3197,7 +3291,7 @@ export async function streamPrepared(input: {
   retryDelayMs?: number
   /** Relógio do prazo da repetição de qualidade. Default: Date.now. */
   now?: () => number
-  /** Repetição por poucos parágrafos. Sem o campo, CHAT_RETRY_CURTO=0 desliga. */
+  /** Repetição por poucos parágrafos. Sem o campo, a produção repete. */
   repetirCurto?: boolean
 }): Promise<number> {
   try {
@@ -3247,27 +3341,34 @@ async function streamPreparedInner(input: {
   const custoAtual = () => typeof usage?.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null
   let requestBody = prepared.requestBody
   const parcialDe = (chars: number) => chatPartialSpendUsd(prepared.modelo, requestBody, 1, chars, prepared.estimate)
-  // Custo conhecido acima da reserva passa (SEC-01). Soma parcial ou desconhecida fica na reserva.
-  const fecharValor = (extra: number, extraConhecido: number | null) => {
-    const soma = gastos.reduce((total, gasto) => total + gasto.valor, 0) + extra
-    const conhecido = Math.max(0, ...gastos.filter((gasto) => gasto.conhecido).map((gasto) => gasto.valor), extraConhecido ?? 0)
-    if (conhecido > prepared.estimate) return soma
-    return Math.min(prepared.estimate, soma)
+  // O real não é cortado: orçamento e crédito liquidam no máximo a reserva; log e custo_real ficam com o real.
+  let avisouEstouro = false
+  const realDe = (extra: number) => gastos.reduce((total, gasto) => total + gasto.valor, 0) + extra
+  const liquidar = (real: number) => {
+    if (real > prepared.estimate + 1e-9) {
+      if (!avisouEstouro) {
+        avisouEstouro = true
+        console.info(JSON.stringify({ evento: 'chat_custo_acima_reserva', reserva: prepared.estimate, real }))
+      }
+      return prepared.estimate
+    }
+    return real
   }
   const temGasto = () => gastos.some((gasto) => gasto.valor > 0) || (custoAtual() ?? 0) > 0 || charsTentativa > 0 || possiblyCharged
   const costNow = () => {
     const atual = custoAtual()
-    if (atual !== null) return fecharValor(atual, atual)
-    if (gastos.length > 0) return fecharValor(charsTentativa > 0 ? parcialDe(charsTentativa) : 0, null)
+    if (atual !== null) return realDe(atual)
+    if (gastos.length > 0) return realDe(charsTentativa > 0 ? parcialDe(charsTentativa) : 0)
     return prepared.estimate
   }
   const custoNoCatch = (err: unknown) => {
     const atual = custoAtual()
-    if (atual !== null) return fecharValor(atual, atual)
+    if (atual !== null) return realDe(atual)
     const noCharge = err instanceof OpenRouterError && err.noCharge
-    if (charsTentativa === 0 && noCharge) return fecharValor(0, 0)
-    if (charsTentativa > 0) return fecharValor(parcialDe(charsTentativa), null)
-    if (gastos.some((gasto) => gasto.valor > 0)) return fecharValor(parcialDe(0), null)
+    // SSE aceito sem delta e sem custo conhecido continua no teto. noCharge soma zero.
+    if (charsTentativa === 0 && noCharge) return realDe(0)
+    if (charsTentativa > 0) return realDe(parcialDe(charsTentativa))
+    if (gastos.some((gasto) => gasto.valor > 0)) return realDe(parcialDe(0))
     return prepared.estimate
   }
   const fecharTentativa = () => {
@@ -3283,9 +3384,8 @@ async function streamPreparedInner(input: {
     const noCharge = err instanceof OpenRouterError && err.noCharge
     const atual = custoAtual()
     if (atual !== null) gastos.push({ conhecido: true, valor: atual })
-    else if (charsTentativa > 0) gastos.push({ conhecido: false, valor: parcialDe(charsTentativa) })
     else if (noCharge) gastos.push({ conhecido: true, valor: 0 })
-    else if (gastos.some((gasto) => gasto.valor > 0)) gastos.push({ conhecido: false, valor: parcialDe(0) })
+    else gastos.push({ conhecido: false, valor: parcialDe(charsTentativa) })
     usage = undefined
     charsTentativa = 0
   }
@@ -3310,7 +3410,7 @@ async function streamPreparedInner(input: {
     await runIsolated([
       { run: releaseCredits, label: 'chat_release_failed', detail: releaseFailureDetail(prepared.reservation) },
       {
-        run: () => generated ? settleBudget(cost) : releaseBudgetHold(),
+        run: () => generated ? settleBudget(liquidar(cost)) : releaseBudgetHold(),
         label: generated ? 'chat_budget_commit_failed' : 'chat_budget_release_failed',
       },
     ])
@@ -3352,8 +3452,7 @@ async function streamPreparedInner(input: {
     try {
       const sane = lerModelo(bruto)
       if (sane.sem_base && countValidDocumentado(sane.blocos) > 0) return false
-      const substantivos = sane.blocos.filter((bloco) => textoSubstantivo(bloco.texto))
-      return substantivos.length >= 2 && !hasValidId(sane.blocos)
+      return respostaComFato(sane.blocos) && !hasValidId(sane.blocos)
     } catch {
       return false
     }
@@ -3501,8 +3600,7 @@ async function streamPreparedInner(input: {
       answer.sem_base = false
       console.info(JSON.stringify({ evento: 'sem_base_ignorado' }))
     }
-    const substantivos = answer.blocos.filter((bloco) => textoSubstantivo(bloco.texto))
-    if (!prepared.pauta && !prepared.pressure && !hasValidId(answer.blocos) && substantivos.length >= 2) {
+    if (!prepared.pauta && !prepared.pressure && !hasValidId(answer.blocos) && respostaComFato(answer.blocos)) {
       answer = sanitizeAnswer(respostaDocumental(prepared.context), prepared.context).answer
       console.info(JSON.stringify({ evento: 'resposta_documental' }))
     }
@@ -3555,7 +3653,7 @@ async function streamPreparedInner(input: {
   if (budgetOpen) {
     budgetOpen = false
     try {
-      await db.commitBudget(prepared.reservation.pedidoId, custo)
+      await db.commitBudget(prepared.reservation.pedidoId, liquidar(custo))
     } catch {
       // Créditos já commitados e a resposta existe. O final sai mesmo assim.
       // Soltar a reserva aqui tiraria o custo do teto.
@@ -3696,6 +3794,8 @@ export async function runChat(input: {
   inferenceKey?: KeyAssessment
   loadInferenceKey?: () => Promise<KeyAssessment>
   onEvent?: (event: ChatSseEvent) => void
+  /** Repetição por poucos parágrafos. Sem o campo, a produção repete. */
+  repetirCurto?: boolean
 }): Promise<{ httpStatus: number; events: ChatSseEvent[] }> {
   const events: ChatSseEvent[] = []
   const emit = (event: ChatSseEvent) => {
@@ -3723,6 +3823,7 @@ export async function runChat(input: {
     signal,
     isUserAbort: input.isUserAbort,
     retryDelayMs: input.retryDelayMs,
+    repetirCurto: input.repetirCurto,
     emit,
   })
   return { httpStatus, events }

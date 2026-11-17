@@ -476,6 +476,7 @@ Deno.test('streamPrepared normaliza antes do sanitize e manda lacunas ao modelo'
     },
     signal: new AbortController().signal,
     emit: (event) => emitted.push(event),
+    repetirCurto: false,
   })
   eq(status, 200, 'ok')
   eq(calls.length, 1, 'uma chamada')
