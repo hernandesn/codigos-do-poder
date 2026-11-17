@@ -168,6 +168,7 @@ body.mapa-mundi-aberto #map-mode-count { display: none; }
 #mm-ponta-hipotese circle { fill: var(--ink-3); }
 #mm-fora .fora { cursor: pointer; }
 #mm-fora .alvo { fill: rgba(28, 22, 18, .94); stroke: var(--border); stroke-width: 1px; }
+#mm-fora .haste { fill: none; stroke: var(--blood-text); stroke-width: 2px; }
 #mm-fora .seta { fill: var(--blood-text); }
 #mm-fora text {
   font-family: var(--font-body);

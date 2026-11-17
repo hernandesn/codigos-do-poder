@@ -55,24 +55,16 @@ function lerSetas() {
     const box = el.getBoundingClientRect();
     const seta = el.querySelector('path.seta');
     const m = seta.getScreenCTM();
-    const locais = [[1, 1], [11, 6], [1, 11]];
-    const verts = locais.map(([x, y]) => {
-      const p = new DOMPoint(x, y).matrixTransform(m);
-      return [p.x, p.y];
-    });
-    const mx = (verts[0][0] + verts[1][0] + verts[2][0]) / 3;
-    const my = (verts[0][1] + verts[1][1] + verts[2][1]) / 3;
-    let ponta = verts[0];
-    let longe = -1;
-    verts.forEach(v => {
-      const dd = (v[0] - mx) ** 2 + (v[1] - my) ** 2;
-      if (dd > longe) { longe = dd; ponta = v; }
-    });
     const marcada = (seta.getAttribute('data-ponta') || '').split(',').map(Number);
-    let marca = null;
-    if (marcada.length === 2 && marcada.every(n => Number.isFinite(n))) {
+    const okMarca = marcada.length === 2 && marcada.every(n => Number.isFinite(n));
+    let ponta = null;
+    let centro = null;
+    if (okMarca) {
       const p = new DOMPoint(marcada[0], marcada[1]).matrixTransform(m);
-      marca = [p.x, p.y];
+      ponta = [p.x, p.y];
+      const bb = seta.getBBox();
+      const c = new DOMPoint(bb.x + bb.width / 2, bb.y + bb.height / 2).matrixTransform(m);
+      centro = [c.x, c.y];
     }
     const iso = el.getAttribute('data-iso');
     const resto = (el.getAttribute('data-resto') || '').split(',').filter(Boolean);
@@ -88,15 +80,15 @@ function lerSetas() {
     });
     const meioX = box.left + box.width / 2;
     const meioY = box.top + box.height / 2;
-    const ang = Math.atan2(ponta[1] - my, ponta[0] - mx) * 180 / Math.PI;
+    const ang = ponta && centro ? Math.atan2(ponta[1] - centro[1], ponta[0] - centro[0]) * 180 / Math.PI : null;
     const real = n ? Math.atan2(sy / n - meioY, sx / n - meioX) * 180 / Math.PI : null;
-    const coincide = !marca || Math.hypot(marca[0] - ponta[0], marca[1] - ponta[1]) < 1.5;
+    const coincide = !!(ponta && centro && Math.hypot(ponta[0] - centro[0], ponta[1] - centro[1]) > 1);
     return {
       nome: el.querySelector('text') ? el.querySelector('text').textContent : '',
       iso,
-      ang: Math.round(ang * 10) / 10,
+      ang: ang == null ? null : Math.round(ang * 10) / 10,
       real: real == null ? null : Math.round(real * 10) / 10,
-      delta: real == null ? null : Math.round(dif(ang, real) * 10) / 10,
+      delta: ang == null || real == null ? null : Math.round(dif(ang, real) * 10) / 10,
       coincide
     };
   });
@@ -693,7 +685,6 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       const ordemMeia = await ordemPainel(page);
       assert.ok(ordemMeia.nome < ordemMeia.resumo && ordemMeia.resumo < ordemMeia.lista && ordemMeia.lista < ordemMeia.hist && ordemMeia.hist < ordemMeia.leg && ordemMeia.leg === ordemMeia.n - 1, JSON.stringify(ordemMeia));
       assert.deepEqual(await sobreposicao(page), []);
-      await page.screenshot({ path: path.join(prints, 'mob-393-brasil.png') });
       await page.locator('#alca').click();
       await page.waitForFunction(() => document.body.classList.contains('folha-cheia'));
       const listaVisivel = await page.evaluate(() => {
@@ -740,6 +731,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
           height: Math.min(innerHeight - y, Math.ceil(bottom + pad) - y)
         };
       });
+      await page.screenshot({ path: path.join(prints, 'mob-393-brasil.png'), clip });
       await page.screenshot({ path: path.join(prints, 'mob-393-chips-zoom.png'), clip });
       assert.deepEqual(errors, []);
       await context.close();

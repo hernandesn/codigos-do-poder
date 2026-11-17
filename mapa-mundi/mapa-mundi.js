@@ -612,6 +612,7 @@
       .attr('role', 'button')
       .attr('tabindex', '0');
     enter.append('rect').attr('class', 'alvo').attr('rx', 3);
+    enter.append('path').attr('class', 'haste');
     enter.append('path').attr('class', 'seta');
     enter.append('text');
     var all = enter.merge(join);
@@ -638,10 +639,12 @@
         cameras[location.hash] = { x: T.x, y: T.y, k: T.k };
       });
     all.select('rect').attr('width', function (d) { return d.w; }).attr('height', function (d) { return d.h; });
-    all.select('path').attr('d', 'M1 1 L11 6 L1 11 Z').attr('data-ponta', '11,6').attr('transform', function (d) {
+    function giroSeta(d) {
       var deg = isFinite(d.ang) ? d.ang : 0;
-      return 'translate(8,16) rotate(' + deg.toFixed(2) + ',6,6)';
-    });
+      return 'translate(8,16) rotate(' + deg.toFixed(2) + ',6.5,6)';
+    }
+    all.select('path.haste').attr('d', 'M0 6 H8').attr('transform', giroSeta);
+    all.select('path.seta').attr('d', 'M6 2 L13 6 L6 10 Z').attr('data-ponta', '13,6').attr('transform', giroSeta);
     all.select('text').attr('x', 24).attr('y', 28).text(function (d) { return d.nome; });
   }
 
