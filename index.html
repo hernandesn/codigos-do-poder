@@ -2,7 +2,7 @@
 <html lang="pt-BR" data-theme="couro-osso">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-SBiyCPzJrlEKQKxScQRcRTHHDSCUGq8U9zS+A1QLZ5I=' 'sha256-I6A6Evfff0LcAvHHXzh6PdW64Uk7JWvCdQcn93K8J98='; style-src 'self' 'sha256-Z59WVxR0ClGmiHwC4suCru/bUNFGxcOwUTk7vp2FynA='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com 'sha256-SBiyCPzJrlEKQKxScQRcRTHHDSCUGq8U9zS+A1QLZ5I=' 'sha256-ln5ZnwA321rqVVWpe86+7CMlXLcfu52QVMxn4JVikiU='; style-src 'self' 'sha256-2ZiLQE0epW+W7hp4/KqwMMe240oC9X/0cjkllpPGZ2Y='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; frame-src https://challenges.cloudflare.com; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self';">
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
@@ -667,7 +667,7 @@ body.temas-mode .map-mode [data-mapa-completo]{border:2px solid var(--blood-text
 @media(min-width:900px){.chat-answer,.chat-inference,.chat-hypothesis{font-size:15px}}
 @media(max-width:899px){.chat-panel{inset:var(--chat-top,62px) 0 auto 0;width:100%;height:var(--chat-height,calc(100dvh - 62px));border-left:0}.chat-panel .folder.chat{padding:8px 14px 0}.chat-log{min-height:calc(var(--chat-visible-height,100dvh)*.4)}}
 @media(max-height:430px) and (orientation:landscape){.chat-panel .folder.chat{padding-top:0}.chat-panel .chat-head{min-height:40px;height:40px}#chat-close{height:44px}.chat-panel .chat-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.chat-models{display:none}.chat-model-select{display:block;min-width:0}#chat-modelo{height:44px;font-size:16px;padding:0 26px 0 8px;border-color:var(--border);width:100%}#chat-form{grid-template-columns:minmax(170px,13em) minmax(0,1fr) auto;align-items:end}.chat-log{min-height:160px}#chat-mensagem{max-height:44px}}
-#auth-dialog .dialog-footer{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center}#auth-note,#auth-status{line-height:1.4}
+#auth-dialog .dialog-footer{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center}#auth-note,#auth-status{line-height:1.4}#auth-turnstile:empty{display:none}
 .data-status{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;font-size:13px;color:var(--ink-2);background:var(--bg)}.data-status[data-state=error] .data-status-text{color:var(--danger);max-width:340px;line-height:1.6}
 </style>
 </head>
@@ -798,6 +798,7 @@ body.temas-mode .map-mode [data-mapa-completo]{border:2px solid var(--blood-text
     <p id="auth-note" class="dialog-context">Entre com o e-mail e a senha da sua conta.</p>
     <label class="editor-field">E-mail<input id="auth-email" name="email" type="email" autocomplete="username" required></label>
     <label class="editor-field">Senha<input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="6" required></label>
+    <div id="auth-turnstile"></div>
     <p id="auth-status" role="status" class="dialog-context" hidden></p>
     <p id="auth-error" role="alert" class="form-error" hidden></p>
     <div class="dialog-footer"><button type="button" class="quiet" id="auth-mode" aria-pressed="false">Criar conta</button><button type="submit" class="button primary" id="auth-submit">Entrar</button></div>
@@ -2460,11 +2461,12 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
     abortado: 'Pedido cancelado.',
     incompleto: 'A resposta não chegou completa.',
     credencial: 'E-mail ou senha não conferem.',
-    email_nao_confirmado: 'Confirme o e-mail antes de entrar.',
+    email_nao_confirmado: 'Confirme seu e-mail pelo link que enviamos para usar o chat',
     provedor_desligado: 'O cadastro por e-mail e senha está desligado neste projeto.',
     conta_existente: 'Este e-mail já tem conta. Entre com a senha.',
     senha_fraca: 'A senha não foi aceita. Use uma senha mais forte.',
     cadastro_recusado: 'Não foi possível criar a conta.',
+    captcha_pendente: 'Confirme o desafio para continuar.',
     confirmacao_email: 'Conta criada. Confirme o e-mail antes de entrar. O link volta para este site.',
     confirmacao_ambigua: 'Se o e-mail ainda não tinha conta, a confirmação foi enviada. Se já tinha, entre com a senha.',
   };
@@ -2503,6 +2505,16 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
     return payload.exp * 1000 <= (now || Date.now()) + 30000;
   }
 
+  function publicTurnstileSiteKey(value) {
+    const key = typeof value === 'string' ? value.trim() : '';
+    if (!/^[0-9A-Za-z_-]{1,100}$/.test(key)) return '';
+    const lower = key.toLowerCase();
+    if (lower.includes('secret') || lower.startsWith('sk-') || lower.includes('service_role') || lower.startsWith('sb_secret')) return '';
+    // Sitekey de teste tem 24 caracteres. As três chaves secretas de teste têm 35 e não entram no site.
+    if (/^[123]x0{31}aa$/i.test(key)) return '';
+    return key;
+  }
+
   function parsePublicConfig(raw) {
     const url = typeof raw?.supabaseUrl === 'string' ? raw.supabaseUrl.trim().replace(/\/+$/, '') : '';
     const key = typeof raw?.supabaseAnonKey === 'string' ? raw.supabaseAnonKey.trim() : '';
@@ -2513,7 +2525,12 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
     if (!hostOk || keyUnsafe || parsed.username || parsed.password) {
       return { ok: false, message: MESSAGES.config_ausente };
     }
-    return { ok: true, supabaseUrl: parsed.origin, supabaseAnonKey: key };
+    return {
+      ok: true,
+      supabaseUrl: parsed.origin,
+      supabaseAnonKey: key,
+      turnstileSiteKey: publicTurnstileSiteKey(raw?.turnstileSiteKey),
+    };
   }
 
   function buildChatBody(input) {
@@ -2607,6 +2624,14 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
     return headers;
   }
 
+  function authCredentialsBody(email, password, captchaToken) {
+    const body = { email, password };
+    if (typeof captchaToken === 'string' && captchaToken) {
+      body.gotrue_meta_security = { captcha_token: captchaToken };
+    }
+    return JSON.stringify(body);
+  }
+
   function signupRedirect(locationLike) {
     const loc = locationLike || (typeof location !== 'undefined' ? location : null);
     if (!loc || typeof loc.origin !== 'string') return INTENDED_ORIGIN;
@@ -2697,7 +2722,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
       return null;
     }
 
-    async function login(email, password) {
+    async function login(email, password, captchaToken) {
       const config = parsePublicConfig(deps.config);
       if (!config.ok) return { ok: false, code: 'config_ausente', message: config.message };
       let response;
@@ -2705,7 +2730,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
         response = await fetchImpl(`${config.supabaseUrl}/auth/v1/token?grant_type=password`, {
           method: 'POST',
           headers: authHeaders(config),
-          body: JSON.stringify({ email, password }),
+          body: authCredentialsBody(email, password, captchaToken),
         });
       } catch {
         return { ok: false, code: 'rede', message: MESSAGES.rede };
@@ -2722,7 +2747,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
       return { ok: true, session: saved };
     }
 
-    async function signup(email, password, locationLike) {
+    async function signup(email, password, locationLike, captchaToken) {
       const config = parsePublicConfig(deps.config);
       if (!config.ok) return { ok: false, code: 'config_ausente', message: config.message };
       const redirectTo = signupRedirect(locationLike);
@@ -2731,7 +2756,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
         response = await fetchImpl(`${config.supabaseUrl}/auth/v1/signup?redirect_to=${encodeURIComponent(redirectTo)}`, {
           method: 'POST',
           headers: authHeaders(config),
-          body: JSON.stringify({ email, password }),
+          body: authCredentialsBody(email, password, captchaToken),
         });
       } catch {
         return { ok: false, code: 'rede', message: MESSAGES.rede };
@@ -3174,12 +3199,56 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
       }
     }
 
+    const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    let heldCaptchaToken = '';
+    let turnstileWidgetId = null;
+    let turnstileScript = null;
+
+    function resetCaptcha() {
+      heldCaptchaToken = '';
+      const api = typeof globalThis !== 'undefined' ? globalThis.turnstile : undefined;
+      if (!api || turnstileWidgetId == null || typeof api.reset !== 'function') return;
+      try { api.reset(turnstileWidgetId); } catch { /* desafio já descartado */ }
+    }
+
+    function renderTurnstile() {
+      const siteKey = config.ok ? config.turnstileSiteKey : '';
+      if (!siteKey || turnstileWidgetId != null || turnstileScript || !$('auth-turnstile')) return;
+      if (typeof documentRef.createElement !== 'function') return;
+      const parent = documentRef.head || documentRef.body || documentRef.documentElement;
+      if (!parent || typeof parent.appendChild !== 'function') return;
+      const script = documentRef.createElement('script');
+      script.src = TURNSTILE_SRC;
+      script.async = true;
+      if (typeof script.setAttribute === 'function') script.setAttribute('data-turnstile', 'explicit');
+      script.onload = () => {
+        const api = typeof globalThis !== 'undefined' ? globalThis.turnstile : undefined;
+        const target = $('auth-turnstile');
+        if (!api || typeof api.render !== 'function' || !target || turnstileWidgetId != null) return;
+        try {
+          turnstileWidgetId = api.render(target, {
+            sitekey: siteKey,
+            callback(token) { heldCaptchaToken = typeof token === 'string' ? token : ''; },
+            'expired-callback'() { heldCaptchaToken = ''; },
+            'error-callback'() { heldCaptchaToken = ''; },
+          });
+        } catch { turnstileWidgetId = null; }
+      };
+      script.onerror = () => {
+        turnstileScript = null;
+        if (typeof script.remove === 'function') script.remove();
+      };
+      turnstileScript = script;
+      parent.appendChild(script);
+    }
+
     function openLogin() {
       rememberChat();
       const dialog = $('auth-dialog');
       const error = $('auth-error');
       if (error) error.hidden = true;
       if (!config.ok && error) { error.hidden = false; error.textContent = config.message; }
+      if (config.ok && config.turnstileSiteKey) renderTurnstile();
       if (dialog && dialog.showModal) dialog.showModal();
     }
     const chatLogin = $('chat-login');
@@ -3202,26 +3271,38 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
       const error = $('auth-error');
       const email = $('auth-email') ? $('auth-email').value.trim() : '';
       const password = $('auth-password') ? $('auth-password').value : '';
-      const result = authMode === 'criar'
-        ? await client.signup(email, password, deps.location)
-        : await client.login(email, password);
-      if ($('auth-password')) $('auth-password').value = '';
-      if (!result.ok) {
-        if (error) { error.hidden = false; error.textContent = result.message; }
+      const siteKey = config.ok ? config.turnstileSiteKey : '';
+      if (siteKey && $('auth-turnstile') && !heldCaptchaToken) {
+        if (error) { error.hidden = false; error.textContent = MESSAGES.captcha_pendente; }
         const status = $('auth-status');
         if (status) status.hidden = true;
         return;
       }
-      if (result.confirmation === 'email' || result.confirmation === 'ambiguo') {
-        const status = $('auth-status');
-        if (status) { status.hidden = false; status.textContent = result.message; }
-        if (error) error.hidden = true;
+      const captchaToken = heldCaptchaToken;
+      try {
+        const result = authMode === 'criar'
+          ? await client.signup(email, password, deps.location, captchaToken)
+          : await client.login(email, password, captchaToken);
+        if ($('auth-password')) $('auth-password').value = '';
+        if (!result.ok) {
+          if (error) { error.hidden = false; error.textContent = result.message; }
+          const status = $('auth-status');
+          if (status) status.hidden = true;
+          return;
+        }
+        if (result.confirmation === 'email' || result.confirmation === 'ambiguo') {
+          const status = $('auth-status');
+          if (status) { status.hidden = false; status.textContent = result.message; }
+          if (error) error.hidden = true;
+          renderSession();
+          return;
+        }
+        const dialog = $('auth-dialog');
+        if (dialog && dialog.close) dialog.close();
         renderSession();
-        return;
+      } finally {
+        if (siteKey) resetCaptcha();
       }
-      const dialog = $('auth-dialog');
-      if (dialog && dialog.close) dialog.close();
-      renderSession();
     });
     const authCancel = $('auth-cancel');
     if (authCancel) authCancel.addEventListener('click', () => {
