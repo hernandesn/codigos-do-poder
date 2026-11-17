@@ -181,6 +181,10 @@ function contentType(file) {
   if (file.endsWith('.css')) return 'text/css; charset=utf-8';
   if (file.endsWith('.json')) return 'application/json; charset=utf-8';
   if (file.endsWith('.woff2')) return 'font/woff2';
+  if (file.endsWith('.webmanifest')) return 'application/manifest+json';
+  if (file.endsWith('.svg')) return 'image/svg+xml';
+  if (file.endsWith('.png')) return 'image/png';
+  if (file.endsWith('.ico')) return 'image/x-icon';
   return 'application/octet-stream';
 }
 

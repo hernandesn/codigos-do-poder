@@ -850,7 +850,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     healthy(traffic);
   });
 
-  test('favicon inline evita 404 e nota técnica aparece só com debug=1', async () => {
+  test('favicon servido não gera 404 e nota técnica aparece só com debug=1', async () => {
     const { page, traffic } = await openPage();
     const generic = seed.nos.find(n => n.tipo === 'universidade').id;
     // O modular já reconhece universidade (mapa de tipos preservado no BUILD2).
@@ -876,14 +876,14 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
         : route.fallback());
     await ready(page, '/#e=' + generic);
     await centered(page, generic);
-    assert.equal(await page.locator('link[rel="icon"]').getAttribute('href'), 'data:,');
+    assert.equal(await page.locator('link[rel="icon"][href="/favicon.ico"]').getAttribute('href'), '/favicon.ico');
     assert.equal(await page.locator('#toast').isVisible(), false);
     assert.doesNotMatch(await page.locator('#inspector-content').innerText(), /Tipo sem estilo próprio/);
     await ready(page, '/?debug=1#e=' + generic);
     assert.match(await page.locator('#toast').innerText(), /Tipo sem estilo próprio/);
     assert.equal(await page.locator('#toast').isVisible(), true);
     assert.match(await page.locator('#inspector-content').innerText(), /Tipo sem estilo próprio/);
-    assert.equal(traffic.favicon, 0);
+    assert.equal(traffic.notFound.some(p => /favicon|apple-touch|webmanifest|\/icon-/.test(p)), false);
     healthy(traffic);
   });
 });

@@ -24,10 +24,20 @@ test('SEC-06 CSP sem violações: temas, #all, entidade e login em desktop e cel
       res.end('globalThis.ATLAS_PUBLIC_CONFIG={supabaseUrl:"https://ozeiyqpbtggvuyhplisa.supabase.co",supabaseAnonKey:"public-test-placeholder"};');
       return;
     }
-    if (!allowed.has(file) && !/^\/fonts\/[a-z0-9-]+\.woff2$/.test(file)) { res.writeHead(404); res.end(); return; }
+    const icon = /^\/(?:favicon\.(?:ico|svg)|favicon-\d+\.png|apple-touch-icon\.png|icon-\d+(?:-maskable)?\.png|site\.webmanifest)$/;
+    if (!allowed.has(file) && !/^\/fonts\/[a-z0-9-]+\.woff2$/.test(file) && !icon.test(file)) { res.writeHead(404); res.end(); return; }
     try {
       const body = await fs.promises.readFile(root + file);
-      res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.json') ? 'application/json' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'font/woff2' });
+      const type = file.endsWith('.html') ? 'text/html; charset=utf-8'
+        : file.endsWith('.json') ? 'application/json'
+        : file.endsWith('.webmanifest') ? 'application/manifest+json'
+        : file.endsWith('.js') ? 'text/javascript; charset=utf-8'
+        : file.endsWith('.css') ? 'text/css; charset=utf-8'
+        : file.endsWith('.svg') ? 'image/svg+xml'
+        : file.endsWith('.png') ? 'image/png'
+        : file.endsWith('.ico') ? 'image/x-icon'
+        : 'font/woff2';
+      res.writeHead(200, { 'content-type': type });
       res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });

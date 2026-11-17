@@ -9,3 +9,4 @@ require('./sec_turnstile_test.cjs');
 require('./mapa_mundi_test.cjs');
 require('./mapa_completo_grafo_test.cjs');
 require('./mapa_completo_polimento_test.cjs');
+require('./landing_favicon_test.cjs');
