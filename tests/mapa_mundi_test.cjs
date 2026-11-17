@@ -316,6 +316,37 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       noRetangulo(ancoras.GB, 'GB', -8, 2, 49, 61);
       noRetangulo(ancoras.NO, 'NO', 4, 32, 57, 72);
       noRetangulo(ancoras.RU, 'RU', 20, 140, 48, 78);
+      const neutro = await page.evaluate(() => {
+        const p = document.querySelector('#paises path[data-num="496"]');
+        const s = getComputedStyle(p);
+        p.focus();
+        return {
+          tem: p.classList.contains('tem'),
+          iso: p.getAttribute('data-iso'),
+          tab: p.getAttribute('tabindex'),
+          role: p.getAttribute('role'),
+          label: p.getAttribute('aria-label'),
+          title: p.getAttribute('title'),
+          titulos: p.querySelectorAll('title').length,
+          cursor: s.cursor,
+          foco: document.activeElement === p
+        };
+      });
+      assert.equal(neutro.tem, false);
+      assert.equal(neutro.iso, null);
+      assert.equal(neutro.tab, null);
+      assert.equal(neutro.role, null);
+      assert.equal(neutro.label, null);
+      assert.equal(neutro.title, null);
+      assert.equal(neutro.titulos, 0);
+      assert.equal(neutro.foco, false);
+      assert.notEqual(neutro.cursor, 'pointer');
+      const hashVazio = await page.evaluate(() => location.hash);
+      const selVazio = await page.evaluate(() => document.querySelector('path.sel, .pino.sel')?.getAttribute('data-iso') || '');
+      await page.locator('#paises path[data-num="496"]').click({ force: true });
+      await page.waitForTimeout(80);
+      assert.equal(await page.evaluate(() => location.hash), hashVazio);
+      assert.equal(await page.evaluate(() => document.querySelector('path.sel, .pino.sel')?.getAttribute('data-iso') || ''), selVazio);
       let foco = null;
       for (let i = 0; i < 40; i++) {
         await page.keyboard.press('Tab');
@@ -383,6 +414,11 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
         await page.waitForFunction(a => location.hash === '#mapa-mundi/' + a, iso);
         const vis = await page.locator('#mm-conteudo').innerText();
         for (const cru of crus) assert.equal(vis.includes(cru), false, iso + ' contém ' + JSON.stringify(cru));
+        if (iso === 'US') {
+          await page.locator('#mm-conteudo .ligados li').first().waitFor();
+          assert.ok(await page.locator('#mm-conteudo .ligados li').count() >= 1);
+          await page.screenshot({ path: path.join(prints, 'desk-1440-eua.png'), fullPage: false });
+        }
       }
       assert.match(await page.evaluate(() => { window.__mapa.escolher('BR'); return document.getElementById('mm-conteudo').innerText; }), /relações diplomáticas/);
       assert.match(await page.locator('#mm-conteudo').innerText(), /órgão que emite a decisão/);
@@ -499,6 +535,19 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       assert.deepEqual(await T(), antesPainel);
       assert.deepEqual(await scroll(), [0, 0, 0]);
 
+      for (const iso of ['BR', 'US', 'VA']) {
+        await page.evaluate(a => window.__mapa.escolher(a), iso);
+        await page.waitForFunction(a => location.hash === '#mapa-mundi/' + a && document.body.classList.contains('folha-aberta') && !document.body.classList.contains('folha-cheia'), iso);
+        const caixaPais = await page.evaluate(a => {
+          const painel = document.querySelector('.mm-painel').getBoundingClientRect();
+          const path = document.querySelector('#paises path.sel[data-iso="' + a + '"], #hist path.sel[data-iso="' + a + '"]');
+          const marca = path || document.querySelector('#pinos g.sel[data-iso="' + a + '"] .ponto');
+          const r = marca.getBoundingClientRect();
+          return { iso: a, top: r.top, bottom: r.bottom, h: r.height, w: r.width, painelTop: painel.top };
+        }, iso);
+        assert.ok(caixaPais.h > 1 && caixaPais.w > 1, JSON.stringify(caixaPais));
+        assert.ok(caixaPais.bottom <= caixaPais.painelTop + 0.5, JSON.stringify(caixaPais));
+      }
       await page.evaluate(() => window.__mapa.escolher('BR'));
       await page.waitForTimeout(200);
       const ordemMeia = await ordemPainel(page);

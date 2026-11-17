@@ -160,6 +160,7 @@
         return cor(a ? P[a].fichas.length : 0);
       })
       .attr('class', function (f) { return byNum[f.id] ? 'pais tem' : 'pais'; })
+      .attr('data-num', function (f) { return f.id; })
       .attr('data-iso', function (f) { return byNum[f.id] || null; })
       .on('click', function (ev, f) {
         var a = byNum[f.id];
@@ -281,7 +282,43 @@
     if (!(k > 0)) return;
     var cx = (b[0][0] + b[1][0]) / 2;
     var cy = (b[0][1] + b[1][1]) / 2;
-    aplicar(k, vis.x + vis.w / 2 - cx * k, vis.y + vis.h / 2 - cy * k);
+    var tx = vis.x + vis.w / 2 - cx * k;
+    var ty = vis.y + vis.h / 2 - cy * k;
+    var aj = ajustarPais(iso, k, tx, ty, vis);
+    aplicar(aj.k, aj.tx, aj.ty);
+  }
+
+  function ajustarPais(iso, k, tx, ty, vis) {
+    var f = featureDe(iso);
+    if (!f) return { k: k, tx: tx, ty: ty };
+    var b = path.bounds(f);
+    if (!isFinite(b[0][1]) || !isFinite(b[1][1])) return { k: k, tx: tx, ty: ty };
+    var pontual = Math.abs(b[1][0] - b[0][0]) < 1 && Math.abs(b[1][1] - b[0][1]) < 1;
+    var folga = pontual ? 12 : 6;
+    var topo = vis.y + 2;
+    var base = vis.y + vis.h - 2;
+    function faixa(kk, tyy) {
+      return {
+        y0: b[0][1] * kk + tyy - folga,
+        y1: b[1][1] * kk + tyy + folga
+      };
+    }
+    var y = faixa(k, ty);
+    if (y.y1 <= base && y.y0 >= topo) return { k: k, tx: tx, ty: ty };
+    var alt = Math.max(y.y1 - y.y0, 1);
+    var banda = Math.max(40, base - topo);
+    if (alt > banda) {
+      var mx = (b[0][0] + b[1][0]) / 2;
+      var my = (b[0][1] + b[1][1]) / 2;
+      k = Math.max(0.05, Math.min(4, k * (banda / alt)));
+      tx = vis.x + vis.w / 2 - mx * k;
+      ty = (topo + base) / 2 - my * k;
+      return { k: k, tx: tx, ty: ty };
+    }
+    if (y.y1 > base) ty -= y.y1 - base;
+    y = faixa(k, ty);
+    if (y.y0 < topo) ty += topo - y.y0;
+    return { k: k, tx: tx, ty: ty };
   }
 
   function quadro() {

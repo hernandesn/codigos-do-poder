@@ -55,6 +55,8 @@ body.mapa-mundi-aberto #map-mode-count { display: none; }
 }
 #mapa:active { cursor: grabbing; }
 .pais { stroke: #3a2e24; stroke-width: 0.6px; vector-effect: non-scaling-stroke; }
+.pais:not(.tem) { cursor: default; }
+.pais:not(.tem):hover { stroke: #3a2e24; stroke-width: 0.6px; }
 .pais.tem { cursor: pointer; }
 .pais.lig { stroke: var(--blood-text); stroke-width: 1.4px; }
 .pais.hist { stroke: var(--ink-2); stroke-dasharray: 3 2; }
