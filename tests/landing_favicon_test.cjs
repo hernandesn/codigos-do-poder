@@ -34,7 +34,7 @@ const LINKS = [
 test('landing /inicio sem style ou script inline e com rotas reais', () => {
   const html = read('inicio/index.html');
   const css = read('inicio/landing.css');
-  assert.equal(/<script\b/i.test(html), false);
+  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi), ['<script src="cobranca.js" defer></script>']);
   assert.equal(/<style\b/i.test(html), false);
   assert.equal(/\sstyle\s*=/i.test(html), false);
   assert.equal(/\son[a-z]+\s*=/i.test(html), false);
@@ -48,7 +48,8 @@ test('landing /inicio sem style ou script inline e com rotas reais', () => {
   assert.match(html, /href="#planos"/);
   assert.match(html, />Entrar</);
   assert.match(html, />Explorar o mural por 7 dias grátis</);
-  assert.match(html, />Começar 7 dias grátis</);
+  assert.match(html, />Começar 7 dias grátis no Básico</);
+  assert.match(html, />Começar 7 dias grátis no Plus</);
   assert.match(html, />Cadastre-se · 7 dias grátis</);
   assert.match(html, /\[placeholder:/);
   for (const font of ['eb-garamond-400.woff2', 'eb-garamond-400i.woff2', 'eb-garamond-600.woff2', 'courier-prime-400.woff2']) {
@@ -57,6 +58,40 @@ test('landing /inicio sem style ou script inline e com rotas reais', () => {
   }
   assert.equal(/url\("fonts\//.test(css), false);
   assert.equal(fs.existsSync(path.join(root, 'inicio/fonts')), false);
+});
+
+test('planos só Básico e Plus, cobrança no 8º dia e cobranca.js externo', () => {
+  const html = read('inicio/index.html');
+  const js = read('inicio/cobranca.js');
+  assert.equal(html.includes('799'), false);
+  assert.equal(/\bPro\b/.test(html), false);
+  assert.match(html, /preço visível e plano âncora destacado \(Plus\); anual fora por decisão do Hernandes em 17\/11/);
+  const semPremissa = html.replace(/anual fora por decisão do Hernandes em 17\/11/g, '');
+  assert.equal(/anual/i.test(semPremissa), false);
+  assert.equal(html.includes('66,58'), false);
+  assert.equal(html.includes('79,90'), false);
+  assert.doesNotMatch(html, /regra do teste de 7 dias|fluxo de cancelamento|\[regra a confirmar\]|\[checkout na semana 2\]/);
+
+  const hero = '7 dias grátis. Pedimos o cartão no cadastro; a primeira cobrança (R$&nbsp;9,90 no Básico ou R$&nbsp;29,90 no Plus) acontece <span class="data-cobranca">no 8º dia</span>, se você não cancelar. Cancele quando quiser, em [caminho do cancelamento].';
+  const basico = 'Grátis por 7 dias · depois R$&nbsp;9,90/mês · primeira cobrança <span class="data-cobranca">no 8º dia</span> · cancele antes e não paga nada';
+  const plus = 'Grátis por 7 dias · depois R$&nbsp;29,90/mês · primeira cobrança <span class="data-cobranca">no 8º dia</span> · cancele antes e não paga nada';
+  const cadastro = 'Primeiro, e-mail e senha. Na etapa seguinte pedimos o cartão: os 7 primeiros dias são grátis e a primeira cobrança acontece <span class="data-cobranca">no 8º dia</span>, se você não cancelar antes.';
+  const faqCartao = 'Sim. O cartão é pedido no cadastro, depois do e-mail e da senha. Os 7 primeiros dias são grátis; a primeira cobrança (R$&nbsp;9,90 no Básico ou R$&nbsp;29,90 no Plus) acontece <span class="data-cobranca">no 8º dia</span>, se você não cancelar. Para não pagar nada, cancele antes, em [caminho do cancelamento].';
+  const faqCancela = 'Em [caminho do cancelamento], quando quiser. Se cancelar durante os 7 dias grátis, não há cobrança.';
+  assert.equal(html.includes(hero), true);
+  assert.equal(html.includes(basico), true);
+  assert.equal(html.includes(plus), true);
+  assert.equal(html.includes(cadastro), true);
+  assert.match(html, /<summary>Preciso de cartão para testar\?<\/summary><p>Sim\./);
+  assert.equal(html.includes(faqCartao), true);
+  assert.match(html, /<summary>Como cancelo\?<\/summary>/);
+  assert.equal(html.includes(faqCancela), true);
+
+  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi), ['<script src="cobranca.js" defer></script>']);
+  assert.equal(/<form\b/i.test(html), false);
+  assert.match(js, /querySelectorAll\('\.data-cobranca'\)/);
+  assert.match(js, /no 8º dia/);
+  assert.equal(fs.existsSync(path.join(root, 'inicio/cobranca.js')), true);
 });
 
 test('favicon linkado nas páginas HTML, arquivos existem e o manifest é válido', () => {

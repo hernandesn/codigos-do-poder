@@ -19,6 +19,7 @@
   <link rel="manifest" href="/site.webmanifest">
   <meta name="theme-color" content="#0a0706">
   <link rel="stylesheet" href="landing.css">
+  <script src="cobranca.js" defer></script>
 </head>
 <body>
   <div class="atmos" aria-hidden="true"></div>
@@ -50,7 +51,7 @@
           <a class="btn btn-sangue btn-gr" href="/">Explorar o mural por 7 dias grátis</a>
           <a class="btn btn-relevo btn-gr" href="#planos">Ver os planos</a>
         </div>
-        <p class="micro">Depois do teste, a partir de R$ 9,90/mês.</p>
+        <p class="micro micro-teste">7 dias grátis. Pedimos o cartão no cadastro; a primeira cobrança (R$&nbsp;9,90 no Básico ou R$&nbsp;29,90 no Plus) acontece <span class="data-cobranca">no 8º dia</span>, se você não cancelar. Cancele quando quiser, em [caminho do cancelamento].</p>
       </div>
       <figure class="hero-tela">
         <a class="ir-mapa" href="/#mapa-mundi"><img class="hero-mapa" src="img/mapa-brasil-recorte.png" width="1058" height="812" alt="Mapa-múndi do atlas com o Brasil selecionado e linhas para os países ligados"></a>
@@ -229,35 +230,28 @@
       </div>
     </section>
 
-    <!-- Premissa Richard: preço visível, anual como padrão e plano âncora (lição 4); sem "fale com vendas"; meio de pagamento que o brasileiro reconhece (Pix). Valores do PLANO.md §3 e §4 ("Bloco de preços (valores já aprovados)"). -->
+    <!-- Premissa Richard: preço visível e plano âncora destacado (Plus); anual fora por decisão do Hernandes em 17/11 (lição 4); sem "fale com vendas". Teste honesto: cartão no cadastro e cobrança no 8º dia, dito em cada card. Valores do PLANO.md §3 e §4 ("Bloco de preços (valores já aprovados)"). -->
     <section class="planos" id="planos" aria-labelledby="pl-t">
       <p class="rubrica">Planos</p>
       <h2 id="pl-t">Preço na mesa</h2>
       <div class="pl-grade">
         <article class="pl">
           <h3>Básico</h3>
-          <p class="pl-preco"><b>R$ 9,90</b>/mês</p>
-          <p class="pl-nota">7 dias grátis para começar</p>
+          <p class="pl-preco"><b>R$&nbsp;9,90</b>/mês</p>
+          <p class="pl-teste">Grátis por 7 dias · depois R$&nbsp;9,90/mês · primeira cobrança <span class="data-cobranca">no 8º dia</span> · cancele antes e não paga nada</p>
           <ul><li>Mural</li><li>Cota diária de perguntas [quantidade a confirmar]</li></ul>
-          <a class="btn btn-sangue btn-md" href="/">Começar 7 dias grátis</a>
-        </article>
-        <article class="pl">
-          <h3>Plus</h3>
-          <p class="pl-preco"><b>R$ 29,90</b>/mês</p>
-          <p class="pl-nota">Para quem pergunta todo dia</p>
-          <ul><li>Mais perguntas [quantidade a confirmar]</li><li>Modelo avançado nas respostas [a confirmar]</li></ul>
-          <a class="btn btn-relevo btn-md" href="/">Assinar o Plus</a>
+          <a class="btn btn-relevo btn-md" href="/">Começar 7 dias grátis no Básico</a>
         </article>
         <article class="pl pl-destaque">
-          <p class="pl-selo">Anual · recomendado</p>
-          <h3>Pro</h3>
-          <p class="pl-preco"><b>R$ 799</b>/ano</p>
-          <p class="pl-nota">equivale a R$ 66,58/mês · ou R$ 79,90 no mensal</p>
-          <ul><li>Tudo do Plus</li><li>Grupo de assinantes</li><li>Live semanal</li></ul>
-          <a class="btn btn-osso btn-md" href="/">Assinar o Pro anual</a>
+          <p class="pl-selo">Recomendado</p>
+          <h3>Plus</h3>
+          <p class="pl-preco"><b>R$&nbsp;29,90</b>/mês</p>
+          <p class="pl-teste">Grátis por 7 dias · depois R$&nbsp;29,90/mês · primeira cobrança <span class="data-cobranca">no 8º dia</span> · cancele antes e não paga nada</p>
+          <ul><li>Mais perguntas [quantidade a confirmar]</li><li>Modelo avançado nas respostas [a confirmar]</li></ul>
+          <a class="btn btn-osso btn-md" href="/">Começar 7 dias grátis no Plus</a>
         </article>
       </div>
-      <p class="pl-rodape">Pix e cartão [checkout na semana 2]. Cancele quando quiser [regra a confirmar]. Sem contrato escondido.</p>
+      <p class="pl-rodape">O cartão é pedido no cadastro. Cancele quando quiser, em [caminho do cancelamento]. Sem contrato escondido.</p>
     </section>
 
     <!-- Premissa Richard: prova social sem inventar; no dia 1, Hernandes na frente (PLANO.md §4, Prova social). Sem rosto real no mock. -->
@@ -267,24 +261,24 @@
       <p>Hernandes Nogueira, autor do Códigos do Poder</p>
     </section>
 
-    <!-- Premissa Richard: a IA entra só no FAQ (lição 1); o FAQ responde a quem já ficou: o que a AION faz e não faz, fato x hipótese, cancelar, Pix, o que é grátis (PLANO.md §4, item 7). Sem urgência falsa. -->
+    <!-- Premissa Richard: a IA entra só no FAQ (lição 1); o FAQ responde a quem já ficou: o que a AION faz e não faz, fato x hipótese, cartão e cobrança no 8º dia, cancelar, Pix, o que é grátis (PLANO.md §4, item 7). Sem urgência falsa. -->
     <section class="faq" id="faq" aria-labelledby="faq-t">
       <p class="rubrica">Perguntas frequentes</p>
       <h2 id="faq-t">Antes de começar</h2>
-      <details open><summary>Quem responde às perguntas?</summary><p>A AION, a consulta à base do atlas. Ela responde só com o que está nas fichas, cita as fontes e diz quando não há documento.</p></details>
+      <details><summary>Quem responde às perguntas?</summary><p>A AION, a consulta à base do atlas. Ela responde só com o que está nas fichas, cita as fontes e diz quando não há documento.</p></details>
       <details><summary>Como sei o que é fato e o que é interpretação?</summary><p>Fato documentado, inferência e hipótese aparecem marcados de jeitos diferentes, no mapa, no mural e nas respostas. Hipótese aparece como pergunta.</p></details>
-      <details><summary>Preciso de cartão para testar?</summary><p>[placeholder: regra do teste de 7 dias]</p></details>
-      <details><summary>Como cancelo?</summary><p>[placeholder: fluxo de cancelamento]</p></details>
+      <details open><summary>Preciso de cartão para testar?</summary><p>Sim. O cartão é pedido no cadastro, depois do e-mail e da senha. Os 7 primeiros dias são grátis; a primeira cobrança (R$&nbsp;9,90 no Básico ou R$&nbsp;29,90 no Plus) acontece <span class="data-cobranca">no 8º dia</span>, se você não cancelar. Para não pagar nada, cancele antes, em [caminho do cancelamento].</p></details>
+      <details><summary>Como cancelo?</summary><p>Em [caminho do cancelamento], quando quiser. Se cancelar durante os 7 dias grátis, não há cobrança.</p></details>
       <details><summary>Posso pagar com Pix?</summary><p>Pix e cartão estão previstos para o checkout. [a confirmar com o gateway]</p></details>
       <details><summary>O que posso ver sem assinar?</summary><p>[placeholder: decisão 3 do PLANO.md, o que é grátis sem login]</p></details>
     </section>
 
-    <!-- CTA final: não há endpoint same-origin de cadastro. O botão abre o mural (/), onde a conta é criada. Sem promessa de entrar antes da confirmação de e-mail, quando o projeto a pede. -->
+    <!-- CTA final: não há endpoint same-origin de cadastro. O botão abre o mural (/), onde a conta é criada. Sem campos de cartão: o texto diz que o cartão vem depois de e-mail e senha. -->
     <section class="final" id="comecar" aria-labelledby="fin-t">
       <img class="final-selo" src="img/selo-cp-96.png" width="84" height="84" alt="">
       <h2 id="fin-t">O mapa que a manchete não monta, aberto para você por 7 dias.</h2>
       <a class="btn btn-osso btn-gr" href="/">Cadastre-se · 7 dias grátis</a>
-      <p class="micro micro-osso">A conta é criada no mural. Se o projeto pedir confirmação de e-mail, o link volta para este site.</p>
+      <p class="micro micro-osso">Primeiro, e-mail e senha. Na etapa seguinte pedimos o cartão: os 7 primeiros dias são grátis e a primeira cobrança acontece <span class="data-cobranca">no 8º dia</span>, se você não cancelar antes.</p>
     </section>
   </main>
 
