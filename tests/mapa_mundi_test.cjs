@@ -541,47 +541,72 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
         const caixaPais = await page.evaluate(a => {
           const painel = document.querySelector('.mm-painel').getBoundingClientRect();
           const svg = document.getElementById('mapa').getBoundingClientRect();
+          const zoom = document.querySelector('#mapa-mundi-tela .zoom').getBoundingClientRect();
+          const nota = document.getElementById('nota').getBoundingClientRect();
           const path = document.querySelector('#paises path.sel[data-iso="' + a + '"], #hist path.sel[data-iso="' + a + '"]');
           const marca = path || document.querySelector('#pinos g.sel[data-iso="' + a + '"] .ponto');
           const r = marca.getBoundingClientRect();
-          const vis = { left: svg.left, right: svg.right, top: svg.top, bottom: painel.top };
-          function cruza(box) {
-            return box.right > vis.left + 1 && box.left < vis.right - 1 && box.bottom > vis.top + 1 && box.top < vis.bottom - 1;
+          function cruza(a, b) {
+            const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+            const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+            return ox > 0.5 && oy > 0.5;
           }
-          const ligados = [...document.querySelectorAll('#paises path.lig, #hist path.lig, #pinos g.lig .ponto')].map(el => {
-            const b = el.getBoundingClientRect();
-            return { iso: el.getAttribute('data-iso') || el.parentElement.getAttribute('data-iso'), fora: !cruza(b) };
-          });
+          const botoes = [...document.querySelectorAll('#mm-conteudo .ligados button[data-iso]')].map(el => el.getAttribute('data-iso'));
+          const visiveis = botoes.filter(iso => window.__mapa.naTela(iso));
           const fora = [...document.querySelectorAll('#mm-fora .fora')].map(el => {
             const b = el.getBoundingClientRect();
-            const ox = Math.min(b.right, r.right) - Math.max(b.left, r.left);
-            const oy = Math.min(b.bottom, r.bottom) - Math.max(b.top, r.top);
             return {
               iso: el.getAttribute('data-iso'),
+              resto: el.getAttribute('data-resto') || '',
               nome: el.querySelector('text') ? el.querySelector('text').textContent : '',
               w: b.width,
               h: b.height,
-              cobre: ox > 1 && oy > 1
+              cobre: cruza(b, r),
+              zoom: cruza(b, zoom),
+              nota: cruza(b, nota),
+              folha: cruza(b, painel),
+              box: { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
             };
           });
-          return { iso: a, top: r.top, bottom: r.bottom, h: r.height, w: r.width, painelTop: painel.top, util: svg.width, ratio: r.width / svg.width, ligados, fora };
+          const representados = [];
+          for (const f of fora) {
+            if (f.iso && f.iso !== '+') representados.push(f.iso);
+            if (f.resto) representados.push(...f.resto.split(',').filter(Boolean));
+          }
+          return {
+            iso: a, top: r.top, bottom: r.bottom, h: r.height, w: r.width,
+            painelTop: painel.top, util: svg.width, ratio: r.width / svg.width,
+            total: botoes.length, visiveis, representados, fora
+          };
         }, iso);
         assert.ok(caixaPais.h > 1 && caixaPais.w > 1, JSON.stringify(caixaPais));
         assert.ok(caixaPais.bottom <= caixaPais.painelTop + 0.5, JSON.stringify(caixaPais));
-        if (iso === 'BR' || iso === 'US') {
-          assert.ok(caixaPais.ratio >= 0.35, JSON.stringify(caixaPais));
-          const porIso = {};
-          for (const p of caixaPais.ligados) {
-            if (!porIso[p.iso]) porIso[p.iso] = [];
-            porIso[p.iso].push(p.fora);
-          }
-          const isosFora = Object.keys(porIso).filter(iso => porIso[iso].every(Boolean)).sort();
-          const marcas = [...new Set(caixaPais.fora.map(p => p.iso))].sort();
-          assert.deepEqual(marcas, isosFora, JSON.stringify(caixaPais));
-          for (const f of caixaPais.fora) {
-            assert.ok(f.w >= 44 && f.h >= 44, JSON.stringify(f));
-            assert.ok(f.nome && f.nome.length > 1, JSON.stringify(f));
-            assert.equal(f.cobre, false, JSON.stringify(f));
+        if (iso === 'BR' || iso === 'US') assert.ok(caixaPais.ratio >= 0.35, JSON.stringify(caixaPais));
+        const visiveis = new Set(caixaPais.visiveis);
+        const representados = caixaPais.representados;
+        assert.equal(representados.length, new Set(representados).size, JSON.stringify(caixaPais));
+        for (const id of representados) assert.equal(visiveis.has(id), false, JSON.stringify(caixaPais));
+        const juntos = new Set([...visiveis, ...representados]);
+        assert.equal(juntos.size, caixaPais.total, JSON.stringify(caixaPais));
+        if (iso === 'BR' && !visiveis.has('US')) {
+          const eua = caixaPais.fora.find(f => f.iso === 'US');
+          assert.ok(eua && eua.nome === 'EUA', JSON.stringify(caixaPais));
+        }
+        for (const f of caixaPais.fora) {
+          assert.ok(f.w >= 44 && f.h >= 44, JSON.stringify(f));
+          assert.ok(f.nome && f.nome.length > 1, JSON.stringify(f));
+          assert.equal(f.cobre, false, JSON.stringify(f));
+          assert.equal(f.zoom, false, JSON.stringify(f));
+          assert.equal(f.nota, false, JSON.stringify(f));
+          assert.equal(f.folha, false, JSON.stringify(f));
+        }
+        for (let i = 0; i < caixaPais.fora.length; i++) {
+          for (let j = i + 1; j < caixaPais.fora.length; j++) {
+            const a = caixaPais.fora[i].box;
+            const b = caixaPais.fora[j].box;
+            const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+            const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+            assert.ok(!(ox > 0.5 && oy > 0.5), JSON.stringify(caixaPais.fora));
           }
         }
       }
