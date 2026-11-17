@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">
+  <title>Rosa dos ventos de atlas</title>
+  <g fill="none" stroke="#8b7660" stroke-opacity=".42" stroke-width=".65">
+    <circle cx="40" cy="40" r="25"/>
+    <circle cx="40" cy="40" r="27" stroke-opacity=".18"/>
+    <path d="M40 5v8m0 54v8M5 40h8m54 0h8M15 15l7 7m36 36 7 7M15 65l7-7m36-36 7-7"/>
+    <path d="M40 11 44 36 69 40 44 44 40 69 36 44 11 40 36 36Z"/>
+    <path d="M22 22 40 35 58 22 45 40 58 58 40 45 22 58 35 40Z" stroke-opacity=".24"/>
+    <path d="M40 11v58M11 40h58" stroke-opacity=".2"/>
+  </g>
+  <path fill="#ab9b82" fill-opacity=".27" d="M40 11v29l-4-4Zm0 29h29l-25 4Z"/>
+  <circle cx="40" cy="40" r="2" fill="#ab9b82" fill-opacity=".45"/>
+</svg>
