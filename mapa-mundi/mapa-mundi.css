@@ -2,7 +2,7 @@
 #mapa-mundi-tela {
   position: fixed;
   z-index: 70;
-  top: 48px;
+  top: 118px;
   left: 0;
   right: 0;
   bottom: 0;
@@ -16,14 +16,14 @@
 }
 #mapa-mundi-tela[hidden] { display: none !important; }
 body.mapa-mundi-aberto { overflow: hidden; }
-body.mapa-mundi-aberto .topbar,
-body.mapa-mundi-aberto .app-layout,
+body.mapa-mundi-aberto .app-layout { display: none !important; }
+body.mapa-mundi-aberto .topbar { position: relative; z-index: 90; }
 body.mapa-mundi-aberto .chat-panel,
-body.mapa-mundi-aberto .tutorial-backdrop { display: none !important; }
+body.mapa-mundi-aberto .tutorial-backdrop { z-index: 100; }
 body.mapa-mundi-aberto #map-mode {
   position: fixed;
   z-index: 80;
-  top: 0;
+  top: 70px;
   left: 0;
   right: 0;
   width: auto;
@@ -32,6 +32,14 @@ body.mapa-mundi-aberto #map-mode {
   margin: 0;
   border-radius: 0;
   display: flex !important;
+}
+body.mapa-mundi-aberto #map-mode [data-mapa-completo] {
+  border-width: 1px;
+  border-color: var(--border);
+}
+@media (max-width: 820px) {
+  #mapa-mundi-tela { top: 110px; }
+  body.mapa-mundi-aberto #map-mode { top: 62px; }
 }
 body.mapa-mundi-aberto #map-mode[hidden] { display: flex !important; }
 body.mapa-mundi-aberto #map-mode-count { display: none; }
@@ -86,7 +94,17 @@ body.mapa-mundi-aberto #map-mode-count { display: none; }
 .legenda ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .legenda li { display: flex; align-items: center; gap: 8px; }
 .legenda svg { flex: none; }
-.leg-painel { display: none; }
+#mm-conteudo > .leg-painel {
+  display: none;
+  position: static;
+  left: auto;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  max-width: none;
+  margin: 18px 0 0;
+  pointer-events: none;
+}
 #nota {
   position: absolute;
   left: 14px;
@@ -201,7 +219,7 @@ ul.paises, ul.ligados, ul.fichas, ul.casos, ul.ligadas { list-style: none; margi
 
 @media (max-width: 760px), (max-height: 500px) {
   #mm-palco > .legenda { display: none; }
-  .leg-painel { display: block; position: static; max-width: none; margin: 12px 0; background: var(--surface-3); pointer-events: none; }
+  #mm-conteudo > .leg-painel { display: block; background: var(--surface-3); }
 }
 @media (max-width: 760px) {
   #mapa-mundi-tela { grid-template-columns: minmax(0, 1fr); }

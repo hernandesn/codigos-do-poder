@@ -13,6 +13,40 @@ const root = path.resolve(__dirname, '..');
 const prints = path.resolve(root, '../prints');
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+function ariaN(page) {
+  return page.evaluate(() => document.querySelectorAll('#map-mode [aria-current]').length);
+}
+
+function sobreposicao(page) {
+  return page.evaluate(() => {
+    const painel = document.querySelector('.mm-painel');
+    const itens = [...painel.querySelectorAll('#alca, #mm-conteudo > .ptitulo, #mm-conteudo > .conta, #mm-conteudo > h3, #mm-conteudo > ul, #mm-conteudo > .ajuda, #mm-conteudo > .leg-painel')];
+    const vis = itens.map(el => {
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+      return { t: String(el.id || el.className || el.tagName).slice(0, 40), x: r.x, y: r.y, w: r.width, h: r.height, d: s.display, v: s.visibility };
+    }).filter(r => r.d !== 'none' && r.v !== 'hidden' && r.w > 1 && r.h > 1);
+    const hits = [];
+    for (let i = 0; i < vis.length; i++) {
+      for (let j = i + 1; j < vis.length; j++) {
+        const a = vis[i], b = vis[j];
+        const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        if (ox > 2 && oy > 2) hits.push([a.t, b.t, Math.round(ox), Math.round(oy)]);
+      }
+    }
+    return hits;
+  });
+}
+
+function ordemPainel(page) {
+  return page.evaluate(() => {
+    const kids = [...document.querySelectorAll('#mm-conteudo > *')];
+    const i = cls => kids.findIndex(e => e.classList.contains(cls));
+    return { nome: i('ptitulo'), resumo: i('conta'), lista: i('ligados'), hist: i('casos'), leg: i('leg-painel'), n: kids.length };
+  });
+}
+
 function gzip9(file) {
   return Number(execFileSync('gzip', ['-9', '-c', file], { cwd: root }).length);
 }
@@ -189,11 +223,14 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       await page.waitForFunction(() => window.mural);
       assert.equal(await page.evaluate(() => window.mural.getState().view), 'temas');
       assert.equal(await page.locator('#mapa-mundi-tela').count(), 0);
+      assert.equal(await ariaN(page), 1, 'home');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#map-mode [data-mapa-completo]')).borderTopWidth), '2px');
       for (const [hash, view] of [['#all', 'all'], ['#' + tema, tema], ['#OP01', 'caso:OP01']]) {
         await page.evaluate(() => localStorage.removeItem('codigos-do-poder:mural:v26'));
         await page.goto(origin + '/' + hash);
         await page.waitForFunction(v => window.mural && window.mural.getState().view === v, view);
         assert.equal(await page.locator('#mapa-mundi-tela:not([hidden])').count(), 0, hash);
+        if (hash === '#all' || hash === '#' + tema) assert.equal(await ariaN(page), 1, hash);
       }
       await page.goto(origin + '/#e=' + encodeURIComponent(entity));
       await page.waitForFunction(() => window.mural);
@@ -232,8 +269,55 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       await page.waitForFunction(() => document.querySelector('[data-mapa-mundi]')?.getAttribute('aria-current') === 'page');
       const aria = await page.evaluate(() => [...document.querySelectorAll('#map-mode button')].map(b => [b.getAttribute('data-mapa-mundi') !== null ? 'mundi' : b.getAttribute('data-modo-temas') !== null ? 'temas' : 'completo', b.getAttribute('aria-current')]));
       assert.deepEqual(aria.filter(x => x[1] === 'page').map(x => x[0]), ['mundi']);
+      assert.equal(await ariaN(page), 1, '#mapa-mundi');
+      const chrome = await page.evaluate(() => {
+        const tb = document.querySelector('.topbar').getBoundingClientRect();
+        const nav = document.getElementById('map-mode').getBoundingClientRect();
+        const tela = document.getElementById('mapa-mundi-tela').getBoundingClientRect();
+        const botoes = ['#tutorial-open', '#auth-button', '#chat-open'].map(s => {
+          const e = document.querySelector(s);
+          const r = e.getBoundingClientRect();
+          return { s, t: e.textContent.trim(), h: r.height, d: getComputedStyle(e).display };
+        });
+        return {
+          brand: document.querySelector('.brand').innerText,
+          tbH: tb.height,
+          tbBottom: tb.bottom,
+          tbDisplay: getComputedStyle(document.querySelector('.topbar')).display,
+          navTop: nav.top,
+          navBottom: nav.bottom,
+          telaTop: tela.top,
+          borda: getComputedStyle(document.querySelector('#map-mode [data-mapa-completo]')).borderTopWidth,
+          botoes
+        };
+      });
+      assert.notEqual(chrome.tbDisplay, 'none');
+      assert.match(chrome.brand, /Códigos do Poder/);
+      assert.ok(chrome.tbH >= 48, JSON.stringify(chrome));
+      assert.ok(chrome.navTop >= chrome.tbBottom - 2 && chrome.navTop - chrome.tbBottom < 8, JSON.stringify(chrome));
+      assert.ok(chrome.telaTop >= chrome.navBottom - 2 && chrome.telaTop - chrome.navBottom < 8, JSON.stringify(chrome));
+      assert.equal(chrome.borda, '1px');
+      for (const b of chrome.botoes) {
+        assert.notEqual(b.d, 'none', b.s);
+        assert.ok(b.h >= 20, JSON.stringify(b));
+      }
+      const ancoras = await page.evaluate(() => ({
+        US: window.__mapa.ancora('US'),
+        FR: window.__mapa.ancora('FR'),
+        GB: window.__mapa.ancora('GB'),
+        NO: window.__mapa.ancora('NO'),
+        RU: window.__mapa.ancora('RU')
+      }));
+      function noRetangulo(p, nome, lon0, lon1, lat0, lat1) {
+        assert.ok(p && p[0] >= lon0 && p[0] <= lon1 && p[1] >= lat0 && p[1] <= lat1, nome + ' ' + JSON.stringify(p));
+      }
+      noRetangulo(ancoras.US, 'US', -125, -66, 24, 50);
+      noRetangulo(ancoras.FR, 'FR', -5, 10, 41, 52);
+      noRetangulo(ancoras.GB, 'GB', -8, 2, 49, 61);
+      noRetangulo(ancoras.NO, 'NO', 4, 32, 57, 72);
+      noRetangulo(ancoras.RU, 'RU', 20, 140, 48, 78);
       let foco = null;
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 40; i++) {
         await page.keyboard.press('Tab');
         foco = await page.evaluate(() => {
           const e = document.activeElement;
@@ -377,19 +461,26 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       await page.touchscreen.tap(tx, ty);
       await page.waitForFunction(() => location.hash === '#mapa-mundi/BR');
       const tBR = await T();
+      assert.ok(tBR.k <= 4.001, 'zoom ' + tBR.k);
+      assert.ok(tBR.k !== pan.k || tBR.x !== pan.x || tBR.y !== pan.y, JSON.stringify({ pan, tBR }));
+      await page.evaluate(() => window.__mapa.reler());
+      assert.deepEqual(await T(), tBR);
+      const quadro = await page.evaluate(() => window.__mapa.quadro());
+      assert.equal(quadro.ok, true, JSON.stringify(quadro));
       await page.locator('#mm-conteudo .ligados button[data-iso="US"]').tap();
       await page.waitForFunction(() => location.hash === '#mapa-mundi/US');
       const tUS = await T();
+      assert.ok(tUS.k <= 4.001, 'zoom US ' + tUS.k);
+      assert.ok(tUS.k !== tBR.k || tUS.x !== tBR.x || tUS.y !== tBR.y, JSON.stringify({ tBR, tUS }));
+      await page.evaluate(() => window.__mapa.reler());
+      assert.deepEqual(await T(), tUS);
       await page.evaluate(() => window.__mapa.escolher('VA'));
       await page.waitForFunction(() => location.hash === '#mapa-mundi/VA');
       const tVA = await T();
+      assert.ok(tVA.k !== tUS.k || tVA.x !== tUS.x || tVA.y !== tUS.y, JSON.stringify({ tUS, tVA }));
       await page.goBack();
       await page.waitForTimeout(200);
-      const tBack = await T();
-      assert.deepEqual(tBR, pan);
-      assert.deepEqual(tUS, pan);
-      assert.deepEqual(tVA, pan);
-      assert.deepEqual(tBack, pan);
+      assert.deepEqual(await T(), tUS);
 
       const antesPainel = await T();
       const antesScroll = await page.locator('#mm-conteudo').evaluate(e => e.scrollTop);
@@ -410,7 +501,21 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
 
       await page.evaluate(() => window.__mapa.escolher('BR'));
       await page.waitForTimeout(200);
+      const ordemMeia = await ordemPainel(page);
+      assert.ok(ordemMeia.nome < ordemMeia.resumo && ordemMeia.resumo < ordemMeia.lista && ordemMeia.lista < ordemMeia.hist && ordemMeia.hist < ordemMeia.leg && ordemMeia.leg === ordemMeia.n - 1, JSON.stringify(ordemMeia));
+      assert.deepEqual(await sobreposicao(page), []);
       await page.screenshot({ path: path.join(prints, 'mob-393-brasil.png') });
+      await page.locator('#alca').click();
+      await page.waitForFunction(() => document.body.classList.contains('folha-cheia'));
+      const listaVisivel = await page.evaluate(() => {
+        const ul = document.querySelector('#mm-conteudo .ligados');
+        const painel = document.querySelector('.mm-painel').getBoundingClientRect();
+        const r = ul.getBoundingClientRect();
+        return Math.min(r.bottom, painel.bottom) - Math.max(r.top, painel.top) > 20;
+      });
+      assert.equal(listaVisivel, true);
+      assert.deepEqual(await sobreposicao(page), []);
+      await page.screenshot({ path: path.join(prints, 'mob-393-brasil-lista.png') });
       const pequenos = await page.evaluate(() => [...document.querySelectorAll('#mapa-mundi-tela button, #mapa-mundi-tela a, #map-mode button')].filter(e => {
         if (e.closest('.fichas')) return false;
         const r = e.getBoundingClientRect();
@@ -449,6 +554,9 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       assert.equal(geo.legPainel, true);
       assert.equal(geo.sobre, false);
       assert.equal(geo.scroll, true);
+      const ordemDeitada = await ordemPainel(page);
+      assert.ok(ordemDeitada.nome < ordemDeitada.resumo && ordemDeitada.resumo < ordemDeitada.lista && ordemDeitada.lista < ordemDeitada.hist && ordemDeitada.hist < ordemDeitada.leg && ordemDeitada.leg === ordemDeitada.n - 1, JSON.stringify(ordemDeitada));
+      assert.deepEqual(await sobreposicao(page), [], 'paisagem');
       await page.screenshot({ path: path.join(prints, 'mob-852-deitado.png') });
       assert.deepEqual(await page.evaluate(() => window.__csp), []);
       assert.deepEqual(errors, []);
