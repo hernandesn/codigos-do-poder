@@ -12,9 +12,9 @@ Critério, os três juntos:
 
 - `recovered.ausentes` não está vazio.
 - `entityIds` está vazio.
-- Toda oração (corte em `?`, `.`, `!` e quebra de linha) que cita um nome ausente é `perguntaDeLigacao`, e ao menos uma oração cita (`soLigacaoComAusente`, `chat_core.ts:2043-2054`). Oração que não cita o ausente não entra na conta. Se nenhuma cita, a pergunta segue ao modelo.
+- Toda oração interrogativa (a que termina em `?`) é pergunta de ligação e cita um nome ausente (`soLigacaoComAusente`, `chat_core.ts:2093-2101`). O Hotfix1b apertou o corte: uma oração interrogativa respondível, mesmo sem citar o ausente, manda a pergunta ao modelo.
 
-Recusa com `fail('fora_da_base', mensagemForaDaBase(ausentes))`. Um nome vira «X não está na base do atlas.». O crédito já reservado volta por `releasePair`. `reserveBudget` não é chamado, o OpenRouter não é chamado e não há log de custo. `releaseBudget` roda no par, sem hold, e não muda gasto nem reserva.
+Recusa com `fail('fora_da_base', mensagemForaDaBase(ausentes))`. Um nome vira «X não está na base do atlas.». Desde o Hotfix1b esta recusa corre antes de `reserveCredits` (nada é reservado). `reserveBudget` não é chamado, o OpenRouter não é chamado e não há log de custo.
 
 Exemplos:
 
@@ -53,7 +53,7 @@ Critério, todos juntos:
 - A mensagem não referencia a seleção: `essa(s)`, `esse(s)`, `esta(s)`, `este(s)`, `isso`, `isto`, `selecionad*`, `entidade(s)`, `mural`, `ligação`/`relação`, `liga`, `conecta*`, `compar*`, `resum*`, `expli*`, `fale`, `conte`, `quem`, `o que é`, `o que foi` (`referenciaSelecao`, `chat_core.ts:2058-2061`).
 - Nenhum termo, depois de `radicalSimples`, casa com nome de entidade/raiz, afirmação ou período do recorte da seleção (`casaRadical`, o mesmo uso de `ordenarRecortePorPergunta`).
 
-A recusa é `fail('fora_da_base')` com a mensagem genérica «Não encontrei isso na base do atlas.», sem reserva de orçamento e sem chamada ao modelo. O crédito volta como no item 1.
+A recusa é `fail('fora_da_base')` com a mensagem genérica «Não encontrei isso na base do atlas.», sem reserva de crédito, sem reserva de orçamento e sem chamada ao modelo. O Hotfix1b também conta nota e nome de fonte, e trata quando/onde/quem/como/por que/quanto como referência à seleção.
 
 Exemplos, seleção `["sfa","minas1941"]` (recorte de febre amarela / vacina 17D em `ctx_r2.json`):
 
@@ -80,7 +80,7 @@ O alvo «Entre 450 e 700 palavras» e o corte `CHAT_MAX_WORDS.basico` de 1000 pa
 
 `deslizesDeIdioma` (`chat_core.ts:1713-1723`), aplicado em `ortografia` só fora de URL (`chat_core.ts:1738`). Título de fonte passa por `publicChatText` / `fonteDetalhe`, não por esta troca.
 
-Palavra inteira, maiúscula inicial preservada, nesta ordem: `decades`→`décadas`, `decade`→`década`, `centuries`→`séculos`, `century`→`século`, `members`→`membros`, `board`→`conselho`. Depois continuam `havão`→`haviam` e `(é|era|foi) member de/da/do`→`membro`. «decade de» passa a ser coberto por `decade` inteiro.
+Palavra inteira, maiúscula inicial preservada, nesta ordem: `decades`→`décadas`, `decade`→`década`, `centuries`→`séculos`, `century`→`século`, `members`→`membros`, `voting`→`votação`. O Hotfix1b tirou `board`→`conselho`. A troca não ocorre dentro de nome próprio (palavra ao lado com inicial maiúscula). Depois continuam `havão`→`haviam` e `(é|era|foi) member de/da/do`→`membro`. «decade de» passa a ser coberto por `decade` inteiro.
 
 «Passaram duas decades depois.» fica «Passaram duas décadas depois.» `https://example.com/decades/board` e o título «Board decades report» permanecem.
 
@@ -88,7 +88,7 @@ Palavra inteira, maiúscula inicial preservada, nesta ordem: `decades`→`décad
 
 `CHAT_RETRY_DEADLINE_MS = 25_000` (`chat_core.ts:19`). O relógio do stream é `input.now ?? Date.now`, e o início é `input.startedAt ?? Date.now`.
 
-A segunda volta de qualidade só ocorre se o texto está em laço (`saidaEmLaco`) ou o JSON não fecha e `repararJsonTruncado` também falha (`chat_core.ts:2725-2731`), e ainda:
+A segunda volta de qualidade só ocorre se o texto está em laço (`saidaEmLaco`) ou o JSON não fecha e `parseModelJson(repararJsonTruncado(text))` também falha (`jsonPodeReparar`, `chat_core.ts:3111-3112`), e ainda:
 
 - a volta atual é a primeira,
 - as tentativas HTTP cobertas pela reserva não se esgotaram (`CHAT_MAX_ATTEMPTS` = 2),
@@ -103,7 +103,7 @@ JSON truncado e reparável segue com `repararJsonTruncado`, sem segunda chamada.
 
 Runner: `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
-Resultado: **137 passed, 0 failed, 3 skipped, 9 ignored**.
+Resultado do Hotfix1 (antes do 1b): **137 passed, 0 failed, 3 skipped, 9 ignored**. O Hotfix1b reexecutou a mesma suíte: **142 passed, 0 failed, 3 skipped, 9 ignored**.
 
 Skipped (o runner offline não tem `Deno.serve`; já eram estes três):
 
@@ -114,3 +114,63 @@ Skipped (o runner offline não tem `Deno.serve`; já eram estes três):
 Ignored (já estavam em `Deno.test.ignore` em `chat_core_test.ts`, fallback `sem_ligacao`): SPEC4 streamPrepared sem_base em dois temas; CRED1 sem_ligacao no Avançado, no Básico com cota esgotada, saldos concorrentes, release noop, falha no release, release recusado; REL1 ponta a ponta; SPEC4 streamPrepared com blocos vazios.
 
 Novos testes em `chat_hotfix1_test.ts`, importado em `chat_core_node_test.mjs:34`. Asserções antigas, inclusive o vazamento de `chat_r2_test.ts` e SEC-01/SPEC2, seguem iguais.
+
+## Hotfix1b
+
+Correção da revisão que reprovou o `86ab35c` e da simulação local. Só `chat_core.ts` muda na função. Auth, CORS, SQL, rate limit, preços e modelos não mudam. O protocolo SSE não muda.
+
+### A. Recusa antes de `reserveCredits`
+
+`recuperarContexto` passou para antes da reserva (`chat_core.ts:2506-2518`). Q14 e S-15 devolvem `fora_da_base` em `2520-2526`, e `reserveCredits` só roda em `2530`. Sem saldo, a resposta deixa de ser `sem_creditos`.
+
+A ordem que já existia ficou: login `2471`, body `2472`, rate `2478`. O rate limit não mudou de lugar nem de regra. Não há, neste arquivo, uma ordem auth → rate → body para reordenar: o `prepareChat` já era login → body → rate, e o handler continua JWT → leitura do body → `prepareChat`. A recuperação cabe entre o rate e a reserva sem mexer nisso.
+
+O LAT-FORA (contexto vazio ou raiz genérica) continua depois da reserva e devolve o crédito (`2545-2548`). Falha de `chatContext` agora ocorre antes de qualquer reserva (`2516-2518`); o teste `A2 falha da consulta acontece antes da reserva de crédito` em `chat_core_test.ts` passou a exigir `reserveCalls === 0`.
+
+Teste: `chat_hotfix1_test.ts:380` (`hotfix1b sem créditos: Q14 e S-15 saem fora_da_base e não reservam`). O Q14 com crédito, no teste de cima, também exige `reserveCalls === 0`.
+
+### B. Ligação ausente, por oração interrogativa
+
+`soLigacaoComAusente` (`chat_core.ts:2093-2101`) só recusa quando toda oração que termina em `?` é `perguntaDeLigacao` e cita um ausente. «O que a Rockefeller financiou no Brasil?» não é ligação, então o par inteiro vai ao modelo.
+
+Teste: `chat_hotfix1_test.ts:404` (`hotfix1b oração respondível antes da ligação com ausente vai ao modelo`) — 1 chamada.
+
+### C. Fora do tema com seleção, mais conservador
+
+`termoNoRecorte` (`chat_core.ts:2112-2126`) também casa nota da entidade, título e editor da fonte, além de nome, afirmação e período. `referenciaSelecao` (`2105-2109`) trata `quando`, `onde`, `quem`, `como`, `por que`/`porque` e `quanto` como referência à seleção. `expli*` saiu dessa lista: «explique uma receita de bolo» não aponta a seleção, e os termos não casam com o recorte.
+
+Teste: `chat_hotfix1_test.ts:421` (`hotfix1b seleção: quando vai ao modelo; explique uma receita recusa`). «quando começaram as atividades?» com `["sfa","minas1941"]` chama o modelo. «explique uma receita de bolo» com a mesma seleção é `fora_da_base`, sem reserva.
+
+### D. Truncada reparável de verdade
+
+`jsonPodeReparar` (`chat_core.ts:3111-3112`) faz `parseModelJson(repararJsonTruncado(text))`. Se o reparo devolve texto que não é JSON, a repetição dentro de 25 s continua.
+
+Teste: `chat_hotfix1_test.ts:440` (`hotfix1b JSON truncado irrecuperável repete uma vez dentro do prazo`) — 2 chamadas. A truncada reparável do teste anterior continua em 1 chamada.
+
+### E. Idioma sem `board`→`conselho`
+
+`deslizesDeIdioma` (`chat_core.ts:1725-1738`). A troca `board` saiu. `decades`, `decade`, `centuries`, `century` e `members` não trocam quando a palavra está colada a outra com inicial maiúscula (`vizinhoComInicialMaiuscula`, `1717-1721`), como em «Decades Fund». Entrou `voting`→`votação` (`1737`).
+
+Teste: `chat_hotfix1_test.ts:304-311`. «International Health Board», «General Education Board» e «Board of Directors» ficam. «duas decades depois» vira «duas décadas depois». «O Decades Fund» fica, e a segunda ocorrência de `decades` traduz.
+
+### F. Rótulo de campo e token com `_`
+
+`semRotulosDeCampo` (`chat_core.ts:1758-1772`) tira, no início da frase ou do parágrafo, `em_aberto` / `em aberto`, `justificativa`, `base`, `tipo` e `texto` seguidos de `:`, com ou sem `_`, e mantém o resto. `semSnakeSolto` (`1774-1777`), aplicado no texto visível em `1847`, tira token com `_` entre letras que sobrou. `ocultarIdsVisiveis` continua só nos ids do recorte; o snake minúsculo já vira «registro» em `publicChatText` (`pauta.ts`, arquivo intocado).
+
+Teste: o caso foi acrescentado em `chat_r2_test.ts:115` e as asserções novas estão em `127-131`, dentro de `R2 vazamento`. As asserções que já estavam nesse teste não foram afrouxadas.
+
+### G. Delta cru com CJK
+
+Nenhuma mudança de código e nenhuma mudança no protocolo SSE. O delta continua sendo o pedaço cru. O evento `final` é o texto que vale: o cliente do site já usa o final no lugar do que os deltas acumularam. Se o site passar a exibir o delta, o CJK que já saiu no delta fica como backlog.
+
+### H. Custo da primeira tentativa sem `usage.cost`
+
+Na repetição de qualidade (`chat_core.ts:2785-2786`), se a tentativa que vai ser descartada não trouxe `usage.cost`, entra `chatPartialSpendUsd` dessa tentativa (corpo enviado, tentativas HTTP e caracteres até ali, teto `prepared.estimate`). A segunda, quando traz `cost`, soma em cima. Antes esse parcial era zerado ao limpar `usage`.
+
+Teste: `chat_hotfix1_test.ts:472` (`hotfix1b primeira tentativa sem cost soma a estimativa parcial`). O commit e o log são a parcial da primeira mais `0.0002` da segunda.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**142 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos do Hotfix1.

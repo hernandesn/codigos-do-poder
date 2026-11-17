@@ -1709,17 +1709,32 @@ export function sanearModelo(
 
 const CJK_VISIVEL = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u
 
-/** Palavra inteira, maiúscula inicial preservada. Não mexe em URL (o chamador separa). */
+function palavraComInicialMaiuscula(word: string): boolean {
+  return /^\p{Lu}/u.test(word)
+}
+
+/** Nome próprio: a palavra trocável está colada a outra com inicial maiúscula («Decades Fund»). */
+function vizinhoComInicialMaiuscula(texto: string, inicio: number, tamanho: number): boolean {
+  const anterior = texto.slice(0, inicio).match(/(\p{L}+)\s*$/u)
+  const seguinte = texto.slice(inicio + tamanho).match(/^\s*(\p{L}+)/u)
+  return (anterior ? palavraComInicialMaiuscula(anterior[1]) : false)
+    || (seguinte ? palavraComInicialMaiuscula(seguinte[1]) : false)
+}
+
+/** Palavra inteira, maiúscula inicial preservada. Não mexe em URL (o chamador separa) nem em nome próprio. */
 function deslizesDeIdioma(t: string): string {
   const troca = (de: string, para: string) => {
-    t = t.replace(new RegExp(`\\b${de}\\b`, 'gi'), (w) => /^[\p{Lu}]/u.test(w) ? para[0].toUpperCase() + para.slice(1) : para)
+    t = t.replace(new RegExp(`\\b${de}\\b`, 'gi'), (w: string, offset: number, todo: string) => {
+      if (vizinhoComInicialMaiuscula(todo, offset, w.length)) return w
+      return palavraComInicialMaiuscula(w) ? para[0].toUpperCase() + para.slice(1) : para
+    })
   }
   troca('decades', 'décadas')
   troca('decade', 'década')
   troca('centuries', 'séculos')
   troca('century', 'século')
   troca('members', 'membros')
-  troca('board', 'conselho')
+  troca('voting', 'votação')
   return t.replace(/\bhav[aã]o\b/g, 'haviam').replace(/(?<!\p{L})(é|era|foi) member (d[aoe]s?)\b/gu, '$1 membro $2')
 }
 
@@ -1740,7 +1755,27 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
     return t
   }
   const semRecorte = (t: string) => t.replace(/\s*,?\s*\b(?:no|neste|deste|do|pelo) recorte\b/gi, '').replace(/\bo recorte\b/gi, 'a documentação').replace(/\brecorte\b/gi, 'documentação').replace(/\s+([,.;:?])/g, '$1')
-  const semRotulos = (t: string) => t
+  const semRotulosDeCampo = (t: string) => {
+    // Rótulo de campo no início da frase ou do parágrafo sai; o resto da frase fica.
+    const re = /(^\s*|\r?\n\s*|[.!?]\s+)(?:em[\s_]*aberto|justificativa|base|tipo|texto)\s*:\s*/giu
+    let next = t
+    for (let i = 0; i < 4; i++) {
+      const passo = next.replace(re, (match: string, prefix: string, offset: number) => {
+        if (offset === 0) return ''
+        if (/^\s*$/.test(prefix)) return prefix.match(/\r?\n/g)?.join('') ?? prefix
+        return prefix
+      })
+      if (passo === next) break
+      next = passo
+    }
+    return next
+  }
+  // publicChatText já troca snake_case minúsculo. O que sobra (Em_aberto e afins) sai do texto visível.
+  const semSnakeSolto = (t: string) => t.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1
+    ? parte
+    : parte.replace(/\b\p{L}+(?:_+\p{L}+)+\b/gu, '')
+  ).join('').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.;:!?])/g, '$1')
+  const semRotulos = (t: string) => semRotulosDeCampo(t)
     .replace(/\b(?:A|Esta é a) acusação(?:-tese)? é (?:direta|clara)\s*:\s*/g, '')
     .replace(/\bacusação-tese\b/gi, 'tese')
     .replace(/\b(O|o) veredito da tese\b/g, '$1 veredito')
@@ -1809,7 +1844,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
     if (semCjk.length < kept.length) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: kept.length - semCjk.length }))
     return semCjk.map((f) => f.trim()).join(' ').trim()
   }
-  const visivel = (value: string) => semForaDaBase(semRotulos(semRecorte(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx)))))))))
+  const visivel = (value: string) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))))
   const allowedEntities = new Set<string>()
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
     if (item?.id) allowedEntities.add(item.id)
@@ -2040,33 +2075,53 @@ export function perguntaDeLigacao(mensagem: string): boolean {
     .test(q)
 }
 
-function oracoesDaMensagem(mensagem: string): string[] {
-  return mensagem.split(/[?.!\n]+/).map((parte) => parte.trim()).filter(Boolean)
+function oracoesDaMensagem(mensagem: string): Array<{ texto: string; interrogativa: boolean }> {
+  const partes = mensagem.split(/([?.!\n]+)/)
+  const out: Array<{ texto: string; interrogativa: boolean }> = []
+  for (let i = 0; i < partes.length; i += 2) {
+    const texto = partes[i].trim()
+    if (!texto) continue
+    out.push({ texto, interrogativa: (partes[i + 1] ?? '').includes('?') })
+  }
+  return out
 }
 
-/** Toda oração que cita um ausente é pergunta de ligação, e ao menos uma cita. */
+/**
+ * Recusa só quando toda oração interrogativa é pergunta de ligação e cita um ausente.
+ * Oração interrogativa respondível (não é ligação, ou não cita o ausente) manda ao modelo.
+ */
 function soLigacaoComAusente(mensagem: string, ausentes: readonly string[]): boolean {
   if (!ausentes.length) return false
-  const citadas = oracoesDaMensagem(mensagem).filter((oracao) => {
-    const hay = foldName(oracao)
-    return ausentes.some((nome) => containsWhole(hay, foldName(nome)))
+  const interrogativas = oracoesDaMensagem(mensagem).filter((oracao) => oracao.interrogativa)
+  if (!interrogativas.length) return false
+  return interrogativas.every((oracao) => {
+    const hay = foldName(oracao.texto)
+    const cita = ausentes.some((nome) => containsWhole(hay, foldName(nome)))
+    return cita && perguntaDeLigacao(oracao.texto)
   })
-  return citadas.length > 0 && citadas.every((oracao) => perguntaDeLigacao(oracao))
 }
 
-/** Dêixis ou pedido que se refere à seleção, em vez de a um tema de fora. */
+/** Dêixis, pedido sobre a seleção, ou pergunta curta (quando/onde/quem/como/por que/quanto). */
 function referenciaSelecao(mensagem: string): boolean {
   const q = normalizeQuery(mensagem)
-  return /\b(?:essas?|esses?|estas?|estes?|isso|isto|selecionad\w*|entidades?|mural|ligac(?:ao|oes)|relac(?:ao|oes)|liga|conecta\w*|compar\w*|resum\w*|expli\w*|fale|conte|quem)\b/.test(q)
+  return /\b(?:essas?|esses?|estas?|estes?|isso|isto|selecionad\w*|entidades?|mural|ligac(?:ao|oes)|relac(?:ao|oes)|liga|conecta\w*|compar\w*|resum\w*|fale|conte|quem|quando|onde|como|quanto)\b/.test(q)
+    || /\bpor\s*que\b/.test(q)
     || /\bo que (?:e|foi)\b/.test(q)
 }
 
 function termoNoRecorte(termo: string, ctx: ChatContextPayload): boolean {
   const partes: string[] = []
-  for (const ent of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) if (ent?.nome) partes.push(ent.nome)
+  for (const ent of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
+    if (ent?.nome) partes.push(ent.nome)
+    if (ent?.nota) partes.push(ent.nota)
+  }
   for (const rel of ctx.relacoes ?? []) {
     if (rel?.afirmacao) partes.push(rel.afirmacao)
     if (rel?.periodo) partes.push(rel.periodo)
+  }
+  for (const fonte of ctx.fontes ?? []) {
+    if (fonte?.titulo) partes.push(fonte.titulo)
+    if (fonte?.editor) partes.push(fonte.editor)
   }
   return casaRadical(termo, radicaisDe(partes.join(' ')))
 }
@@ -2443,6 +2498,33 @@ export async function prepareChat(input: {
   if (await input.db.budgetSpentUsd(day) >= budget) return fail('orcamento_esgotado')
   const conversaId = request.conversa_id ?? crypto.randomUUID()
   const pedidoId = crypto.randomUUID()
+  const entityIds = request.contexto.entidades.slice(0, CHAT_ENTITY_MAX)
+  const pauta = isPautaRequest(request.mensagem)
+  let pautaPlan: PautaPlan | undefined
+  let context: ChatContextPayload
+  let recovered: ContextoRecuperado
+  try {
+    recovered = await recuperarContexto(input.db, request.mensagem, entityIds, pauta)
+    context = recovered.context
+    // LAT-FORA continua anterior à ampliação, inclusive quando há pedido de pauta.
+    if (pauta && !onlyGenericRootMatch(context, entityIds, recovered.query)) {
+      const expanded = await expandPautaContext(input.db, context, pautaSearchQuery(request.mensagem))
+      context = expanded.context
+      pautaPlan = expanded.plan
+    }
+    context = sanitizePublicContext(context)
+  } catch {
+    // A consulta falha antes da reserva: não há crédito nem orçamento para devolver.
+    return fail('rede', 'Falha ao consultar a base.')
+  }
+  // Q14 e S-15 antes de reserveCredits. Sem saldo, a resposta continua fora_da_base.
+  if (entityIds.length === 0 && soLigacaoComAusente(request.mensagem, recovered.ausentes)) {
+    return fail('fora_da_base', mensagemForaDaBase(recovered.ausentes))
+  }
+  if (selecaoForaDaPergunta(request.mensagem, context, recovered.textoVazio, entityIds)) {
+    return fail('fora_da_base')
+  }
+
   let reserved: Reservation | ReserveDenied
   try {
     reserved = await input.db.reserveCredits(input.userId, request.modelo, pedidoId, now)
@@ -2460,38 +2542,8 @@ export async function prepareChat(input: {
     ])
     return fail('sem_creditos')
   }
-
-  const entityIds = request.contexto.entidades.slice(0, CHAT_ENTITY_MAX)
-  const pauta = isPautaRequest(request.mensagem)
-  let pautaPlan: PautaPlan | undefined
-  let context: ChatContextPayload
-  let recovered: ContextoRecuperado
-  try {
-    recovered = await recuperarContexto(input.db, request.mensagem, entityIds, pauta)
-    context = recovered.context
-    // LAT-FORA continua anterior à ampliação, inclusive quando há pedido de pauta.
-    if (pauta && !onlyGenericRootMatch(context, entityIds, recovered.query)) {
-      const expanded = await expandPautaContext(input.db, context, pautaSearchQuery(request.mensagem))
-      context = expanded.context
-      pautaPlan = expanded.plan
-    }
-    context = sanitizePublicContext(context)
-  } catch {
-    await releasePair(input.db, reserved, pedidoId)
-    return fail('rede', 'Falha ao consultar a base.')
-  }
   // LAT-FORA: raiz única casada só por palavra genérica não vale uma chamada ao modelo.
   if (contextIsEmpty(context) || onlyGenericRootMatch(context, entityIds, recovered.query)) {
-    await releasePair(input.db, reserved, pedidoId)
-    return fail('fora_da_base')
-  }
-  // Q14: a pergunta é só a ligação com quem não está na base. Não reserva orçamento nem chama o modelo.
-  if (entityIds.length === 0 && soLigacaoComAusente(request.mensagem, recovered.ausentes)) {
-    await releasePair(input.db, reserved, pedidoId)
-    return fail('fora_da_base', mensagemForaDaBase(recovered.ausentes))
-  }
-  // S-15: seleção preenchida, mas a pergunta não fala desse recorte.
-  if (selecaoForaDaPergunta(request.mensagem, context, recovered.textoVazio, entityIds)) {
     await releasePair(input.db, reserved, pedidoId)
     return fail('fora_da_base')
   }
@@ -2731,6 +2783,7 @@ async function streamPreparedInner(input: {
     if (!precisaRepetir || qualidade >= 1 || tentativasHttp >= CHAT_MAX_ATTEMPTS || input.signal.aborted || decorrido > CHAT_RETRY_DEADLINE_MS) break
     console.info(JSON.stringify({ evento: 'chat_saida_repetida', motivo: emLaco ? 'laco' : truncada ? 'truncada' : 'json' }))
     if (typeof usage?.cost === 'number') custoTentativaAnterior += usage.cost
+    else custoTentativaAnterior += chatPartialSpendUsd(prepared.modelo, requestBody, tentativasEnviadas, charsGerados, prepared.estimate)
     usage = undefined
     text = ''
     requestBody = { ...prepared.requestBody, temperature: 0.5, seed: 7 }
@@ -3056,7 +3109,7 @@ function jsonCompleto(text: string): boolean {
 }
 
 function jsonPodeReparar(text: string): boolean {
-  try { repararJsonTruncado(text); return true } catch { return false }
+  try { parseModelJson(repararJsonTruncado(text)); return true } catch { return false }
 }
 
 /** Fecha o JSON truncado no último bloco completo de "blocos". */

@@ -164,9 +164,10 @@ Deno.test('hotfix1 Q14 recusa Odebrecht antes do modelo e devolve crédito sem h
   eq(dia.gasto, 0, 'gasto')
   eq(dia.reservado, 0, 'sem hold')
   const saldo = store.snapshot(USER, CLOCK())
-  eq(saldo.used, 0, 'crédito grátis devolvido')
-  eq(saldo.reserved, 0, 'reserva de crédito solta')
-  eq(saldo.releaseCalls, 1, 'uma devolução')
+  eq(saldo.used, 0, 'crédito grátis intacto')
+  eq(saldo.reserved, 0, 'sem reserva de crédito')
+  eq(saldo.reserveCalls, 0, 'não chama reserveCredits')
+  eq(saldo.releaseCalls, 0, 'não há o que devolver')
   eq(saldo.logs.length, 0, 'não grava custo')
 })
 
@@ -301,10 +302,13 @@ Deno.test('hotfix1 troca decades e vizinhos no texto, não na URL nem no título
     blocos: [{ tipo: 'documentado', texto, entidades: ['casa_ms'], relacoes: ['E150'], fontes: ['B01'] }],
   }, ctx).answer
   eq(t('Passaram duas decades depois.').blocos[0]?.texto, 'Passaram duas décadas depois.', 'decades')
-  eq(t('Uma Decade depois.').blocos[0]?.texto, 'Uma Década depois.', 'maiúscula')
+  eq(t('veio uma Decade depois.').blocos[0]?.texto, 'Veio uma Década depois.', 'maiúscula')
   // «dois séculos» e «um século» sem os anos caem no filtro de fato; a troca em si fica.
-  eq(t('Varios centuries e este century.').blocos[0]?.texto, 'Varios séculos e este século.', 'century')
-  eq(t('Os members do board votaram.').blocos[0]?.texto, 'Os membros do conselho votaram.', 'members e board')
+  eq(t('varios centuries e este century.').blocos[0]?.texto, 'Varios séculos e este século.', 'century')
+  eq(t('dois members votaram no voting.').blocos[0]?.texto, 'Dois membros votaram no votação.', 'members e voting')
+  eq(t('International Health Board e General Education Board.').blocos[0]?.texto, 'International Health Board e General Education Board.', 'boards intactos')
+  eq(t('O Board of Directors ficou.').blocos[0]?.texto, 'O Board of Directors ficou.', 'board of directors')
+  eq(t('O Decades Fund e duas decades depois.').blocos[0]?.texto, 'O Decades Fund e duas décadas depois.', 'nome próprio')
   const comUrl = t('Veja https://example.com/decades/board e duas decades depois.')
   eq(comUrl.blocos[0]?.texto, 'Veja https://example.com/decades/board e duas décadas depois.', 'URL intacta')
   eq(comUrl.fontes_detalhe.B01?.titulo, 'Board decades report', 'título da fonte intacto')
@@ -371,4 +375,133 @@ Deno.test('hotfix1 estimativa parcial usa o preço do teto e não o ultrapassa',
   assert(parcial > 0 && parcial < teto, `${parcial} contra ${teto}`)
   eq(chatPartialSpendUsd('basico', body, 1, 900, 0.000001), 0.000001, 'limitada à reserva')
   eq(chatPartialSpendUsd('basico', body, 0, 0, teto), 0, 'sem tentativa enviada e sem texto fica em zero')
+})
+
+Deno.test('hotfix1b sem créditos: Q14 e S-15 saem fora_da_base e não reservam', async () => {
+  const casos: Array<[string, string, string[], string]> = [
+    ['Q14', Q14, [], 'Odebrecht não está na base do atlas.'],
+    ['S-15', S15, SELECAO, 'Não encontrei isso na base do atlas.'],
+  ]
+  for (const [nome, mensagem, entidades, mensagemErro] of casos) {
+    const store = bancoDe(MAPA)
+    store.setUsed(USER, 20)
+    const modelo = cliente()
+    const { httpStatus, events } = await pedir(store, mensagem, entidades, modelo.openrouter)
+    const erro = erroDe(events)
+    eq(modelo.chamadas(), 0, `${nome}: sem modelo`)
+    eq(httpStatus, 200, `${nome}: status`)
+    eq(erro.code, 'fora_da_base', `${nome}: código`)
+    eq(erro.message, mensagemErro, `${nome}: mensagem`)
+    const saldo = store.snapshot(USER, CLOCK())
+    eq(saldo.reserveCalls, 0, `${nome}: não reserva crédito`)
+    eq(saldo.releaseCalls, 0, `${nome}: não devolve`)
+    eq(saldo.used, 20, `${nome}: cota intacta`)
+    eq(saldo.reserved, 0, `${nome}: sem hold de crédito`)
+    eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, `${nome}: sem hold de orçamento`)
+  }
+})
+
+Deno.test('hotfix1b oração respondível antes da ligação com ausente vai ao modelo', async () => {
+  const mensagem = 'O que a Rockefeller financiou no Brasil? Qual a relação com a Odebrecht?'
+  const recorte = MAPA['|rockefeller foundation']
+  assert(recorte, 'recorte da fundação')
+  const store = createMemoryDb({ clock: CLOCK })
+  store.chatContext = async (_ids, query) => {
+    const q = (query ?? '').toLowerCase()
+    if (q === 'odebrecht' || q === 'familia odebrecht') return vazio()
+    if (q.includes('rockefeller')) return JSON.parse(JSON.stringify(recorte)) as ChatContextPayload
+    return vazio()
+  }
+  const modelo = cliente()
+  await pedir(store, mensagem, [], modelo.openrouter)
+  eq(modelo.chamadas(), 1, 'a primeira oração é respondível')
+  eq(store.snapshot(USER, CLOCK()).reserveCalls, 1, 'segue e reserva')
+})
+
+Deno.test('hotfix1b seleção: quando vai ao modelo; explique uma receita recusa', async () => {
+  const casos: Array<[string, string, number]> = [
+    ['quando', 'quando começaram as atividades?', 1],
+    ['explique', 'explique uma receita de bolo', 0],
+  ]
+  for (const [nome, mensagem, chamadas] of casos) {
+    const store = bancoDe(MAPA)
+    const modelo = cliente()
+    const { events } = await pedir(store, mensagem, SELECAO, modelo.openrouter)
+    eq(modelo.chamadas(), chamadas, `${nome}: chamadas`)
+    if (chamadas === 0) {
+      const erro = erroDe(events)
+      eq(erro.code, 'fora_da_base', `${nome}: código`)
+      eq(erro.message, 'Não encontrei isso na base do atlas.', `${nome}: mensagem`)
+      eq(store.snapshot(USER, CLOCK()).reserveCalls, 0, `${nome}: não reserva`)
+    }
+  }
+})
+
+Deno.test('hotfix1b JSON truncado irrecuperável repete uma vez dentro do prazo', async () => {
+  const irrecuperavel = '{"blocos":[{"tipo":"documentado","texto":"O contrato de 1936","entidades":[,"casa_ms"],"relacoes":["E150"],"fontes":["B01"]},{"tipo":"documentado","texto":"corte'
+  const bom = JSON.stringify({
+    blocos: [{ tipo: 'documentado', texto: 'O contrato de 1936 aproximou as casas.', entidades: ['casa_ms'], relacoes: ['E150'], fontes: ['B01'] }],
+    sem_base: false,
+    em_aberto: null,
+  })
+  const inicio = 1_700_000_000_000
+  const store = bancoFixo(campanhaCtx())
+  const prepared = await prepareChat({
+    userId: USER, body: { mensagem: 'qual a relacao da campanha?', contexto: { entidades: [] }, modelo: 'basico' },
+    db: store, clock: CLOCK, inferenceKey: key(),
+  })
+  if (!prepared.ok) throw new Error(`prepare: ${JSON.stringify(prepared.event)}`)
+  const emitted: ChatSseEvent[] = []
+  let chamadas = 0
+  await streamPrepared({
+    prepared, db: store, startedAt: inicio, now: () => inicio + 1_000,
+    openrouter: { async *stream() {
+      const raw = chamadas === 0 ? irrecuperavel : bom
+      chamadas += 1
+      yield { delta: raw }
+    } },
+    signal: new AbortController().signal,
+    emit: (event) => emitted.push(event),
+  })
+  eq(chamadas, 2, 'irrecuperável abre a segunda tentativa')
+  const final = emitted.find((event) => event.event === 'final')
+  assert(final && final.event === 'final', 'a segunda tentativa fecha')
+  assert(final.data.blocos.some((bloco) => bloco.texto.includes('1936')), 'texto da segunda')
+})
+
+Deno.test('hotfix1b primeira tentativa sem cost soma a estimativa parcial', async () => {
+  const primeira = '{"blocos":[{"tipo":"documentado","texto":"O contrato de 1936","entidades":[,"casa_ms"],"relacoes":["E150"],"fontes":["B01"]},{"tipo":"x"'
+  const bom = JSON.stringify({
+    blocos: [{ tipo: 'documentado', texto: 'O contrato de 1936 aproximou as casas.', entidades: ['casa_ms'], relacoes: ['E150'], fontes: ['B01'] }],
+    sem_base: false,
+    em_aberto: null,
+  })
+  const inicio = 1_700_000_000_000
+  const store = bancoFixo(campanhaCtx())
+  const prepared = await prepareChat({
+    userId: USER, body: { mensagem: 'qual a relacao da campanha?', contexto: { entidades: [] }, modelo: 'basico' },
+    db: store, clock: CLOCK, inferenceKey: key(),
+  })
+  if (!prepared.ok) throw new Error(`prepare: ${JSON.stringify(prepared.event)}`)
+  const orcamento = espiar(store)
+  let chamadas = 0
+  await streamPrepared({
+    prepared, db: store, startedAt: inicio, now: () => inicio + 1_000,
+    openrouter: { async *stream() {
+      chamadas += 1
+      if (chamadas === 1) {
+        yield { delta: primeira }
+        return
+      }
+      yield { delta: bom, usage: { prompt_tokens: 11, completion_tokens: 20, cost: 0.0002 } }
+    } },
+    signal: new AbortController().signal,
+    emit: () => {},
+  })
+  const parcial = chatPartialSpendUsd('basico', prepared.requestBody, 1, primeira.length, prepared.estimate)
+  eq(chamadas, 2, 'segunda tentativa com custo')
+  assert(parcial > 0 && parcial < prepared.estimate, `parcial ${parcial} fora de (0, ${prepared.estimate})`)
+  eq(orcamento.commits.length, 1, 'um commit')
+  eq(orcamento.commits[0], parcial + 0.0002, 'parcial da primeira mais o cost da segunda')
+  eq(store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, parcial + 0.0002, 'log soma os dois')
 })

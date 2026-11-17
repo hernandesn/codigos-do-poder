@@ -401,7 +401,7 @@ Deno.test('A2 não repete consulta quando a primeira já tem contexto', async ()
   }
 })
 
-Deno.test('A2 falha da primeira consulta ou do retry libera as reservas', async () => {
+Deno.test('A2 falha da consulta acontece antes da reserva de crédito', async () => {
   for (const failAt of [1, 2]) {
     const store = db()
     const lookup = store.chatContext.bind(store)
@@ -419,8 +419,10 @@ Deno.test('A2 falha da primeira consulta ou do retry libera as reservas', async 
     assert(!result.ok, 'falha controlada')
     eq((result.event.data as { code: string }).code, 'rede', 'erro de consulta preservado')
     eq(calls, failAt, 'nenhuma tentativa após a exceção')
-    eq(store.releaseCalls, 1, 'devolve crédito uma vez')
-    eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'devolve orçamento')
+    eq(store.reserveCalls, 0, 'não reserva crédito')
+    eq(store.releaseCalls, 0, 'não há reserva para devolver')
+    eq(store.snapshot(USER).reserved, 0, 'sem crédito reservado')
+    eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'sem orçamento')
   }
 })
 
