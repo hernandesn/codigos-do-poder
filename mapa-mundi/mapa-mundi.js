@@ -4,7 +4,7 @@
   var d3 = window.d3mapa;
   if (!d3) return;
 
-  var W, D, P, byNum, porId, tela, svgEl, svg, g, gPais, gHist, gArc, gPin, conteudo, legPainel, xpFeat;
+  var W, D, P, byNum, porId, tela, svgEl, svg, g, gPais, gHist, gArc, gPin, gFora, conteudo, legPainel, xpFeat;
   var proj, path, anchor, ancoraGeo, sel, T, zm, moved, downAt, desenhado, ultW, ultH, geo, cameras;
 
   var PINOS = { VA: [12.45, 41.9], MT: [14.4, 35.9], LU: [6.13, 49.8] };
@@ -76,12 +76,27 @@
       role: 'img',
       'aria-label': 'Mapa-múndi dos países com fichas. Alternativa acessível: lista de países no painel.'
     });
+    var defs = svgElns('defs');
+    var tintaPena = svgElns('linearGradient', { id: 'mm-tinta-pena', x1: '0%', y1: '0%', x2: '100%', y2: '100%' });
+    tintaPena.append(
+      svgElns('stop', { offset: '0%', class: 'pena-borda' }),
+      svgElns('stop', { offset: '38%' }),
+      svgElns('stop', { offset: '58%', class: 'pena-centro' }),
+      svgElns('stop', { offset: '100%', class: 'pena-borda' })
+    );
+    var pontaPena = svgElns('marker', { id: 'mm-ponta-pena', viewBox: '0 0 6 6', refX: '3', refY: '3', markerWidth: '3', markerHeight: '3', markerUnits: 'strokeWidth', orient: 'auto' });
+    pontaPena.append(svgElns('path', { d: 'M3 0.5 5.5 3 3 5.5 0.5 3Z' }));
+    var pontaHipotese = svgElns('marker', { id: 'mm-ponta-hipotese', viewBox: '0 0 6 6', refX: '3', refY: '3', markerWidth: '3', markerHeight: '3', markerUnits: 'strokeWidth' });
+    pontaHipotese.append(svgElns('circle', { cx: '3', cy: '3', r: '2' }));
+    defs.append(tintaPena, pontaPena, pontaHipotese);
+    svgEl.append(defs);
     var cena = svgElns('g', { id: 'mm-cena' });
     cena.append(svgElns('g', { id: 'paises' }));
     cena.append(svgElns('g', { id: 'hist' }));
     cena.append(svgElns('g', { id: 'arcos' }));
     cena.append(svgElns('g', { id: 'pinos' }));
     svgEl.append(cena);
+    svgEl.append(svgElns('g', { id: 'mm-fora' }));
     palco.append(svgEl);
     palco.append(el('p', { id: 'nota', text: 'Mostrando só as fichas com país identificado.' }));
     palco.append(el('div', { class: 'zoom' },
@@ -105,6 +120,7 @@
     gHist = svg.select('#hist');
     gArc = svg.select('#arcos');
     gPin = svg.select('#pinos');
+    gFora = svg.select('#mm-fora');
   }
 
   function geometriaMaior(f) {
@@ -219,6 +235,7 @@
     svg.attr('data-k', T.k.toFixed(2));
     desenharArcos();
     marcar();
+    desenharFora();
     desenhado = true;
   }
 
@@ -261,8 +278,19 @@
     svg.call(zm.transform, new d3.zoomIdentity.constructor(k, tx, ty));
   }
 
-  function enquadrar(iso) {
+  function modoCelular() {
+    return window.innerWidth < 700;
+  }
+
+  function enquadrar(iso, opt) {
+    opt = opt || {};
     if (!P[iso] || !path) return;
+    if (modoCelular() && !opt.conjunto) enquadrarPais(iso);
+    else enquadrarConjunto(iso);
+    desenharFora();
+  }
+
+  function enquadrarConjunto(iso) {
     var ids = [iso].concat(Object.keys(P[iso].ligacoes || {}));
     var feats = [];
     ids.forEach(function (a) {
@@ -286,6 +314,37 @@
     var ty = vis.y + vis.h / 2 - cy * k;
     var aj = ajustarPais(iso, k, tx, ty, vis);
     aplicar(aj.k, aj.tx, aj.ty);
+  }
+
+  function enquadrarPais(iso) {
+    var f = featureDe(iso);
+    if (!f) return;
+    var b = path.bounds(f);
+    if (!isFinite(b[0][0]) || !isFinite(b[1][0]) || !isFinite(b[0][1]) || !isFinite(b[1][1])) return;
+    var vis = areaVisivel();
+    var bw = Math.abs(b[1][0] - b[0][0]);
+    var bh = Math.abs(b[1][1] - b[0][1]);
+    var pontual = bw < 1 && bh < 1;
+    var k;
+    if (pontual) k = 6;
+    else {
+      bw = Math.max(bw, 1);
+      bh = Math.max(bh, 1);
+      var k35 = (0.35 * vis.w) / bw;
+      var kLado = Math.max(40, vis.w - 224) / bw;
+      var kAlto = Math.max(40, vis.h - 12) / bh;
+      k = Math.min(6, Math.max(k35, Math.min(kLado, kAlto)));
+      if (!(k > 0)) return;
+    }
+    var cx = (b[0][0] + b[1][0]) / 2;
+    var cy = (b[0][1] + b[1][1]) / 2;
+    var tx = vis.x + vis.w / 2 - cx * k;
+    var folga = pontual ? 16 : 8;
+    var topo = vis.y + 4;
+    var base = vis.y + vis.h - 4;
+    var alt = (b[1][1] - b[0][1]) * k + folga * 2;
+    var ty = alt <= base - topo ? (topo + base) / 2 - cy * k : base - folga - b[1][1] * k;
+    aplicar(k, tx, ty);
   }
 
   function ajustarPais(iso, k, tx, ty, vis) {
@@ -338,6 +397,204 @@
       return p[0] >= vis.x - tol && p[0] <= vis.x + vis.w + tol && p[1] >= vis.y - tol && p[1] <= vis.y + vis.h + tol;
     });
     return { ok: ok, k: T.k, vis: vis, cantos: cantos };
+  }
+
+  function nomeCurto(iso) {
+    if (iso === 'US') return 'EUA';
+    if (iso === 'GB') return 'R. Unido';
+    var n = P[iso] ? P[iso].nome : iso;
+    if (n.length <= 10) return n;
+    var pedaco = n.split(/[\s,–-]/)[0];
+    return pedaco.length <= 10 ? pedaco : pedaco.slice(0, 9);
+  }
+
+  function caixaTela(iso) {
+    var f = featureDe(iso);
+    if (!f || !path || !T) return null;
+    var b = path.bounds(f);
+    if (!isFinite(b[0][0]) || !isFinite(b[1][0]) || !isFinite(b[0][1]) || !isFinite(b[1][1])) return null;
+    var x0 = b[0][0] * T.k + T.x, y0 = b[0][1] * T.k + T.y;
+    var x1 = b[1][0] * T.k + T.x, y1 = b[1][1] * T.k + T.y;
+    return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+  }
+
+  function cruzaCaixa(a, b, folga) {
+    folga = folga || 0;
+    return a.x < b.x + b.w + folga && a.x + a.w + folga > b.x && a.y < b.y + b.h + folga && a.y + a.h + folga > b.y;
+  }
+
+  function setaFora(dir) {
+    if (dir === 'd') return 'M1 1 L11 6 L1 11 Z';
+    if (dir === 'e') return 'M11 1 L1 6 L11 11 Z';
+    if (dir === 'c') return 'M1 11 L6 1 L11 11 Z';
+    return 'M1 1 L6 11 L11 1 Z';
+  }
+
+  function pontoTela(iso) {
+    if (!T) return null;
+    if (anchor[iso]) return [anchor[iso][0] * T.k + T.x, anchor[iso][1] * T.k + T.y];
+    var box = caixaTela(iso);
+    if (!box) return null;
+    return [box.x + box.w / 2, box.y + box.h / 2];
+  }
+
+  function naTela(iso) {
+    var p = pontoTela(iso);
+    if (!p || !isFinite(p[0]) || !isFinite(p[1])) return false;
+    var vis = areaVisivel();
+    return p[0] >= vis.x && p[0] <= vis.x + vis.w && p[1] >= vis.y && p[1] <= vis.y + vis.h;
+  }
+
+  function pesoLig(iso) {
+    var L = sel && P[sel] && P[sel].ligacoes[iso];
+    if (!L) return 0;
+    return (L.s || 0) + (L.t || 0) + (L.p || 0);
+  }
+
+  function caixaRel(el, folga) {
+    if (!el || !svgEl) return null;
+    var s = svgEl.getBoundingClientRect();
+    var r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return null;
+    folga = folga || 0;
+    return { x: r.left - s.left - folga, y: r.top - s.top - folga, w: r.width + folga * 2, h: r.height + folga * 2 };
+  }
+
+  function caixaPrincipal(iso) {
+    var p = pontoTela(iso);
+    if (PINOS[iso] && p) return { x: p[0] - 18, y: p[1] - 18, w: 36, h: 36 };
+    var f = featureDe(iso);
+    if (!f || !path || !T) return null;
+    var maior = geometriaMaior(f);
+    var b = path.bounds({ type: 'Feature', properties: {}, geometry: maior });
+    if (!isFinite(b[0][0]) || !isFinite(b[1][0])) return null;
+    var x0 = b[0][0] * T.k + T.x, y0 = b[0][1] * T.k + T.y;
+    var x1 = b[1][0] * T.k + T.x, y1 = b[1][1] * T.k + T.y;
+    return { x: Math.min(x0, x1) - 6, y: Math.min(y0, y1) - 6, w: Math.abs(x1 - x0) + 12, h: Math.abs(y1 - y0) + 12 };
+  }
+
+  function cabeFora(r, vis, bloqueios) {
+    var m = 4;
+    if (r.x < vis.x + m - 0.5 || r.y < vis.y + m - 0.5) return false;
+    if (r.x + r.w > vis.x + vis.w - m + 0.5 || r.y + r.h > vis.y + vis.h - m + 0.5) return false;
+    var i;
+    for (i = 0; i < bloqueios.length; i++) if (cruzaCaixa(r, bloqueios[i], 2)) return false;
+    return true;
+  }
+
+  function larguraChip(nome) {
+    return Math.max(44, Math.min(108, Math.round(28 + String(nome).length * 8.2)));
+  }
+
+  function acharLugar(it, vis, bloqueios) {
+    var H = 44;
+    var m = 4;
+    var larguras = [larguraChip(it.nome), 44];
+    var vx0 = vis.x, vy0 = vis.y, vx1 = vis.x + vis.w, vy1 = vis.y + vis.h;
+    var meioX = (vx0 + vx1) / 2, meioY = (vy0 + vy1) / 2;
+    var prefs = [];
+    if (Math.abs(it.cx - meioX) >= Math.abs(it.cy - meioY)) prefs.push(it.cx < meioX ? 'e' : 'd');
+    else prefs.push(it.cy < meioY ? 'c' : 'b');
+    ['e', 'd', 'c', 'b'].forEach(function (e) { if (prefs.indexOf(e) < 0) prefs.push(e); });
+    var li, i, dir, W, x, y, r, yPasso, xPasso;
+    for (li = 0; li < larguras.length; li++) {
+      W = larguras[li];
+      for (i = 0; i < prefs.length; i++) {
+        dir = prefs[i];
+        if (dir === 'e' || dir === 'd') {
+          x = dir === 'e' ? vx0 + m : vx1 - m - W;
+          for (y = vy0 + m; y + H <= vy1 - m + 0.5; y += 4) {
+            r = { x: x, y: y, w: W, h: H };
+            if (cabeFora(r, vis, bloqueios)) return { x: x, y: y, w: W, h: H, dir: dir };
+          }
+        } else {
+          y = dir === 'c' ? vy0 + m : vy1 - m - H;
+          for (x = vx0 + m; x + W <= vx1 - m + 0.5; x += 4) {
+            r = { x: x, y: y, w: W, h: H };
+            if (cabeFora(r, vis, bloqueios)) return { x: x, y: y, w: W, h: H, dir: dir };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function desenharFora() {
+    if (!gFora) return;
+    var postos = [];
+    if (modoCelular() && sel && P[sel] && T && path) {
+      var vis = areaVisivel();
+      var fixos = [];
+      var zoomBox = caixaRel(document.querySelector('#mapa-mundi-tela .zoom'), 6);
+      var notaBox = caixaRel($('nota'), 6);
+      if (zoomBox) fixos.push(zoomBox);
+      if (notaBox) fixos.push(notaBox);
+      var selBox = caixaPrincipal(sel);
+      var ocupados = fixos.slice();
+      if (selBox) ocupados.push(selBox);
+      function colocar(it) {
+        var lugar = acharLugar(it, vis, ocupados);
+        if (lugar) return lugar;
+        return acharLugar(it, vis, fixos.concat(ocupados.filter(function (b) { return b !== selBox; })));
+      }
+      var fila = Object.keys(P[sel].ligacoes || {}).filter(function (iso) { return !naTela(iso); });
+      fila.sort(function (a, b) { return pesoLig(b) - pesoLig(a) || (a < b ? -1 : a > b ? 1 : 0); });
+      var extras = [];
+      if (fila.length > 6) {
+        extras = fila.slice(5);
+        fila = fila.slice(0, 5);
+      }
+      function guardar(iso, nome, resto, lugar) {
+        ocupados.push(lugar);
+        postos.push({ iso: iso, nome: nome, resto: resto, x: lugar.x, y: lugar.y, w: lugar.w, h: lugar.h, dir: lugar.dir });
+      }
+      fila.forEach(function (iso) {
+        var p = pontoTela(iso) || [vis.x, vis.y];
+        var it = { iso: iso, nome: nomeCurto(iso), cx: p[0], cy: p[1] };
+        var lugar = colocar(it);
+        if (lugar) guardar(iso, it.nome, '', lugar);
+      });
+      if (extras.length) {
+        var nomeMais = '+' + extras.length;
+        var lugarMais = colocar({ nome: nomeMais, cx: vis.x + vis.w, cy: vis.y + vis.h / 2 });
+        if (lugarMais) guardar('+', nomeMais, extras.join(','), lugarMais);
+      }
+    }
+    var join = gFora.selectAll('g.fora').data(postos, function (d) { return d.iso; });
+    join.exit().remove();
+    var enter = join.enter().append('g')
+      .attr('class', 'fora')
+      .attr('role', 'button')
+      .attr('tabindex', '0');
+    enter.append('rect').attr('class', 'alvo').attr('rx', 3);
+    enter.append('path').attr('class', 'seta');
+    enter.append('text');
+    var all = enter.merge(join);
+    all.attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; })
+      .attr('data-iso', function (d) { return d.iso; })
+      .attr('data-resto', function (d) { return d.resto || null; })
+      .attr('aria-label', function (d) {
+        if (d.resto) return 'Enquadrar o conjunto. Mais ' + d.resto.split(',').length + ' países fora da tela.';
+        return 'Enquadrar o conjunto. ' + d.nome + ' está fora da tela.';
+      })
+      .on('pointerdown mousedown touchstart', function (ev) { ev.stopPropagation(); })
+      .on('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!sel) return;
+        enquadrar(sel, { conjunto: true });
+        cameras[location.hash] = { x: T.x, y: T.y, k: T.k };
+      })
+      .on('keydown', function (ev) {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        ev.preventDefault();
+        if (!sel) return;
+        enquadrar(sel, { conjunto: true });
+        cameras[location.hash] = { x: T.x, y: T.y, k: T.k };
+      });
+    all.select('rect').attr('width', function (d) { return d.w; }).attr('height', function (d) { return d.h; });
+    all.select('path').attr('d', function (d) { return setaFora(d.dir); }).attr('transform', 'translate(8,16)');
+    all.select('text').attr('x', 24).attr('y', 28).text(function (d) { return d.nome; });
   }
 
   function grupo(n) {
@@ -543,7 +800,10 @@
       gPin.selectAll('g').attr('transform', function (a) {
         return 'translate(' + anchor[a] + ') scale(' + (1 / T.k) + ')';
       });
-    }).on('end', function () { setTimeout(function () { moved = false; }, 0); });
+    }).on('end', function () {
+      setTimeout(function () { moved = false; }, 0);
+      desenharFora();
+    });
     svg.call(zm).on('dblclick.zoom', null);
     $('zmais').addEventListener('click', function () { svg.call(zm.scaleBy, 1.6); });
     $('zmenos').addEventListener('click', function () { svg.call(zm.scaleBy, 1 / 1.6); });
@@ -577,6 +837,7 @@
       },
       quadro: quadro,
       ancora: function (a) { return ancoraGeo[a] ? ancoraGeo[a].slice() : null; },
+      naTela: function (a) { return naTela(a); },
       mundo: W,
       caminho: function (geom) { return path ? path(geom) : ''; },
       fichas: function (a) { return P[a] ? P[a].fichas.length : 0; },

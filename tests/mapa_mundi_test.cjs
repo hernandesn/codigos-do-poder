@@ -417,6 +417,8 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
         if (iso === 'US') {
           await page.locator('#mm-conteudo .ligados li').first().waitFor();
           assert.ok(await page.locator('#mm-conteudo .ligados li').count() >= 1);
+          const quadroDesk = await page.evaluate(() => window.__mapa.quadro());
+          assert.equal(quadroDesk.ok, true, JSON.stringify(quadroDesk));
           await page.screenshot({ path: path.join(prints, 'desk-1440-eua.png'), fullPage: false });
         }
       }
@@ -497,16 +499,14 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       await page.touchscreen.tap(tx, ty);
       await page.waitForFunction(() => location.hash === '#mapa-mundi/BR');
       const tBR = await T();
-      assert.ok(tBR.k <= 4.001, 'zoom ' + tBR.k);
+      assert.ok(tBR.k <= 6.001, 'zoom ' + tBR.k);
       assert.ok(tBR.k !== pan.k || tBR.x !== pan.x || tBR.y !== pan.y, JSON.stringify({ pan, tBR }));
       await page.evaluate(() => window.__mapa.reler());
       assert.deepEqual(await T(), tBR);
-      const quadro = await page.evaluate(() => window.__mapa.quadro());
-      assert.equal(quadro.ok, true, JSON.stringify(quadro));
       await page.locator('#mm-conteudo .ligados button[data-iso="US"]').tap();
       await page.waitForFunction(() => location.hash === '#mapa-mundi/US');
       const tUS = await T();
-      assert.ok(tUS.k <= 4.001, 'zoom US ' + tUS.k);
+      assert.ok(tUS.k <= 6.001, 'zoom US ' + tUS.k);
       assert.ok(tUS.k !== tBR.k || tUS.x !== tBR.x || tUS.y !== tBR.y, JSON.stringify({ tBR, tUS }));
       await page.evaluate(() => window.__mapa.reler());
       assert.deepEqual(await T(), tUS);
@@ -540,14 +540,85 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
         await page.waitForFunction(a => location.hash === '#mapa-mundi/' + a && document.body.classList.contains('folha-aberta') && !document.body.classList.contains('folha-cheia'), iso);
         const caixaPais = await page.evaluate(a => {
           const painel = document.querySelector('.mm-painel').getBoundingClientRect();
+          const svg = document.getElementById('mapa').getBoundingClientRect();
+          const zoom = document.querySelector('#mapa-mundi-tela .zoom').getBoundingClientRect();
+          const nota = document.getElementById('nota').getBoundingClientRect();
           const path = document.querySelector('#paises path.sel[data-iso="' + a + '"], #hist path.sel[data-iso="' + a + '"]');
           const marca = path || document.querySelector('#pinos g.sel[data-iso="' + a + '"] .ponto');
           const r = marca.getBoundingClientRect();
-          return { iso: a, top: r.top, bottom: r.bottom, h: r.height, w: r.width, painelTop: painel.top };
+          function cruza(a, b) {
+            const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+            const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+            return ox > 0.5 && oy > 0.5;
+          }
+          const botoes = [...document.querySelectorAll('#mm-conteudo .ligados button[data-iso]')].map(el => el.getAttribute('data-iso'));
+          const visiveis = botoes.filter(iso => window.__mapa.naTela(iso));
+          const fora = [...document.querySelectorAll('#mm-fora .fora')].map(el => {
+            const b = el.getBoundingClientRect();
+            return {
+              iso: el.getAttribute('data-iso'),
+              resto: el.getAttribute('data-resto') || '',
+              nome: el.querySelector('text') ? el.querySelector('text').textContent : '',
+              w: b.width,
+              h: b.height,
+              cobre: cruza(b, r),
+              zoom: cruza(b, zoom),
+              nota: cruza(b, nota),
+              folha: cruza(b, painel),
+              box: { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
+            };
+          });
+          const representados = [];
+          for (const f of fora) {
+            if (f.iso && f.iso !== '+') representados.push(f.iso);
+            if (f.resto) representados.push(...f.resto.split(',').filter(Boolean));
+          }
+          return {
+            iso: a, top: r.top, bottom: r.bottom, h: r.height, w: r.width,
+            painelTop: painel.top, util: svg.width, ratio: r.width / svg.width,
+            total: botoes.length, visiveis, representados, fora
+          };
         }, iso);
         assert.ok(caixaPais.h > 1 && caixaPais.w > 1, JSON.stringify(caixaPais));
         assert.ok(caixaPais.bottom <= caixaPais.painelTop + 0.5, JSON.stringify(caixaPais));
+        if (iso === 'BR' || iso === 'US') assert.ok(caixaPais.ratio >= 0.35, JSON.stringify(caixaPais));
+        const visiveis = new Set(caixaPais.visiveis);
+        const representados = caixaPais.representados;
+        assert.equal(representados.length, new Set(representados).size, JSON.stringify(caixaPais));
+        for (const id of representados) assert.equal(visiveis.has(id), false, JSON.stringify(caixaPais));
+        const juntos = new Set([...visiveis, ...representados]);
+        assert.equal(juntos.size, caixaPais.total, JSON.stringify(caixaPais));
+        if (iso === 'BR' && !visiveis.has('US')) {
+          const eua = caixaPais.fora.find(f => f.iso === 'US');
+          assert.ok(eua && eua.nome === 'EUA', JSON.stringify(caixaPais));
+        }
+        for (const f of caixaPais.fora) {
+          assert.ok(f.w >= 44 && f.h >= 44, JSON.stringify(f));
+          assert.ok(f.nome && f.nome.length > 1, JSON.stringify(f));
+          assert.equal(f.cobre, false, JSON.stringify(f));
+          assert.equal(f.zoom, false, JSON.stringify(f));
+          assert.equal(f.nota, false, JSON.stringify(f));
+          assert.equal(f.folha, false, JSON.stringify(f));
+        }
+        for (let i = 0; i < caixaPais.fora.length; i++) {
+          for (let j = i + 1; j < caixaPais.fora.length; j++) {
+            const a = caixaPais.fora[i].box;
+            const b = caixaPais.fora[j].box;
+            const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+            const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+            assert.ok(!(ox > 0.5 && oy > 0.5), JSON.stringify(caixaPais.fora));
+          }
+        }
       }
+      await page.evaluate(() => window.__mapa.escolher('BR'));
+      await page.waitForTimeout(200);
+      const kPais = (await T()).k;
+      await page.locator('#mm-fora .fora').first().click();
+      await page.waitForTimeout(150);
+      const kConjunto = (await T()).k;
+      assert.equal(await page.evaluate(() => location.hash), '#mapa-mundi/BR');
+      assert.ok(kConjunto < kPais - 0.05, 'conjunto ' + kPais + ' → ' + kConjunto);
+      await page.evaluate(() => window.__mapa.escolher('US'));
       await page.evaluate(() => window.__mapa.escolher('BR'));
       await page.waitForTimeout(200);
       const ordemMeia = await ordemPainel(page);
