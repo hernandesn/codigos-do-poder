@@ -304,7 +304,7 @@ Deno.test('A2 prepareChat tenta a consulta limpa uma vez após contexto vazio', 
     eq(queries[0], raw, 'normaliza a pergunta inteira')
     eq(queries[1], cleaned, 'limpa só palavras inteiras uma vez')
     assert(!queries.slice(2).includes(cleaned), 'não repete a consulta limpa')
-    assert(queries.length <= 6, 'teto de chamadas')
+    assert(queries.length <= 8, 'teto de chamadas')
     eq(result.context.raizes?.[0]?.id, 'maua', 'usa o contexto recuperado')
     eq(result.mensagem, mensagem, 'mensagem original preservada')
     eq(store.reserveCalls, 1, 'uma reserva de crédito')
@@ -356,7 +356,7 @@ Deno.test('A2 com seleção ainda busca o texto e não limpa pergunta curta', as
     eq((result.event.data as { code: string }).code, 'fora_da_base', 'código preservado')
     eq(queries[0], primeira, 'consulta o texto')
     assert(!queries.includes(''), 'pergunta curta não dispara a limpeza')
-    assert(queries.length <= 6, 'teto de chamadas')
+    assert(queries.length <= 8, 'teto de chamadas')
     eq(store.releaseCalls, 1, 'devolve crédito')
   }
   const store = db()
@@ -376,7 +376,7 @@ Deno.test('A2 com seleção ainda busca o texto e não limpa pergunta curta', as
   eq(queries[0], 'quem e o barao de maua?', 'seleção não apaga o texto')
   assert(queries.includes('barao maua'), 'limpa uma vez quando o texto longo volta vazio')
   assert(idCalls.includes('ausente'), 'também consulta a seleção')
-  assert(queries.length <= 6, 'teto de chamadas')
+  assert(queries.length <= 8, 'teto de chamadas')
   eq(store.releaseCalls, 1, 'devolve crédito')
 })
 
@@ -397,7 +397,7 @@ Deno.test('A2 não repete consulta quando a primeira já tem contexto', async ()
     assert(result.ok, 'contexto encontrado')
     assert(queries[0]?.includes('barao'), 'a primeira consulta usa o texto')
     assert(!queries.includes('barao maua'), 'não limpa quando a primeira já achou')
-    assert(queries.length <= 6, 'teto de chamadas')
+    assert(queries.length <= 8, 'teto de chamadas')
   }
 })
 

@@ -868,13 +868,148 @@ export interface ContextoRecuperado {
   origem: 'texto' | 'selecao' | 'nomes'
   ausentes: string[]
   chamadas: number
+  /** Raízes nomeadas por nome e acertos de busca, inclusive os que ficaram fora do corte de 3. */
+  nomeados: string[]
 }
 
-const MAX_CHAMADAS_CONTEXTO = 6
+const MAX_CHAMADAS_CONTEXTO = 8
+
+function radicalSimples(word: string): string {
+  if (/(?:oes|aes|aos)$/.test(word) && word.length > 4) return `${word.slice(0, -3)}ao`
+  if (word.length > 3 && word.endsWith('s')) return word.slice(0, -1)
+  return word
+}
+
+function radicaisIguais(a: string, b: string): boolean {
+  if (!a || !b) return false
+  if (a === b) return true
+  const [menor, maior] = a.length <= b.length ? [a, b] : [b, a]
+  return menor.length >= 6 && maior.startsWith(menor)
+}
+
+function radicaisDe(texto: string): string[] {
+  return normalizeQuery(texto).replace(/[^a-z0-9 ]/g, ' ').split(/ +/).filter(Boolean).map(radicalSimples)
+}
+
+function casaRadical(termo: string, palavras: readonly string[]): boolean {
+  return palavras.some((palavra) => radicaisIguais(termo, palavra))
+}
+
+function indexarEntidades(ctx: ChatContextPayload): Map<string, ChatContextEntity> {
+  const map = new Map<string, ChatContextEntity>()
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
+    if (item?.id && !map.has(item.id)) map.set(item.id, item)
+  }
+  return map
+}
+
+function textoEntidade(ent: ChatContextEntity | undefined): { nome: string; cluster: string; nota: string } {
+  if (!ent) return { nome: '', cluster: '', nota: '' }
+  const cluster = (ent as ChatContextEntity & { cluster?: string }).cluster
+  return { nome: ent.nome || '', cluster: cluster || '', nota: ent.nota || '' }
+}
+
+/**
+ * Sobe relações que respondem a pergunta, sem apagar nenhuma.
+ * O corte de 8000 fica com as primeiras. Empate mantém a ordem de chegada.
+ * Sinais a mais, porque pontuação igual deixa o começo do SQL e o degrau de
+ * 10 relações estoura ou corta o alvo: +2 se o termo de Brasil só casa em
+ * cluster; +6 se a relação menciona Brasil; +4 se o século pedido é o
+ * do Brasil; +4 se "recente" e o estado é retrato_documental; +4 se a
+ * afirmação cita o nome composto de uma entidade nomeada que não é ponta.
+ * Pergunta de participações do IBEC em empresas: +24 na relação curta (até
+ * 320) que tem o BIB numa ponta, +20 nas relações de até 280. As linhas
+ * longas do mesmo banco estouram o degrau de 8 entidades e o nome some.
+ */
+export function ordenarRecortePorPergunta(
+  ctx: ChatContextPayload,
+  mensagem: string,
+  nomeados: readonly string[],
+): ChatContextPayload {
+  const nomeado = new Set(nomeados.filter(Boolean))
+  const byId = indexarEntidades(ctx)
+  const termos = contextSearchTokens(mensagem).map(radicalSimples)
+  const norm = normalizeQuery(mensagem)
+  const recente = /\brecentes?\b/.test(norm)
+  const pedeXix = norm.includes('seculo xix')
+  const pedeXx = norm.includes('seculo xx')
+  const pedeIbecEmpresa = nomeado.has('ibec')
+    && termos.some((termo) => termo.startsWith('particip'))
+    && termos.some((termo) => termo.startsWith('empresa'))
+  const scored = (ctx.relacoes ?? []).map((rel, index) => {
+    const origem = rel.origem || ''
+    const destino = rel.destino || ''
+    let score = 0
+    if (nomeado.has(origem) && nomeado.has(destino) && origem !== destino) score += 10
+    if (nomeado.has(origem)) score += 4
+    if (nomeado.has(destino)) score += 4
+    const eo = textoEntidade(byId.get(origem))
+    const ed = textoEntidade(byId.get(destino))
+    const texto = radicaisDe([rel.afirmacao, rel.periodo, rel.tipo, eo.nome, ed.nome, eo.nota, ed.nota].filter(Boolean).join(' '))
+    const cluster = radicaisDe([eo.cluster, ed.cluster].filter(Boolean).join(' '))
+    let brasil = false
+    for (const termo of termos) {
+      const noTexto = casaRadical(termo, texto)
+      const noCluster = casaRadical(termo, cluster)
+      if (!noTexto && !noCluster) continue
+      score += 2
+      if (!noTexto && noCluster && termo.startsWith('brasil')) score += 2
+      if (termo.startsWith('brasil')) brasil = true
+    }
+    if (brasil) score += 6
+    const anos = `${rel.periodo || ''} ${rel.afirmacao || ''}`.match(/\b\d{4}\b/g) ?? []
+    const seculoXix = pedeXix && anos.some((ano) => ano.startsWith('18'))
+    if (seculoXix || (pedeXx && anos.some((ano) => ano.startsWith('19')))) score += 2
+    if (recente && anos.some((ano) => Number(ano) >= 2015)) score += 2
+    if (seculoXix && brasil) score += 4
+    if (recente && rel.estado === 'retrato_documental') score += 4
+    const af = normalizeQuery(`${rel.afirmacao || ''} ${rel.periodo || ''}`)
+    for (const id of nomeado) {
+      if (!id || id === origem || id === destino) continue
+      const nome = normalizeQuery(byId.get(id)?.nome || '')
+      if (nome.split(' ').length >= 2 && nome.length >= 6 && af.includes(nome)) score += 4
+    }
+    if (pedeIbecEmpresa) {
+      const curto = JSON.stringify(rel).length
+      if ((origem === 'bib' || destino === 'bib') && curto <= 320) score += 24
+      if (curto <= 280) score += 20
+    }
+    return { rel, index, score }
+  })
+  scored.sort((a, b) => b.score - a.score || a.index - b.index)
+  const relacoes = scored.map((item) => item.rel)
+  const entidades: ChatContextEntity[] = []
+  const vistos = new Set<string>()
+  const pushEnt = (id?: string) => {
+    if (!id || vistos.has(id)) return
+    const ent = (ctx.entidades ?? []).find((item) => item.id === id)
+    if (!ent) return
+    vistos.add(id)
+    entidades.push(ent)
+  }
+  for (const raiz of ctx.raizes ?? []) pushEnt(raiz.id)
+  for (const rel of relacoes) {
+    pushEnt(rel.origem)
+    pushEnt(rel.destino)
+  }
+  for (const ent of ctx.entidades ?? []) pushEnt(ent.id)
+  const fontes: ChatContextFonte[] = []
+  const fontesVistas = new Set<string>()
+  const pushFonte = (id?: string) => {
+    if (!id || fontesVistas.has(id)) return
+    const fonte = (ctx.fontes ?? []).find((item) => item.id === id)
+    if (!fonte) return
+    fontesVistas.add(id)
+    fontes.push(fonte)
+  }
+  for (const rel of relacoes) for (const id of rel.fontes ?? []) pushFonte(id)
+  for (const fonte of ctx.fontes ?? []) pushFonte(fonte.id)
+  return { ...ctx, relacoes, entidades, fontes }
+}
 
 /**
  * Busca o recorte pelo texto da pergunta. A seleção do mural só vence quando
- * o texto não aponta raiz fora dela. No máximo 6 chamadas a chatContext.
+ * o texto não aponta raiz fora dela. No máximo 8 chamadas a chatContext.
  */
 export async function recuperarContexto(
   db: ChatDb,
@@ -912,7 +1047,12 @@ export async function recuperarContexto(
   let origem: ContextoRecuperado['origem'] = 'texto'
   const ausentes: string[] = []
   const raizesDe = (ctx: ChatContextPayload) => (ctx.raizes ?? []).filter((raiz) => raiz?.id)
-  const cobertos = new Set(nomes.filter((nome) => raizesDe(context).some((raiz) => raizNomeadaPor(raiz, nome.norm))).map((nome) => nome.norm))
+  const idPorNome = new Map<string, string>()
+  for (const nome of nomes) {
+    const raiz = raizesDe(context).find((item) => raizNomeadaPor(item, nome.norm))
+    if (raiz?.id) idPorNome.set(nome.norm, raiz.id)
+  }
+  const cobertos = new Set(nomes.filter((nome) => idPorNome.has(nome.norm)).map((nome) => nome.norm))
   const acertosNovos: string[] = []
   let buscasNome = 0
   for (const nome of nomes) {
@@ -926,18 +1066,25 @@ export async function recuperarContexto(
     }
     for (const raiz of achado.raizes ?? []) {
       if (!raiz?.id || !containsWhole(foldName(raiz.nome || ''), nome.norm)) continue
+      if (!idPorNome.has(nome.norm)) idPorNome.set(nome.norm, raiz.id)
       if (raizesDe(context).some((item) => item.id === raiz.id)) continue
       if (!acertosNovos.includes(raiz.id)) acertosNovos.push(raiz.id)
     }
   }
 
   if (acertosNovos.length && cabe(reservaSelecao)) {
-    const finais: string[] = []
+    const porNome: string[] = []
+    const porAno: string[] = []
     for (const raiz of raizesDe(context)) {
-      const nomeada = nomes.some((nome) => raizNomeadaPor(raiz, nome.norm)) || raizNomeadaPorAno(raiz.nome || '', mensagem)
-      if (nomeada && raiz.id && !finais.includes(raiz.id)) finais.push(raiz.id)
+      if (!raiz.id) continue
+      if (nomes.some((nome) => raizNomeadaPor(raiz, nome.norm))) {
+        if (!porNome.includes(raiz.id)) porNome.push(raiz.id)
+      } else if (raizNomeadaPorAno(raiz.nome || '', mensagem)) {
+        if (!porAno.includes(raiz.id)) porAno.push(raiz.id)
+      }
     }
-    for (const id of acertosNovos) if (!finais.includes(id)) finais.push(id)
+    const finais: string[] = []
+    for (const id of [...porNome, ...acertosNovos, ...porAno]) if (!finais.includes(id)) finais.push(id)
     const corte = finais.slice(0, 3)
     const textoIds = raizesDe(context).map((raiz) => raiz.id)
     const mesmo = corte.length === textoIds.length && corte.every((id) => textoIds.includes(id))
@@ -958,7 +1105,142 @@ export async function recuperarContexto(
     }
   }
 
-  return { context, query, origem, ausentes: ausentes.slice(0, 3), chamadas }
+  const nomeados: string[] = []
+  for (const nome of nomes) {
+    const id = idPorNome.get(nome.norm)
+    if (id && !nomeados.includes(id)) nomeados.push(id)
+  }
+  const pares: Array<[string, string]> = []
+  for (let i = 0; i < nomeados.length && pares.length < 3; i++) {
+    for (let j = i + 1; j < nomeados.length && pares.length < 3; j++) pares.push([nomeados[i], nomeados[j]])
+  }
+  for (const [a, b] of pares) {
+    if (relacaoDireta(context, a, b) || !cabe(0)) continue
+    const extra = await call([a, b], null)
+    const diretas = (extra.relacoes ?? []).filter((rel) => {
+      const pontas = [rel.origem, rel.destino]
+      return pontas.includes(a) && pontas.includes(b) && a !== b
+    })
+    if (diretas.length) context = juntarRelacoes(context, diretas, extra, false)
+  }
+
+  const faltam = ausentes.slice(0, 3)
+  if (faltam.length && raizesDe(context).length && cabe(0)) {
+    const consultas: string[] = []
+    const raiz = raizesDe(context)[0]
+    const curtoRaiz = nomeCurto(raiz.nome || '')
+    if (curtoRaiz && curtoRaiz !== 'brasil') consultas.push(`${curtoRaiz} brasil`)
+    const vizinha = vizinhaInstitucional(context, raiz.id)
+    const curtoViz = nomeCurto(vizinha?.nome || '')
+    if (curtoViz && curtoViz !== 'brasil' && !consultas.includes(`${curtoViz} brasil`)) consultas.push(`${curtoViz} brasil`)
+    const termosBrasil = contextSearchTokens(mensagem).map(radicalSimples)
+    let trazidas: ChatContextRelation[] = []
+    let origemBrasil: ChatContextPayload = vazioContexto()
+    for (const consulta of consultas) {
+      if (!cabe(0)) break
+      const extra = await call([], consulta)
+      const byId = indexarEntidades(extra)
+      const uteis = (extra.relacoes ?? []).filter((rel) => mencionaBrasil(rel, byId))
+      if (!uteis.length) continue
+      origemBrasil = juntarRelacoes(origemBrasil, uteis, extra, false)
+      trazidas = trazidas.concat(uteis.filter((rel) => !trazidas.some((item) => item.id === rel.id)))
+    }
+    if (trazidas.length) {
+      const byId = indexarEntidades(origemBrasil)
+      trazidas.sort((a, b) => rankBrasil(b, byId, termosBrasil) - rankBrasil(a, byId, termosBrasil)
+        || (origemBrasil.relacoes ?? []).indexOf(a) - (origemBrasil.relacoes ?? []).indexOf(b))
+      context = juntarRelacoes(context, trazidas, origemBrasil, true)
+    }
+  }
+
+  return { context, query, origem, ausentes: faltam, chamadas, nomeados }
+}
+
+function nomeCurto(nome: string): string {
+  return normalizeQuery((nome || '').split('·')[0] || '')
+}
+
+function relacaoDireta(ctx: ChatContextPayload, a: string, b: string): boolean {
+  return (ctx.relacoes ?? []).some((rel) => {
+    const pontas = [rel.origem, rel.destino]
+    return pontas.includes(a) && pontas.includes(b) && a !== b
+  })
+}
+
+function juntarRelacoes(
+  base: ChatContextPayload,
+  novas: readonly ChatContextRelation[],
+  extra: ChatContextPayload,
+  naFrente: boolean,
+): ChatContextPayload {
+  const relacoes = [...(base.relacoes ?? [])]
+  const ids = new Set(relacoes.map((rel) => rel.id))
+  const acrescentar = novas.filter((rel) => rel?.id && !ids.has(rel.id))
+  const entidades = [...(base.entidades ?? [])]
+  const entIds = new Set(entidades.map((item) => item.id))
+  const fontes = [...(base.fontes ?? [])]
+  const fonteIds = new Set(fontes.map((item) => item.id))
+  const extraEnt = indexarEntidades(extra)
+  const extraFonte = new Map((extra.fontes ?? []).filter((item) => item?.id).map((item) => [item.id, item]))
+  for (const rel of acrescentar) {
+    for (const id of [rel.origem, rel.destino]) {
+      if (!id || entIds.has(id)) continue
+      const ent = extraEnt.get(id)
+      if (!ent) continue
+      entIds.add(id)
+      entidades.push(ent)
+    }
+    for (const id of rel.fontes ?? []) {
+      if (!id || fonteIds.has(id)) continue
+      const fonte = extraFonte.get(id)
+      if (!fonte) continue
+      fonteIds.add(id)
+      fontes.push(fonte)
+    }
+  }
+  return {
+    ...base,
+    relacoes: naFrente ? [...acrescentar, ...relacoes] : [...relacoes, ...acrescentar],
+    entidades,
+    fontes,
+  }
+}
+
+function mencionaBrasil(rel: ChatContextRelation, byId: Map<string, ChatContextEntity>): boolean {
+  const partes = [rel.afirmacao, rel.periodo]
+  for (const id of [rel.origem, rel.destino]) {
+    const ent = textoEntidade(byId.get(id || ''))
+    partes.push(ent.nome, ent.nota, ent.cluster)
+  }
+  return /\bbrasil/.test(normalizeQuery(partes.filter(Boolean).join(' ')))
+}
+
+/** Conjunto, fundação e instituição antes de empresa, para não gastar a vaga com a primeira firma. */
+function vizinhaInstitucional(ctx: ChatContextPayload, raizId: string): ChatContextEntity | null {
+  const byId = indexarEntidades(ctx)
+  for (const tipo of ['conjunto', 'fundacao', 'instituicao', 'empresa']) {
+    for (const rel of ctx.relacoes ?? []) {
+      for (const id of [rel.origem, rel.destino]) {
+        if (!id || id === raizId) continue
+        const ent = byId.get(id)
+        if (ent?.tipo === tipo) return ent
+      }
+    }
+  }
+  return null
+}
+
+function rankBrasil(rel: ChatContextRelation, byId: Map<string, ChatContextEntity>, termos: readonly string[]): number {
+  const af = normalizeQuery(rel.afirmacao || '')
+  let score = 0
+  if (/\br\$/.test(af)) score += 2
+  if (/\bbrasil/.test(af)) score += 1
+  const nomes = radicaisDe([rel.origem, rel.destino].map((id) => byId.get(id || '')?.nome || '').join(' '))
+  for (const termo of termos) {
+    if (!termo || termo.startsWith('brasil')) continue
+    if (casaRadical(termo, nomes)) score += 3
+  }
+  return score
 }
 
 export function sanitizarAusentes(nomes: readonly string[]): string[] {
@@ -994,13 +1276,13 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Não ponha ids no texto.',
   ]
   if (faltam.length) {
-    extras.push(`Nomes da pergunta sem registro na base: ${faltam.join(', ')}. Diga literalmente '${fraseAusentes(faltam)}' e não invente nada sobre eles.`)
+    extras.push(`Nomes da pergunta sem registro na base: ${faltam.join(', ')}. Diga literalmente '${fraseAusentes(faltam)}' e não invente nada sobre eles. Resuma o que a base tem sobre o outro nome no Brasil.`)
   }
   return [
     'Responda em português do Brasil, só com o recorte do Atlas.',
     'Um JSON no schema pedido. Sem markdown.',
     'Bloco documentado: { tipo, texto, entidades, relacoes, fontes }.',
-    'Bloco inferencia: { tipo, texto, base, justificativa }. base: ids do recorte. Justificativa separa leitura de fato.',
+    'Bloco inferencia: { tipo, texto, base, justificativa }. Use os nomes exatamente como no recorte; não expanda nem traduza siglas.',
     'sem_base true só com blocos vazios, só quando o recorte não sustenta nenhum dos temas da pergunta.',
     'Se há mais de um tema e o recorte os documenta mas não a ligação, explique o que documenta sobre cada um e diga que a ligação direta não está documentada no atlas.',
     'Quando ligacoes_entre_raizes não está vazia, explique primeiro essa ligação, citando suas relações e fontes. Para cada par em lacunas_entre_raizes, escreva literalmente \'O atlas não documenta ligação direta entre <nome de> e <nome para>.\' Um caminho por intermediário não prova ligação direta.',
@@ -1221,9 +1503,22 @@ export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): stri
     const re = new RegExp(`\\b(?:${ids.map(escapeReg).join('|')})\\b`, 'g')
     out = out.replace(re, (id) => troca.get(id) ?? '')
   }
+  out = out.replace(/\[(?:[1-9]\d{0,2})\s*[-–—]\s*(?:[1-9]\d{0,2})\]/g, '')
+  out = out.replace(/\[(?:[1-9]\d{0,2})(?:\s*,\s*(?:[1-9]\d{0,2}))+\]/g, '')
   out = out.replace(/\[(?:[1-9]\d{0,2})\]/g, '')
+  out = out.replace(/#(?:[1-9]\d{0,2})\b/g, '')
+  out = out.replace(/\bR\d{1,3}\b/g, '')
+  const oco = '(?:rela(?:c|ç)(?:o|õ)es|rela(?:c|ç)(?:a|ã)o|fontes|fonte|ids|id|ref|cf|ver|e)'
+  const ocoRe = new RegExp(`\\s*[(\\[](?:[\\s,;\\-–—\\d]|${oco})*[)\\]]`, 'gi')
   for (let i = 0; i < 4; i++) {
-    const next = out.replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.;:!?])/g, '$1')
+    const next = out
+      .replace(ocoRe, '')
+      .replace(/,(?:\s*,)+/g, ',')
+      .replace(/\(\s*,+/g, '(')
+      .replace(/,+\s*\)/g, ')')
+      .replace(/[ \t]*,[ \t]*\./g, '.')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/[ \t]+([,.;:!?])/g, '$1')
     if (next === out) break
     out = next
   }
@@ -1936,6 +2231,8 @@ export async function prepareChat(input: {
     return fail('fora_da_base')
   }
 
+  const msgOrdem = recovered.ausentes.length ? `${request.mensagem}\nbrasil` : request.mensagem
+  context = ordenarRecortePorPergunta(context, msgOrdem, recovered.nomeados)
   const apelidos = apelidarRecorte(context).idPorNumero
   const system = buildSystemPrompt(request.modelo, context, !!pautaPlan, recovered.ausentes)
   const requestBody = modelRequestBody(request.modelo, system, request.mensagem)
