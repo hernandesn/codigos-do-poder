@@ -257,7 +257,7 @@ Deno.test('id inventado ou parcial continua removido', () => {
   const doc = answer.blocos[0]
   assert(doc.tipo === 'documentado', 'bloco permanece')
   eq(JSON.stringify(doc.entidades), JSON.stringify([]), 'nenhum id inventado sobrevive')
-  eq(doc.texto, 'texto intacto id:golpe64', 'o texto falso não é reescrito')
+  eq(doc.texto, 'texto intacto id:Golpe de 1964', 'id cru no texto vira o nome; a citação inventada não vira id')
 })
 
 Deno.test('idKind classifica os padrões reais e nada além deles', () => {
@@ -390,8 +390,8 @@ Deno.test('lacunas_entre_raizes sobrevive ao boundContextJson, inclusive no últ
 
 Deno.test('prompt pede id puro e a frase de lacuna sem crescer mais de 15%', () => {
   const vazio: ChatContextPayload = { raizes: [], entidades: [], relacoes: [], fontes: [] }
-  // Prompt fixo sem o JSON do recorte, medido em origin/main cf01b7f.
-  const base = { basico: 1203, avancado: 1195 }
+  // Prompt fixo sem o JSON. v12 media 1373/1341; as duas linhas de apelido sobem para 1412/1380.
+  const base = { basico: 1412, avancado: 1380 }
   for (const modelo of ['basico', 'avancado'] as const) {
     const prompt = buildSystemPrompt(modelo, vazio)
     const json = boundContextJson(vazio)

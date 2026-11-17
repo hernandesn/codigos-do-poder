@@ -26,6 +26,7 @@ globalThis.Deno = {
 }
 globalThis.fetch = () => { throw new Error('Network disabled in offline tests') }
 await import('./chat_core_test.ts')
+await import('./chat_fix_selecao_test.ts')
 await import('./pauta_test.ts')
 await import('./citation_ids_test.ts')
 await import('./contrato_ux3a_test.ts')

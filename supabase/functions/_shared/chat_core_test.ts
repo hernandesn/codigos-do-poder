@@ -301,7 +301,10 @@ Deno.test('A2 prepareChat tenta a consulta limpa uma vez após contexto vazio', 
       db: store, clock: CLOCK, inferenceKey: acceptedKey(),
     })
     assert(result.ok, 'recupera o contexto na segunda consulta')
-    eq(JSON.stringify(queries), JSON.stringify([raw, cleaned]), 'normaliza e limpa só palavras inteiras')
+    eq(queries[0], raw, 'normaliza a pergunta inteira')
+    eq(queries[1], cleaned, 'limpa só palavras inteiras uma vez')
+    assert(!queries.slice(2).includes(cleaned), 'não repete a consulta limpa')
+    assert(queries.length <= 6, 'teto de chamadas')
     eq(result.context.raizes?.[0]?.id, 'maua', 'usa o contexto recuperado')
     eq(result.mensagem, mensagem, 'mensagem original preservada')
     eq(store.reserveCalls, 1, 'uma reserva de crédito')
@@ -336,40 +339,54 @@ Deno.test('A2 ruído continua fora_da_base após uma única tentativa extra', as
   }
 })
 
-Deno.test('A2 não repete consulta com ids explícitos ou até três palavras', async () => {
-  const examples = [
-    { mensagem: 'Quem é o Barão de Mauá?', ids: ['ausente'], query: null },
-    { mensagem: 'Quem é Mauá?', ids: [], query: 'quem e maua?' },
-    { mensagem: 'Mauá', ids: [], query: 'maua' },
-  ]
-  for (const { mensagem, ids, query } of examples) {
+Deno.test('A2 com seleção ainda busca o texto e não limpa pergunta curta', async () => {
+  const vazio = async (): Promise<ChatContextPayload> => ({ raizes: [], entidades: [], relacoes: [], fontes: [] })
+  for (const [mensagem, primeira] of [['Mauá', 'maua'], ['Quem é Mauá?', 'quem e maua?']] as const) {
     const store = db()
-    const lookup = store.chatContext.bind(store)
-    let calls = 0
-    store.chatContext = async (entityIds, q) => {
-      calls++
-      eq(JSON.stringify(entityIds), JSON.stringify(ids), 'mantém ids')
-      eq(q, query, 'consulta original')
-      return await lookup([], null)
+    const queries: (string | null)[] = []
+    store.chatContext = async (_ids, query) => {
+      queries.push(query)
+      return await vazio()
     }
     const result = await prepareChat({
-      userId: USER, body: request({ mensagem, contexto: { entidades: ids } }),
+      userId: USER, body: request({ mensagem, contexto: { entidades: [] } }),
       db: store, clock: CLOCK, inferenceKey: acceptedKey(),
     })
     assert(!result.ok, 'contexto continua vazio')
     eq((result.event.data as { code: string }).code, 'fora_da_base', 'código preservado')
-    eq(calls, 1, 'sem tentativa extra')
+    eq(queries[0], primeira, 'consulta o texto')
+    assert(!queries.includes(''), 'pergunta curta não dispara a limpeza')
+    assert(queries.length <= 6, 'teto de chamadas')
     eq(store.releaseCalls, 1, 'devolve crédito')
   }
+  const store = db()
+  const queries: (string | null)[] = []
+  const idCalls: string[] = []
+  store.chatContext = async (ids, query) => {
+    idCalls.push(ids.join(','))
+    queries.push(query)
+    return { raizes: [], entidades: [], relacoes: [], fontes: [] }
+  }
+  const result = await prepareChat({
+    userId: USER, body: request({ mensagem: 'Quem é o Barão de Mauá?', contexto: { entidades: ['ausente'] } }),
+    db: store, clock: CLOCK, inferenceKey: acceptedKey(),
+  })
+  assert(!result.ok, 'seleção vazia e texto vazio continuam fora')
+  eq((result.event.data as { code: string }).code, 'fora_da_base', 'código preservado')
+  eq(queries[0], 'quem e o barao de maua?', 'seleção não apaga o texto')
+  assert(queries.includes('barao maua'), 'limpa uma vez quando o texto longo volta vazio')
+  assert(idCalls.includes('ausente'), 'também consulta a seleção')
+  assert(queries.length <= 6, 'teto de chamadas')
+  eq(store.releaseCalls, 1, 'devolve crédito')
 })
 
 Deno.test('A2 não repete consulta quando a primeira já tem contexto', async () => {
   for (const entityIds of [[], ['maua']]) {
     const store = db()
     const lookup = store.chatContext.bind(store)
-    let calls = 0
+    const queries: (string | null)[] = []
     store.chatContext = async (ids, query) => {
-      calls++
+      queries.push(query)
       return await lookup(ids, query)
     }
     const result = await prepareChat({
@@ -378,7 +395,9 @@ Deno.test('A2 não repete consulta quando a primeira já tem contexto', async ()
       db: store, clock: CLOCK, inferenceKey: acceptedKey(),
     })
     assert(result.ok, 'contexto encontrado')
-    eq(calls, 1, 'consulta única')
+    assert(queries[0]?.includes('barao'), 'a primeira consulta usa o texto')
+    assert(!queries.includes('barao maua'), 'não limpa quando a primeira já achou')
+    assert(queries.length <= 6, 'teto de chamadas')
   }
 })
 
@@ -1213,7 +1232,8 @@ Deno.test('SPEC4 fallback aceita ligação ausente, nota e três nomes sem HTML'
   assert(answer, 'usa nota de raiz sem relação')
   eq(answer.blocos.length, 4, 'três temas e a lacuna')
   eq(answer.blocos[1].texto, `Heitor Lyra: ${'a'.repeat(400)}`, 'afirmação limitada a 400 caracteres sem tags')
-  eq(answer.blocos[2].texto, 'Arquivo: Nota documental do arquivo.', 'nota sem HTML')
+  // O id cru "arquivo" no meio da nota vira o nome da entidade ("Arquivo").
+  eq(answer.blocos[2].texto, 'Arquivo: Nota documental do Arquivo.', 'nota sem HTML; id cru vira o nome')
   eq(answer.blocos[3].texto, 'O atlas não documenta ligação direta entre Golpe de 1964, Heitor Lyra e Arquivo.', 'lista de três nomes sem sufixos')
   assert(answer.blocos.every((b) => !/[<>]/.test(b.texto)), 'texto simples')
 })
@@ -1239,7 +1259,7 @@ const GS009 = 'O Oswaldo Aranha era parente dos Egydio de Souza Aranha do Itaú?
 async function streamSemLigacao(context: ChatContextPayload, raw: string, opts: { store?: MemoryChatDb; modelo?: Modelo; mensagem?: string } = {}) {
   const store = opts.store ?? db()
   store.chatContext = async () => context
-  const prepared = await prepareChat({ userId: USER, body: request({ modelo: opts.modelo ?? 'basico', mensagem: opts.mensagem ?? GS009 }), db: store, clock: CLOCK, inferenceKey: acceptedKey() })
+  const prepared = await prepareChat({ userId: USER, body: request({ modelo: opts.modelo ?? 'basico', mensagem: opts.mensagem ?? GS009, contexto: { entidades: [] } }), db: store, clock: CLOCK, inferenceKey: acceptedKey() })
   assert(prepared.ok, 'pedido preparado com reservas')
   const model = scripted([{ delta: raw }, { usage: { prompt_tokens: 11, completion_tokens: 7, cost: 0.0002 } }])
   const emitted: ChatSseEvent[] = []
@@ -1287,7 +1307,7 @@ Deno.test('F1c(a): sem_base:true com documentado válido responde, cobra e loga 
 
 Deno.test('F1c(b): em_aberto fecha o último bloco sem chave nova; ausente ou null não muda nada; sem_base com blocos vazios segue fora_da_base', async () => {
   const pergunta = 'O que o recorte ainda deixa em aberto?'
-  for (const [over, fim] of [[{ em_aberto: pergunta }, `A leitura não cria fato novo. ${pergunta}`], [{}, 'A leitura não cria fato novo.'], [{ em_aberto: null }, 'A leitura não cria fato novo.']] as const) {
+  for (const [over, fim] of [[{ em_aberto: pergunta }, `A leitura não cria fato novo.\n\n${pergunta}`], [{}, 'A leitura não cria fato novo.'], [{ em_aberto: null }, 'A leitura não cria fato novo.']] as const) {
     const model = scripted([{ delta: answerJson(over) }])
     const final = finalOf(await chat({ database: db(), openrouter: model.client, inferenceKey: acceptedKey() }))
     eq(final.blocos.length, 2, 'blocos mantidos')
@@ -1451,7 +1471,7 @@ Deno.test('CRED1 sem_ligacao retorna os saldos atuais após pedidos concorrentes
       yield { delta: answerJson({ sem_base: true, blocos: [] }) }
       yield { usage: { cost: 0.0002 } }
     })
-    const result = await chat({ database: store, body: request({ modelo }), openrouter: model.client, inferenceKey: acceptedKey() })
+    const result = await chat({ database: store, body: request({ modelo, contexto: { entidades: [] } }), openrouter: model.client, inferenceKey: acceptedKey() })
     eq(result.httpStatus, 200, 'sucesso')
     eq(terminals(result).length, 1, 'um terminal')
     const final = finalOf(result)
@@ -1485,7 +1505,7 @@ Deno.test('REL1 ponta a ponta: fallback grátis, documentado + F1e cobra 1, fora
       yield { delta: raw }
       yield { usage: { cost: 0.0002 } }
     })
-    const result = await chat({ database: store, body: request({ modelo: 'basico' }), openrouter: model.client, inferenceKey: acceptedKey() })
+    const result = await chat({ database: store, body: request({ modelo: 'basico', contexto: { entidades: [] } }), openrouter: model.client, inferenceKey: acceptedKey() })
     return { result, state: store.snapshot(USER, CLOCK()) }
   }
   const fb = await run(answerJson({ sem_base: true, blocos: [] }))
