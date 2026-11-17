@@ -165,6 +165,7 @@
     fundo: null,
     fundoChave: '',
     rotulos: new Map(),
+    guias: new Map(),
   };
 
   function contagemDesenhada(cena) {
@@ -631,6 +632,7 @@
     const svg = document.getElementById('grafo-rotulos');
     if (svg) svg.replaceChildren();
     vivo.rotulos.clear();
+    vivo.guias.clear();
     vivo.muralCam = null;
     const leg = document.getElementById('grafo-legenda');
     if (leg) leg.replaceChildren();
@@ -650,11 +652,84 @@
     return w;
   }
 
-  function colide(a, lista) {
+  function colide(a, lista, folga) {
+    const f = folga || 0;
     for (const b of lista) {
-      if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) return true;
+      if (a.x < b.x + b.w + f && a.x + a.w + f > b.x && a.y < b.y + b.h + f && a.y + a.h + f > b.y) return true;
     }
     return false;
+  }
+
+  const DIRECOES = [
+    { id: 'acima', ax: 0, ay: -1, anchor: 'middle' },
+    { id: 'abaixo', ax: 0, ay: 1, anchor: 'middle' },
+    { id: 'direita', ax: 1, ay: 0, anchor: 'start' },
+    { id: 'esquerda', ax: -1, ay: 0, anchor: 'end' },
+    { id: 'ne', ax: 0.72, ay: -0.72, anchor: 'start' },
+    { id: 'no', ax: -0.72, ay: -0.72, anchor: 'end' },
+    { id: 'se', ax: 0.72, ay: 0.72, anchor: 'start' },
+    { id: 'so', ax: -0.72, ay: 0.72, anchor: 'end' },
+  ];
+
+  function montarCaixa(s, r, tw, th, fs, pad, dir, step) {
+    const dist = r + 8 + step;
+    const px = s.x + dir.ax * dist;
+    const py = s.y + dir.ay * dist;
+    let ax, ay, x, y, anchor;
+    if (dir.ay < 0 && dir.anchor === 'middle') {
+      anchor = 'middle';
+      ax = px;
+      ay = py;
+      x = px - tw / 2 - pad;
+      y = py - th - pad;
+    } else if (dir.ay > 0 && dir.anchor === 'middle') {
+      anchor = 'middle';
+      ax = px;
+      ay = py + fs * 0.82;
+      x = px - tw / 2 - pad;
+      y = py - pad;
+    } else if (dir.ax >= 0) {
+      anchor = 'start';
+      ax = px;
+      ay = py + fs * 0.32;
+      x = px - pad;
+      y = py - th / 2 - pad;
+    } else {
+      anchor = 'end';
+      ax = px;
+      ay = py + fs * 0.32;
+      x = px - tw - pad;
+      y = py - th / 2 - pad;
+    }
+    return { x, y, w: tw + pad * 2, h: th + pad * 2, ax, ay, anchor, dir: dir.id, step };
+  }
+
+  function deslocarParaDentro(caixa, w, h) {
+    let dx = 0;
+    let dy = 0;
+    if (caixa.x < 2) dx = 2 - caixa.x;
+    if (caixa.y < 2) dy = 2 - caixa.y;
+    if (caixa.x + caixa.w > w - 2) dx = (w - 2) - (caixa.x + caixa.w);
+    if (caixa.y + caixa.h > h - 2) dy = (h - 2) - (caixa.y + caixa.h);
+    if (caixa.x + dx < 2 || caixa.y + dy < 2) return null;
+    if (caixa.x + caixa.w + dx > w - 2 || caixa.y + caixa.h + dy > h - 2) return null;
+    if (!dx && !dy) return caixa;
+    return { x: caixa.x + dx, y: caixa.y + dy, w: caixa.w, h: caixa.h, ax: caixa.ax + dx, ay: caixa.ay + dy, anchor: caixa.anchor, dir: caixa.dir, step: caixa.step };
+  }
+
+  function guiaCurta(s, r, caixa) {
+    const dx = caixa.ax - s.x;
+    const dy = caixa.ay - s.y;
+    const len = Math.hypot(dx, dy);
+    const gap = len - r;
+    if (!(gap > 8)) return null;
+    const ux = dx / len;
+    const uy = dy / len;
+    const comp = Math.min(gap - 2, gap <= 40 ? gap - 2 : 22);
+    if (comp < 6) return null;
+    const x1 = s.x + ux * (r + 1);
+    const y1 = s.y + uy * (r + 1);
+    return { x1, y1, x2: x1 + ux * comp, y2: y1 + uy * comp };
   }
 
   function obstaculos() {
@@ -679,6 +754,28 @@
     return 8;
   }
 
+  function candidatosDeCaixa(s, r, tw, th, fs, pad, w, h, polo) {
+    const passos = polo ? [0, 18, 36, 56, 80, 108, 140, 180] : [0, 18, 36, 56];
+    const dirs = polo ? DIRECOES : DIRECOES.slice(0, 4);
+    const lista = [];
+    const por = caixa => {
+      const dentro = deslocarParaDentro(caixa, w, h);
+      if (dentro) lista.push(dentro);
+    };
+    for (const step of passos) {
+      for (const dir of dirs) por(montarCaixa(s, r, tw, th, fs, pad, dir, step));
+    }
+    if (polo) {
+      for (const dir of [DIRECOES[0], DIRECOES[1]]) {
+        for (const step of [0, 28, 56]) {
+          const base = montarCaixa(s, r, tw, th, fs, pad, dir, step);
+          for (const dx of [-48, 48, -96, 96, -144, 144]) por({ ...base, x: base.x + dx, ax: base.ax + dx });
+        }
+      }
+    }
+    return lista;
+  }
+
   function escolherRotulos(w, h) {
     const z = zoomRelativo();
     const limiar = limiarDe(z);
@@ -693,32 +790,9 @@
     cand.sort((a, b) => (PRIORIDADE[b.id] || 0) - (PRIORIDADE[a.id] || 0) || b.grau - a.grau || (a.id < b.id ? -1 : 1));
     const ocupados = obstaculos();
     const postos = [];
-    const margem = 6;
-    for (const n of cand) {
-      if (postos.length >= cap && !PRIORIDADE[n.id]) continue;
-      const s = mundoTela(n.x, n.y);
-      if (s.x < -40 || s.y < -40 || s.x > w + 40 || s.y > h + 40) continue;
-      const r = Math.max(raioNaTela(n.grau, n.polo, w, z), 1);
-      const fs = fsBase * (n.polo ? 1.25 : 1);
-      const texto = n.curto || n.id;
-      const tw = Math.max(8, medir(texto, fs));
-      const th = fs * 1.25;
-      const pad = 4;
-      const cx = Math.min(Math.max(s.x, tw / 2 + margem), w - tw / 2 - margem);
-      const acima = { x: cx - tw / 2 - pad, y: s.y - r - 8 - th - pad, w: tw + pad * 2, h: th + pad * 2, ax: cx, ay: s.y - r - 8, anchor: 'middle' };
-      const abaixo = { x: cx - tw / 2 - pad, y: s.y + r + 6 - pad, w: tw + pad * 2, h: th + pad * 2, ax: cx, ay: s.y + r + 6 + fs * 0.82, anchor: 'middle' };
-      const dx = s.x + r + 8;
-      const direita = { x: dx - pad, y: s.y - th / 2 - pad, w: tw + pad * 2, h: th + pad * 2, ax: dx, ay: s.y + fs * 0.32, anchor: 'start' };
-      const ex = s.x - r - 8;
-      const esquerda = { x: ex - tw - pad, y: s.y - th / 2 - pad, w: tw + pad * 2, h: th + pad * 2, ax: ex, ay: s.y + fs * 0.32, anchor: 'end' };
-      let caixa = null;
-      for (const b of [acima, abaixo, direita, esquerda]) {
-        if (b.x < 2 || b.y < 2 || b.x + b.w > w - 2 || b.y + b.h > h - 2) continue;
-        if (colide(b, ocupados)) continue;
-        caixa = b;
-        break;
-      }
-      if (!caixa) continue;
+    const pad = 5;
+    const publicar = (n, texto, fs, caixa, s, r) => {
+      const deslocado = caixa.step > 0 || caixa.dir !== 'acima';
       ocupados.push(caixa);
       postos.push({
         id: n.id,
@@ -729,7 +803,42 @@
         y: caixa.ay,
         anchor: caixa.anchor,
         fill: n.polo ? '#f2e7d2' : '#ede3cd',
+        polo: n.polo,
+        guia: deslocado ? guiaCurta(s, r, caixa) : null,
       });
+    };
+    for (const n of cand) {
+      const polo = !!POLOS[n.id];
+      if (postos.length >= cap && !PRIORIDADE[n.id]) continue;
+      const s = mundoTela(n.x, n.y);
+      if (!polo && (s.x < -40 || s.y < -40 || s.x > w + 40 || s.y > h + 40)) continue;
+      if (polo && (s.x < -w || s.y < -h || s.x > w * 2 || s.y > h * 2)) continue;
+      const r = Math.max(raioNaTela(n.grau, n.polo, w, z), 1);
+      let fs = Math.max(12, fsBase * (n.polo ? 1.2 : 1));
+      const texto = n.curto || n.id;
+      let tw = Math.max(8, medir(texto, fs));
+      const teto = Math.max(96, w * (ehMobile() ? 0.52 : 0.36));
+      if (tw > teto) {
+        fs = Math.max(12, fs * teto / tw);
+        tw = Math.max(8, medir(texto, fs));
+      }
+      const th = fs * 1.25;
+      const opcoes = candidatosDeCaixa(s, r, tw, th, fs, pad, w, h, polo);
+      let caixa = null;
+      for (const b of opcoes) {
+        if (!colide(b, ocupados, 1)) { caixa = b; break; }
+      }
+      if (!caixa && polo) {
+        // Barra de zoom pode ceder; outro polo, não. Grau menor nem chegou a entrar.
+        const soPolos = ocupados.filter(b => b.polo);
+        for (const b of opcoes) {
+          if (!colide(b, soPolos, 1)) { caixa = b; break; }
+        }
+      }
+      if (!caixa) continue;
+      caixa.polo = polo;
+      caixa.id = n.id;
+      publicar(n, texto, fs, caixa, s, r);
     }
     return postos;
   }
@@ -740,6 +849,20 @@
     const vistos = new Set();
     for (const item of itens) {
       vistos.add(item.id);
+      let linha = vivo.guias.get(item.id);
+      if (item.guia) {
+        if (!linha) {
+          linha = document.createElementNS(SVG, 'line');
+          linha.setAttribute('class', 'grafo-guia');
+          linha.setAttribute('data-grafo-guia', item.id);
+          vivo.guias.set(item.id, linha);
+        }
+        if (linha.parentNode !== svg) svg.insertBefore(linha, svg.firstChild);
+        linha.setAttribute('x1', item.guia.x1.toFixed(1));
+        linha.setAttribute('y1', item.guia.y1.toFixed(1));
+        linha.setAttribute('x2', item.guia.x2.toFixed(1));
+        linha.setAttribute('y2', item.guia.y2.toFixed(1));
+      } else if (linha && linha.parentNode) linha.remove();
       let el = vivo.rotulos.get(item.id);
       if (!el) {
         el = document.createElementNS(SVG, 'text');
@@ -772,8 +895,11 @@
       el.setAttribute('fill', item.fill);
       el.setAttribute('stroke-width', (item.fs / 4).toFixed(2));
       el.setAttribute('aria-label', item.nome);
+      if (item.polo) el.setAttribute('data-polo', '1');
+      else el.removeAttribute('data-polo');
     }
     for (const [id, el] of vivo.rotulos) if (!vistos.has(id) && el.parentNode) el.remove();
+    for (const [id, linha] of vivo.guias) if (!vistos.has(id) && linha.parentNode) linha.remove();
   }
 
   function pintarFundo(ctx, w, h, dpr) {
@@ -1111,6 +1237,37 @@
       if (Date.now() - inicio < 30000) setTimeout(tentar, 40);
     };
     tentar();
+  }
+
+  function caixasVisiveis() {
+    if (typeof document === 'undefined') return [];
+    const svg = document.getElementById('grafo-rotulos');
+    if (!svg) return [];
+    const lista = [];
+    for (const el of svg.querySelectorAll('text[data-grafo-no]')) {
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 0.5 || r.height < 0.5) continue;
+      lista.push({
+        id: el.getAttribute('data-grafo-no'),
+        polo: el.getAttribute('data-polo') === '1',
+        x: r.left,
+        y: r.top,
+        w: r.width,
+        h: r.height,
+      });
+    }
+    return lista;
+  }
+
+  if (typeof document !== 'undefined') {
+    const alvo = typeof window !== 'undefined' ? window : globalThis;
+    alvo.__grafo = {
+      caixas: caixasVisiveis,
+      zoom: zoomRelativo,
+      quadro: () => ({ ultimo: vivo.ultimo, media: vivo.media }),
+    };
   }
 
   return {

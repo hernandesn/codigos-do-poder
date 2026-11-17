@@ -28,9 +28,79 @@
 }
 .grafo-rotulos text:focus { outline: none; }
 .grafo-rotulos text:focus-visible { stroke: #f2e7d2; }
+/* O #network fica acima do canvas (z-index 4 > palco 2). Opacidade 0 no
+   elemento inteiro esconderia também o nó selecionado, porque a opacidade
+   do pai multiplica a dos filhos. some só o que não é a ficha.
+   O FIX8 começa o arrasto em .node-card e exige elementFromPoint nesse
+   centro: o nó selecionado continua recebendo o ponteiro. O pan no resto
+   do mapa passa pelo canvas (#network tem pointer-events: none). */
 body.grafo-on #network {
-  opacity: 0 !important;
+  opacity: 1 !important;
   z-index: 4;
+  background: transparent;
+}
+body.grafo-on #network .canvas-background,
+body.grafo-on #network #zone-layer,
+body.grafo-on #network #edge-layer,
+body.grafo-on #network #edge-label-layer,
+body.grafo-on #network .network-node:not(.selected) {
+  opacity: 0 !important;
+}
+body.grafo-on #network .network-node.selected {
+  opacity: 1 !important;
+}
+body.grafo-on #network .network-node.selected .node-card {
+  fill: #1b1410 !important;
+  stroke: #8b7660 !important;
+  stroke-width: 1.5px !important;
+}
+body.grafo-on #network .network-node.selected .node-title {
+  fill: #ede3cd !important;
+}
+body.grafo-on #network .network-node.selected .node-kind {
+  fill: #7a0a0a !important;
+}
+body.grafo-on #network .network-node.selected .node-rank {
+  fill: #c4b49a !important;
+}
+.grafo-rotulos .grafo-guia {
+  stroke: #8b7660;
+  stroke-width: 1.25px;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+/* 360–430 px: o contador desce para a segunda linha e a aba do meio
+   ganha um pouco mais de largura, para «1.644» caber inteiro. */
+@media (min-width: 360px) and (max-width: 430px) {
+  #map-mode.map-mode button {
+    flex: 1 1 0;
+    min-width: 0;
+    height: auto;
+    min-height: 48px;
+    padding: 4px 3px;
+    font-size: 13px;
+    line-height: 1.15;
+    white-space: nowrap;
+    text-align: center;
+    text-overflow: clip;
+    overflow: visible;
+  }
+  #map-mode.map-mode button[data-mapa-completo] {
+    flex: 1.35 1 0;
+    white-space: normal;
+    font-size: 12px;
+    line-height: 1.1;
+    padding: 3px 3px 4px;
+  }
+  body:not(.mapa-mundi-aberto) #map-mode button[data-mapa-completo] #map-mode-count {
+    display: block;
+    margin: 1px 0 0;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.05;
+    white-space: nowrap;
+    text-overflow: clip;
+  }
 }
 body.grafo-on #network,
 body.grafo-on #network * {
