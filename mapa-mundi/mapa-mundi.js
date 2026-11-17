@@ -541,7 +541,12 @@
           ideal = borda.dir === 'e' ? vis.x : vis.x + vis.w;
         }
         achado = varrerBorda(dir, W, H, vis, bloqueios, ideal);
-        if (achado) return { x: achado.x, y: achado.y, w: achado.w, h: achado.h, dir: dir, ang: borda.ang };
+        if (achado) {
+          var meioX = achado.x + achado.w / 2, meioY = achado.y + achado.h / 2;
+          var ang = Math.atan2(it.cy - meioY, it.cx - meioX) * 180 / Math.PI;
+          if (!isFinite(ang)) ang = borda.ang;
+          return { x: achado.x, y: achado.y, w: achado.w, h: achado.h, dir: dir, ang: ang };
+        }
       }
     }
     return null;
@@ -633,7 +638,7 @@
         cameras[location.hash] = { x: T.x, y: T.y, k: T.k };
       });
     all.select('rect').attr('width', function (d) { return d.w; }).attr('height', function (d) { return d.h; });
-    all.select('path').attr('d', 'M1 1 L11 6 L1 11 Z').attr('transform', function (d) {
+    all.select('path').attr('d', 'M1 1 L11 6 L1 11 Z').attr('data-ponta', '11,6').attr('transform', function (d) {
       var deg = isFinite(d.ang) ? d.ang : 0;
       return 'translate(8,16) rotate(' + deg.toFixed(2) + ',6,6)';
     });
