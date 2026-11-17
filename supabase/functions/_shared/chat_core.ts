@@ -2169,7 +2169,7 @@ async function streamPreparedInner(input: {
 
   let { answer } = sanearModelo(parsed, prepared.context, prepared.apelidos)
   // Pauta/pressão: prosa do modelo nunca transforma uma acusação em Fato.
-  if (prepared.pauta || prepared.pressure) answer = buildPautaAnswer(prepared.context, prepared.pauta || { avisos: [] }, parsed, !!prepared.pressure)
+  if (prepared.pauta || prepared.pressure) answer = buildPautaAnswer(prepared.context, prepared.pauta || { avisos: [] }, traduzirApelidos(parsed, prepared.apelidos), !!prepared.pressure)
   // sem_base:true com bloco documentado válido (texto e fonte do recorte, já saneado) é resposta normal.
   const semBaseIgnorado = answer.sem_base && countValidDocumentado(answer.blocos) > 0
   if (semBaseIgnorado) {

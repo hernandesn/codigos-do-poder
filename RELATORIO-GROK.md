@@ -34,7 +34,7 @@ Na fixture real, com a seleção de febre amarela, a pergunta Soros/Lula devolve
 2. `reatribuirPorNome`, antes do saneamento, guarda o id inválido (para o aviso) e, se o texto cita duas entidades com relação no recorte, acrescenta essa relação e as fontes citáveis. Com uma só, cita a entidade e a primeira relação dela que tem fonte. Sem casar, continua `sem_id_valido`.
 3. Ausentes no system prompt, no máximo uma linha, nomes só com letras, dígitos, espaço, `&` e `-`, 60 caracteres, até 3. No final com sucesso, se nenhum bloco diz “não está na base”, entra um bloco documentado com ids vazios.
 4. `ocultarIdsVisiveis` roda em texto, justificativa, `em_aberto` e avisos do modelo, antes de `publicChatText`. Só id que parece código (tem `_`, dígito ou `-`, ou é todo maiúsculo com ≥2 letras) é trocado, numa passada só: entidade vira o nome antes de `·`; relação e fonte somem. Palavra só de minúsculas fica. `[n]` de 1 a 3 dígitos some. Anos comuns ficam. Avisos do sistema (`Relação ${id} está como…`) e o texto da pauta montado depois não passam por essa limpeza.
-5. `em_aberto` fecha o último bloco com `\n\n`, também na pauta.
+5. `em_aberto` fecha o último bloco com `\n\n`, também na pauta. Pauta e pressão recebem o JSON já passado por `traduzirApelidos`, para `buildPautaAnswer` ver o id real no lugar de `[n]`. `pauta.ts` não mudou.
 6. Duas linhas novas sempre: `Cite só "[n]".` e `Não ponha ids no texto.` A de ausentes só quando há nomes. As linhas de segurança e a de id puro (`walther_ms`, `E219`, `PR1-NF22`) permanecem. O saneamento aceita os dois formatos.
 
 ## Funções novas exportadas
@@ -45,7 +45,7 @@ Na fixture real, com a seleção de febre amarela, a pergunta Soros/Lula devolve
 
 Runner: `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs` (Node 25). Deno não está nesta máquina; os arquivos continuam com import `.ts` e sem API de Node.
 
-A suíte no commit base não foi reexecutada. O arquivo novo tem 17 testes (os 12 pedidos, Rothschild/Brother Sam/Lemann, o tamanho do prompt, e três da revisão de ids crus: palavra minúscula intacta, `AP_E39`/`walther_ms`/`BP02`/`IPES`, e passada única). Total registrado: 124. Resultado desta revisão: **121 passed, 0 failed, 3 skipped**. Os 3 skips são os de sempre (`Deno.serve` / HTTP): limite 402/403, rate limit com `Deno.serve`, e `functions serve` local. O commit anterior tinha 118 passed com os mesmos 3 skips.
+A suíte no commit base não foi reexecutada. O arquivo novo tem 18 testes (os 12 pedidos, Rothschild/Brother Sam/Lemann, o tamanho do prompt, três da revisão de ids crus, e a pauta que cita a relação por `[n]`). Total registrado: 125. Resultado desta revisão: **122 passed, 0 failed, 3 skipped**. Os 3 skips são os de sempre (`Deno.serve` / HTTP): limite 402/403, rate limit com `Deno.serve`, e `functions serve` local.
 
 Ajustes em testes antigos, porque o comportamento pedido mudou:
 

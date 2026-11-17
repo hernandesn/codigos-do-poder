@@ -579,6 +579,45 @@ Deno.test('nomes corrigem Rothschild, Brother Sam e não trocam Lemann por BTG',
   assert(!lemannCalls.some((key) => key.includes('btg_pactual|')), 'não refetch com BTG no lugar')
 })
 
+Deno.test('pauta com apelido [n] usa o id real da relação pedida', async () => {
+  const ctx: ChatContextPayload = {
+    raizes: [raiz('alfa_org', 'Alfa Org')],
+    entidades: [
+      raiz('alfa_org', 'Alfa Org'),
+      raiz('beta_org', 'Beta Org'),
+      raiz('gama_org', 'Gama Org'),
+      raiz('delta_org', 'Delta Org'),
+      raiz('epsilon_org', 'Epsilon Org'),
+    ],
+    relacoes: [
+      { id: 'zz_rel_outra', origem: 'alfa_org', destino: 'beta_org', tipo: 'doacao', afirmacao: 'A outra doação está no recorte.', fontes: ['zz_fonte_outra'] },
+      { id: 'zz_rel_pedida', origem: 'alfa_org', destino: 'gama_org', tipo: 'doacao', afirmacao: 'A doação pedida está no recorte.', fontes: ['zz_fonte_pedida'] },
+      { id: 'zz_rel_inst', origem: 'alfa_org', destino: 'delta_org', tipo: 'cargo', afirmacao: 'O cargo está no recorte.', fontes: ['zz_fonte_inst'] },
+      { id: 'zz_rel_dec', origem: 'alfa_org', destino: 'epsilon_org', tipo: 'controle', afirmacao: 'O controle está no recorte.', fontes: ['zz_fonte_dec'] },
+    ],
+    fontes: [
+      { id: 'zz_fonte_outra', titulo: 'Fonte da outra' },
+      { id: 'zz_fonte_pedida', titulo: 'Fonte pedida' },
+      { id: 'zz_fonte_inst', titulo: 'Fonte do cargo' },
+      { id: 'zz_fonte_dec', titulo: 'Fonte do controle' },
+    ],
+  }
+  const store = createMemoryDb({ clock: CLOCK })
+  store.chatContext = async () => JSON.parse(JSON.stringify(ctx)) as ChatContextPayload
+  const prepared = await preparar(store, 'sugira uma pauta sobre Alfa Org', [])
+  assert(prepared.pauta, 'pedido de pauta')
+  const numero = Object.entries(prepared.apelidos).find(([, id]) => id === 'zz_rel_pedida')
+  assert(numero, 'apelido da relação pedida')
+  const fluxo = await fluir(store, prepared, JSON.stringify({
+    sem_base: false,
+    blocos: [{ tipo: 'documentado', texto: 'gancho', entidades: [], relacoes: [`[${numero[0]}]`], fontes: [] }],
+  }))
+  const final = finalOf(fluxo.emitted)
+  const primeiro = final.blocos.find((bloco) => bloco.tipo === 'documentado')
+  assert(primeiro && primeiro.tipo === 'documentado', 'fato')
+  eq(primeiro.relacoes[0], 'zz_rel_pedida', 'relação pedida aparece primeiro')
+})
+
 Deno.test('tamanho do system prompt não cresce no sintético nem em Soros', () => {
   const mini: ChatContextPayload = {
     raizes: [
