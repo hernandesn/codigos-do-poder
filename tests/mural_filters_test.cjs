@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '..', 'mapa', 'index.html'), 'utf8');
 const { seedText } = require('./dados_site.cjs');
 const muralScript = html.match(/<script>\s*((?:\(\(\) => \{|\(function mural\(\) \{)[\s\S]*?)<\/script>/)[1];
 const muralKey = 'codigos-do-poder:mural:v26';

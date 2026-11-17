@@ -11,9 +11,10 @@ const vm = require('node:vm');
 const zlib = require('node:zlib');
 const { describe, test, before, after } = require('node:test');
 const { dataRef, mergeParts, stableStringify } = require('./dados_site.cjs');
+const { arquivoDoSite } = require('./site_files.cjs');
 
 const root = path.resolve(__dirname, '..');
-const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'mapa', 'index.html'), 'utf8');
 const ref = dataRef(html);
 const nucleoFile = ref.src ? path.join(root, ref.src.split('?')[0]) : null;
 const extFile = ref.extSrc ? path.join(root, ref.extSrc.split('?')[0]) : null;
@@ -30,16 +31,20 @@ const MAX_DATA_BYTES = 2_600_000;
 const MAX_DATA_GZIP_BYTES = 520_000;
 const gz = buffer => zlib.gzipSync(buffer, { level: 9 }).length;
 
-test('index aponta para núcleo e extensão relativos e não embute a base', () => {
+test('mapa/index aponta para núcleo e extensão na raiz do site e não embute a base', () => {
   assert.ok(ref.src, 'data-src ausente');
   assert.ok(ref.extSrc, 'data-ext-src ausente');
   assert.equal(ref.embedded, '');
-  assert.match(ref.src, /^dados-nucleo\.json\?v=[0-9a-f]{12}$/);
-  assert.match(ref.extSrc, /^dados-extensao\.json\?v=[0-9a-f]{12}$/);
-  assert.doesNotMatch(ref.src, /^(?:\/|[a-z]+:)/, 'caminho do núcleo precisa ser relativo');
-  assert.doesNotMatch(ref.extSrc, /^(?:\/|[a-z]+:)/, 'caminho da extensão precisa ser relativo');
-  assert.ok(fs.existsSync(nucleoFile), 'dados-nucleo.json ausente ao lado do index');
-  assert.ok(fs.existsSync(extFile), 'dados-extensao.json ausente ao lado do index');
+  assert.match(ref.src, /^\/dados-nucleo\.json\?v=[0-9a-f]{12}$/);
+  assert.match(ref.extSrc, /^\/dados-extensao\.json\?v=[0-9a-f]{12}$/);
+  assert.doesNotMatch(ref.src, /^[a-z]+:/, 'caminho do núcleo precisa ser absoluto na origem');
+  assert.doesNotMatch(ref.extSrc, /^[a-z]+:/, 'caminho da extensão precisa ser absoluto na origem');
+  assert.equal(path.resolve(nucleoFile), path.join(root, 'dados-nucleo.json'));
+  assert.equal(path.resolve(extFile), path.join(root, 'dados-extensao.json'));
+  assert.equal(fs.existsSync(path.join(root, 'mapa', 'dados-nucleo.json')), false);
+  assert.equal(fs.existsSync(path.join(root, 'mapa', 'dados-extensao.json')), false);
+  assert.ok(fs.existsSync(nucleoFile), 'dados-nucleo.json ausente na raiz do site');
+  assert.ok(fs.existsSync(extFile), 'dados-extensao.json ausente na raiz do site');
 });
 
 test('versão, sha256 e contagens batem com núcleo, extensão e união', () => {
@@ -47,9 +52,9 @@ test('versão, sha256 e contagens batem com núcleo, extensão e união', () => 
   const extSha = crypto.createHash('sha256').update(extRaw).digest('hex');
   const unionSha = crypto.createHash('sha256').update(unionRaw).digest('hex');
   assert.equal(ref.sha256, nucleoSha);
-  assert.equal(ref.src, 'dados-nucleo.json?v=' + nucleoSha.slice(0, 12));
+  assert.equal(ref.src, '/dados-nucleo.json?v=' + nucleoSha.slice(0, 12));
   assert.equal(ref.extSha256, extSha);
-  assert.equal(ref.extSrc, 'dados-extensao.json?v=' + extSha.slice(0, 12));
+  assert.equal(ref.extSrc, '/dados-extensao.json?v=' + extSha.slice(0, 12));
   assert.equal(ref.unionSha256, unionSha);
   const nucleo = JSON.parse(nucleoRaw.toString('utf8'));
   const ext = JSON.parse(extRaw.toString('utf8'));
@@ -74,7 +79,7 @@ test('tetos de tamanho: index e cada parte, bruto e gzip', () => {
 });
 
 test('nenhum caminho local no index nem nas partes', () => {
-  for (const [name, raw] of [['index.html', html], ['dados-nucleo.json', nucleoRaw.toString('utf8')], ['dados-extensao.json', extRaw.toString('utf8')]]) {
+  for (const [name, raw] of [['mapa/index.html', html], ['dados-nucleo.json', nucleoRaw.toString('utf8')], ['dados-extensao.json', extRaw.toString('utf8')]]) {
     const text = raw.replace(/https?:\/\/[^\s"'<>\\]+/g, '');
     for (const mark of ['/Users/', '/workspace/', '/home/']) {
       assert.equal(text.indexOf(mark), -1, `${mark} em ${name}`);
@@ -190,8 +195,8 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
       try {
         const url = new URL(req.url, 'http://localhost');
         hits.push(url.pathname + url.search);
-        const file = path.resolve(root, '.' + (url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)));
-        if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
+        const file = arquivoDoSite(root, decodeURIComponent(url.pathname));
+        if (!file) { res.writeHead(403); res.end(); return; }
         const body = await fs.promises.readFile(file);
         const type = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8';
         res.writeHead(200, { 'content-type': type });
@@ -228,7 +233,7 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
     if (antes) await antes(page);
     page.on('pageerror', error => errors.push(error.message));
     // UX6: a visita nova abre nos temas; o carregamento do mapa inteiro é medido no #all.
-    await page.goto(origin + '/#all');
+    await page.goto(origin + '/mapa/#all');
     return { page, context, errors, nucleoAttempts, extAttempts };
   }
   const mapReady = page => page.waitForFunction(() => !!window.mural && document.querySelectorAll('#node-layer .network-node').length > 0, null, { timeout: 30000 });

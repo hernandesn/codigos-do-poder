@@ -6,19 +6,20 @@ const path = require('node:path');
 const http = require('node:http');
 const { test } = require('node:test');
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const { caminhoPublico } = require('./site_files.cjs');
 const root = path.resolve(__dirname, '..');
 const prints = path.resolve(root, '../../prints');
-const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'mapa', 'index.html'), 'utf8');
 const ref = html.match(/data-src="([^"]+)"/)[1].split('?')[0];
 const entity = JSON.parse(fs.readFileSync(path.join(root, ref), 'utf8')).nos[0].id;
-const allowed = new Set(['/index.html', '/dados-nucleo.json', '/dados-extensao.json', '/mapa-mundi/carregar.js', '/mapa-completo/grafo.js', '/mapa-completo/grafo.css', '/mapa-completo/posicoes.json']);
+const allowed = new Set(['/mapa/index.html', '/dados-nucleo.json', '/dados-extensao.json', '/mapa-mundi/carregar.js', '/mapa-completo/grafo.js', '/mapa-completo/grafo.css', '/mapa-completo/posicoes.json']);
 
 test('SEC-06 CSP sem violações: temas, #all, entidade e login em desktop e celular', { timeout: 120000 }, async () => {
   let browser;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
-    const file = url.pathname === '/' ? '/index.html' : url.pathname;
+    const file = caminhoPublico(url.pathname);
     if (file === '/config.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' });
       res.end('globalThis.ATLAS_PUBLIC_CONFIG={supabaseUrl:"https://ozeiyqpbtggvuyhplisa.supabase.co",supabaseAnonKey:"public-test-placeholder"};');
@@ -74,7 +75,7 @@ test('SEC-06 CSP sem violações: temas, #all, entidade e login em desktop e cel
           assert.deepEqual(external, [], `${name}/${screen}: nenhuma chamada externa`);
           await page.screenshot({ path: path.join(prints, `sec06-${name}-${screen}.png`), fullPage: false });
         };
-        await page.goto(origin);
+        await page.goto(origin + '/mapa/');
         await page.waitForFunction(() => !!window.mural);
         await page.locator('#temas-screen').waitFor({ state: 'visible' });
         await capture('temas');

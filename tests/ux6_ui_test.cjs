@@ -7,9 +7,10 @@ const http = require('node:http');
 const path = require('node:path');
 const { test, describe, before, after, afterEach } = require('node:test');
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const { arquivoDoSite } = require('./site_files.cjs');
 
 const root = path.resolve(__dirname, '..');
-const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'mapa', 'index.html'), 'utf8');
 const views = JSON.parse(html.match(/<script id="research-views" type="application\/json">([\s\S]*?)<\/script>/)[1]);
 const temas = views.filter(v => v.grupo === 'tema');
 const temasDoc = JSON.parse(fs.readFileSync(path.join(root, '../pesquisa/dados/temas.json'), 'utf8'));
@@ -28,8 +29,8 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
     server = http.createServer(async (req, res) => {
       try {
         const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-        const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
-        if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
+        const file = arquivoDoSite(root, pathname);
+        if (!file) { res.writeHead(403); res.end(); return; }
         const data = await fs.promises.readFile(file);
         const type = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.woff2') ? 'font/woff2' : 'application/octet-stream';
         res.writeHead(200, { 'content-type': type }); res.end(data);
@@ -46,7 +47,7 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
     if (server) await new Promise(r => server.close(r));
   });
 
-  async function open({ width = 1440, height = 900, touch = width < 500, suffix = '/', tutorialSeen = true, hintSeen = true, saved = null, savedKey = KEY, blockStorage = false } = {}) {
+  async function open({ width = 1440, height = 900, touch = width < 500, suffix = '/mapa/', tutorialSeen = true, hintSeen = true, saved = null, savedKey = KEY, blockStorage = false } = {}) {
     const context = await browser.newContext({ viewport: { width, height }, isMobile: touch, hasTouch: touch, deviceScaleFactor: touch ? 3 : 1, serviceWorkers: 'block' });
     contexts.push(context);
     const errors = [];
@@ -179,7 +180,7 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
     assert.deepEqual(errors, []); assert.deepEqual(fresh.errors, []);
   });
 
-  for (const suffix of ['/#rockefeller-ipes-1964', '/#e=ipes', '/#all', '/#OP01']) test(`T-03: link direto ${suffix} não abre o tutorial; o "?" fica visível`, async () => {
+  for (const suffix of ['/mapa/#rockefeller-ipes-1964', '/mapa/#e=ipes', '/mapa/#all', '/mapa/#OP01']) test(`T-03: link direto ${suffix} não abre o tutorial; o "?" fica visível`, async () => {
     const { page, errors } = await open({ suffix, tutorialSeen: false });
     const s = await st(page);
     assert.equal(s.tut.open, false); assert.equal(await page.locator('#tutorial-open').isVisible(), true);
@@ -346,12 +347,12 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
     assert.equal(JSON.parse(await page.evaluate(k => localStorage.getItem(k), KEY)).schema, 26);
     ({ page, errors } = await open({ saved: v25('br_bancos'), savedKey: KEY_V25 }));
     assert.equal((await st(page)).view, 'br_bancos');
-    ({ page, errors } = await open({ saved: v25('all'), savedKey: KEY_V25, suffix: '/#e=ipes' }));
+    ({ page, errors } = await open({ saved: v25('all'), savedKey: KEY_V25, suffix: '/mapa/#e=ipes' }));
     s = await st(page); assert.equal(s.view, 'all'); assert.equal(s.selected?.id, 'ipes'); assert.equal(s.inspectorOpen, true);
     report.dom.ipes_selecionado_all = await domCount(page); assert.ok(report.dom.ipes_selecionado_all <= DOM_CAP);
-    ({ page, errors } = await open({ saved: v25('br_bancos'), savedKey: KEY_V25, suffix: '/#rockefeller-ipes-1964' }));
+    ({ page, errors } = await open({ saved: v25('br_bancos'), savedKey: KEY_V25, suffix: '/mapa/#rockefeller-ipes-1964' }));
     assert.equal((await st(page)).view, 'rockefeller-ipes-1964');
-    ({ page, errors } = await open({ suffix: '/#all' }));
+    ({ page, errors } = await open({ suffix: '/mapa/#all' }));
     s = await st(page); assert.equal(s.view, 'all'); assert.equal(s.advancedMap, true); assert.equal(await page.evaluate(() => location.hash), '#all');
     await page.reload(); await page.waitForFunction(() => !!window.mural); await settle(page);
     assert.equal((await st(page)).view, 'all', 'Mapa completo escolhido continua no reload');
@@ -364,7 +365,7 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
 
   test('L9: #e=ipes abre o Mapa completo com o IPES selecionado (1440 e 393)', async () => {
     for (const [width, height] of [[1440, 900], [393, 852]]) {
-      const { page, errors } = await open({ width, height, suffix: '/#e=ipes' });
+      const { page, errors } = await open({ width, height, suffix: '/mapa/#e=ipes' });
       const s = await st(page); assert.equal(s.selected?.id, 'ipes'); assert.equal(s.view, 'all');
       assert.equal(await page.locator('[data-node-id="ipes"]').count(), 1);
       report.dom[`ipes_e_${width}`] = await domCount(page);
@@ -374,14 +375,14 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
 
   test('L7/A-05: visitante sem controles de edição no DOM; ?editor=1 traz de volta', async () => {
     const ids = ['draft-mode', 'add-node', 'add-edge', 'export-button', 'import-button', 'import-file', 'undo', 'redo', 'layout'];
-    let { page, errors } = await open({ suffix: '/#all' });
+    let { page, errors } = await open({ suffix: '/mapa/#all' });
     for (const id of ids) assert.equal(await page.locator('#' + id).count(), 0, id);
     assert.equal(await page.locator('.local-draft, .board-actions, .draft-only').count(), 0);
     await page.evaluate(() => { location.hash = 'e=ipes'; });
     await page.waitForFunction(() => window.mural.getState().selected?.id === 'ipes');
     assert.equal(await page.locator('#inspector .draft-only, #detail-edit, #detail-connect').count(), 0);
     assert.equal((await st(page)).editor, false);
-    ({ page, errors } = await open({ suffix: '/?editor=1#all' }));
+    ({ page, errors } = await open({ suffix: '/mapa/?editor=1#all' }));
     for (const id of ['draft-mode', 'add-node', 'export-button', 'undo']) assert.equal(await page.locator('#' + id).count(), 1, id);
     assert.equal((await st(page)).editor, true);
     assert.deepEqual(errors, []);

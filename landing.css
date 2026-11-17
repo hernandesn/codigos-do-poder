@@ -1,8 +1,8 @@
-/* Códigos do Poder · landing v2 (mock) · tokens do tema "Couro e Osso". Sem inline, sem CDN. JS só em cobranca.js. */
-@font-face{font-family:"EB Garamond";font-style:normal;font-weight:400;font-display:swap;src:url("../fonts/eb-garamond-400.woff2") format("woff2")}
-@font-face{font-family:"EB Garamond";font-style:italic;font-weight:400;font-display:swap;src:url("../fonts/eb-garamond-400i.woff2") format("woff2")}
-@font-face{font-family:"EB Garamond";font-style:normal;font-weight:600;font-display:swap;src:url("../fonts/eb-garamond-600.woff2") format("woff2")}
-@font-face{font-family:"Courier Prime";font-style:normal;font-weight:400;font-display:swap;src:url("../fonts/courier-prime-400.woff2") format("woff2")}
+/* Códigos do Poder · landing v2 (mock) · tokens do tema "Couro e Osso". Sem inline, sem CDN. JS em /cobranca.js e /inicio/redirecionar-app.js. */
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:italic;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400i.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:600;font-display:swap;src:url("fonts/eb-garamond-600.woff2") format("woff2")}
+@font-face{font-family:"Courier Prime";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/courier-prime-400.woff2") format("woff2")}
 :root{
   color-scheme:dark;
   --bg:#0a0706;--surface-1:#140f0c;--surface-2:#1b1410;--surface-3:#241b15;--line:#2f241c;--border:#8b7660;
@@ -20,6 +20,7 @@
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-display);font-size:18px;line-height:1.55;-webkit-font-smoothing:antialiased}
+html.redir-app body{display:none}
 img{max-width:100%;height:auto;display:block}
 a{color:var(--blood-text);text-decoration:none}
 a:hover{text-decoration:underline}

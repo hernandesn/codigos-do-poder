@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const { arquivoDoSite } = require('./site_files.cjs');
 
 const root = path.resolve(__dirname, '..');
 const prints = path.resolve(root, '../prints');
@@ -145,15 +146,15 @@ test('MM-02 e MM-05: derivação, JSON público e tamanhos', () => {
   const h2 = execFileSync('shasum', ['-a', '256', 'mapa-mundi/dados-mundo.json'], { cwd: root, encoding: 'utf8' }).split(' ')[0];
   assert.equal(h1, h2);
 
-  const html = fs.readFileSync(path.join(root, 'index.html'));
-  assert.ok(html.length < 400000, 'index ' + html.length);
-  assert.ok(gzip9('index.html') < 120000, 'index gzip');
+  const html = fs.readFileSync(path.join(root, 'mapa', 'index.html'));
+  assert.ok(html.length < 400000, 'mapa/index ' + html.length);
+  assert.ok(gzip9('mapa/index.html') < 120000, 'mapa/index gzip');
   const mods = ['mapa-mundi/mapa-mundi.js', 'mapa-mundi/mapa-mundi.css', 'mapa-mundi/rotulos-pt.js', 'mapa-mundi/vendor/d3-mapa.min.js', 'mapa-mundi/vendor/countries-110m.json', 'mapa-mundi/dados-mundo.json'];
   const soma = mods.reduce((n, f) => n + gzip9(f), 0);
   assert.ok(soma <= 150000, 'módulo gzip ' + soma);
   const texto = html.toString('utf8');
   assert.equal(texto.match(/mapa-mundi\/carregar\.js/g).length, 1);
-  assert.equal((texto.match(/<script src="mapa-mundi\/carregar\.js" defer><\/script>/g) || []).length, 1);
+  assert.equal((texto.match(/<script src="\/mapa-mundi\/carregar\.js" defer><\/script>/g) || []).length, 1);
 });
 
 test('rótulos pt-BR cobrem cada valor exibido e o JSON público continua cru', () => {
@@ -203,8 +204,8 @@ function servir(override) {
         res.end(override.json);
         return;
       }
-      const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
-      if (!file.startsWith(root + path.sep) && file !== root + '/index.html') { res.writeHead(403); res.end(); return; }
+      const file = arquivoDoSite(root, pathname);
+      if (!file) { res.writeHead(403); res.end(); return; }
       const data = await fs.promises.readFile(file);
       res.writeHead(200, { 'content-type': contentType(file), 'cache-control': 'no-store' });
       res.end(data);
@@ -233,7 +234,7 @@ function contraste(fg, bg) {
 }
 
 test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000 }, async () => {
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'mapa', 'index.html'), 'utf8');
   const views = JSON.parse(html.match(/<script id="research-views" type="application\/json">([\s\S]*?)<\/script>/)[1]);
   const tema = views.find(v => v.grupo === 'tema').id;
   const nucleo = JSON.parse(fs.readFileSync(path.join(root, 'dados-nucleo.json'), 'utf8'));
@@ -278,7 +279,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       const { context, page, errors } = await contexto();
       const pedidos = [];
       page.on('request', r => pedidos.push(r.url()));
-      await page.goto(origin + '/');
+      await page.goto(origin + '/mapa/');
       await page.waitForFunction(() => window.mural);
       assert.equal(await page.evaluate(() => window.mural.getState().view), 'temas');
       assert.equal(await page.locator('#mapa-mundi-tela').count(), 0);
@@ -286,12 +287,12 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#map-mode [data-mapa-completo]')).borderTopWidth), '2px');
       for (const [hash, view] of [['#all', 'all'], ['#' + tema, tema], ['#OP01', 'caso:OP01']]) {
         await page.evaluate(() => localStorage.removeItem('codigos-do-poder:mural:v26'));
-        await page.goto(origin + '/' + hash);
+        await page.goto(origin + '/mapa/' + hash);
         await page.waitForFunction(v => window.mural && window.mural.getState().view === v, view);
         assert.equal(await page.locator('#mapa-mundi-tela:not([hidden])').count(), 0, hash);
         if (hash === '#all' || hash === '#' + tema) assert.equal(await ariaN(page), 1, hash);
       }
-      await page.goto(origin + '/#e=' + encodeURIComponent(entity));
+      await page.goto(origin + '/mapa/#e=' + encodeURIComponent(entity));
       await page.waitForFunction(() => window.mural);
       await page.locator('#inspector').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#mapa-mundi-tela:not([hidden])').count(), 0);
@@ -307,7 +308,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       const { context, page, errors } = await contexto();
       const pedidos = [];
       page.on('request', r => pedidos.push(r.url()));
-      await page.goto(origin + '/#mundo');
+      await page.goto(origin + '/mapa/#mundo');
       await page.waitForFunction(() => window.mural && window.mural.getState().view === 'temas' && location.hash === '#mundo');
       assert.equal(await page.locator('#mapa-mundi-tela:not([hidden])').count(), 0);
       await page.evaluate(() => document.getElementById('scope-global').click());
@@ -323,7 +324,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
     // Desktop: teclado, links, contraste, Brasil.
     {
       const { context, page, errors } = await contexto();
-      await page.goto(origin + '/#mapa-mundi');
+      await page.goto(origin + '/mapa/#mapa-mundi');
       await page.waitForSelector('path[data-iso="BR"]');
       await page.waitForFunction(() => document.querySelector('[data-mapa-mundi]')?.getAttribute('aria-current') === 'page');
       const aria = await page.evaluate(() => [...document.querySelectorAll('#map-mode button')].map(b => [b.getAttribute('data-mapa-mundi') !== null ? 'mundi' : b.getAttribute('data-modo-temas') !== null ? 'temas' : 'completo', b.getAttribute('aria-current')]));
@@ -439,7 +440,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       await caso.click();
       await page.waitForFunction(() => /^#OP\d+/.test(location.hash));
       await page.waitForFunction(() => document.getElementById('mapa-mundi-tela').hidden && window.mural.getState().view.startsWith('caso:'));
-      await page.goto(origin + '/#mapa-mundi/BR');
+      await page.goto(origin + '/mapa/#mapa-mundi/BR');
       await page.waitForSelector('path[data-iso="BR"].sel, path.sel[data-iso="BR"]');
       const contr = await page.evaluate(() => {
         function parse(c) {
@@ -500,7 +501,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
     {
       const { context, page, errors } = await contexto({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
       const cdp = await context.newCDPSession(page);
-      await page.goto(origin + '/#mapa-mundi');
+      await page.goto(origin + '/mapa/#mapa-mundi');
       await page.waitForSelector('path[data-iso="BR"]');
       await page.waitForTimeout(200);
       const texto0 = await page.locator('#mapa-mundi-tela').innerText() + await page.locator('#map-mode').innerText();
@@ -716,7 +717,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
     // Coluna dos chips, 3×, só o recorte.
     {
       const { context, page, errors } = await contexto({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
-      await page.goto(origin + '/#mapa-mundi/BR');
+      await page.goto(origin + '/mapa/#mapa-mundi/BR');
       await page.waitForSelector('#mm-fora .fora');
       await page.waitForTimeout(200);
       const clip = await page.evaluate(() => {
@@ -744,7 +745,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
     // Paisagem.
     {
       const { context, page, errors } = await contexto({ viewport: { width: 852, height: 393 }, isMobile: true, hasTouch: true });
-      await page.goto(origin + '/#mapa-mundi/BR');
+      await page.goto(origin + '/mapa/#mapa-mundi/BR');
       await page.waitForSelector('path[data-iso="BR"]');
       await page.waitForTimeout(250);
       const geo = await page.evaluate(() => {
@@ -791,7 +792,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
     {
       const { context, page, errors } = await contexto({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
       const cdp = await context.newCDPSession(page);
-      await page.goto(origin + '/');
+      await page.goto(origin + '/mapa/');
       await page.waitForFunction(() => window.mural);
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
       await page.evaluate(() => {
@@ -844,7 +845,7 @@ test('Mapa-múndi: toque, rotas, XP, CSP e carga sob demanda', { timeout: 240000
       const { context, page, errors } = await contexto();
       const cdp = await context.newCDPSession(page);
       await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
-      await page.goto(origin + '/#mapa-mundi/XP');
+      await page.goto(origin + '/mapa/#mapa-mundi/XP');
       await page.waitForSelector('path[data-iso="XP"]');
       const xp = await page.evaluate(() => {
         const d3 = window.d3mapa;

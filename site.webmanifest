@@ -3,7 +3,7 @@
   "short_name": "Códigos do Poder",
   "description": "Atlas documental de famílias, capital e instituições.",
   "lang": "pt-BR",
-  "start_url": "/",
+  "start_url": "/mapa/",
   "scope": "/",
   "display": "standalone",
   "theme_color": "#0a0706",

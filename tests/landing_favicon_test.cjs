@@ -20,7 +20,7 @@ const FAVICON_FILES = [
   'site.webmanifest',
 ];
 
-const PAGES = ['index.html', '404.html', 'inicio/index.html'];
+const PAGES = ['index.html', '404.html', 'inicio/index.html', 'mapa/index.html'];
 
 const LINKS = [
   ['icon', '/favicon.ico'],
@@ -31,10 +31,13 @@ const LINKS = [
   ['manifest', '/site.webmanifest'],
 ];
 
-test('landing /inicio sem style ou script inline e com rotas reais', () => {
-  const html = read('inicio/index.html');
-  const css = read('inicio/landing.css');
-  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi), ['<script src="cobranca.js" defer></script>']);
+test('landing na raiz sem style ou script inline e com rotas reais', () => {
+  const html = read('index.html');
+  const css = read('landing.css');
+  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi), [
+    '<script src="/inicio/redirecionar-app.js"></script>',
+    '<script src="/cobranca.js" defer></script>',
+  ]);
   assert.equal(/<style\b/i.test(html), false);
   assert.equal(/\sstyle\s*=/i.test(html), false);
   assert.equal(/\son[a-z]+\s*=/i.test(html), false);
@@ -42,10 +45,13 @@ test('landing /inicio sem style ou script inline e com rotas reais', () => {
   assert.equal(/https?:\/\//i.test(html), false);
   assert.match(html, /script-src 'self'/);
   assert.doesNotMatch(html, /unsafe-inline|unsafe-eval/);
-  assert.match(html, /property="og:image" content="\/inicio\/img\/mapa-brasil-desk\.png"/);
-  assert.match(html, /href="\/#all"/);
-  assert.match(html, /href="\/#mapa-mundi"/);
+  assert.match(html, /property="og:image" content="\/img\/mapa-brasil-desk\.png"/);
+  assert.match(html, /href="\/mapa\/#all"/);
+  assert.match(html, /href="\/mapa\/#mapa-mundi"/);
+  assert.match(html, /href="\/mapa\/"/);
+  assert.doesNotMatch(html, /href="\/#all"|href="\/#mapa-mundi"/);
   assert.match(html, /href="#planos"/);
+  assert.match(html, /<a class="marca" href="\/">/);
   assert.match(html, />Entrar</);
   assert.match(html, />Explorar o mural por 7 dias grátis</);
   assert.match(html, />Começar 7 dias grátis no Básico</);
@@ -53,16 +59,19 @@ test('landing /inicio sem style ou script inline e com rotas reais', () => {
   assert.match(html, />Cadastre-se · 7 dias grátis</);
   assert.match(html, /\[placeholder:/);
   for (const font of ['eb-garamond-400.woff2', 'eb-garamond-400i.woff2', 'eb-garamond-600.woff2', 'courier-prime-400.woff2']) {
-    assert.match(css, new RegExp(`url\\("\\.\\./fonts/${font}"\\)`));
+    assert.match(css, new RegExp(`url\\("fonts/${font}"\\)`));
     assert.ok(fs.statSync(path.join(root, 'fonts', font)).size > 0, font);
   }
-  assert.equal(/url\("fonts\//.test(css), false);
+  assert.equal(/url\("\.\.\/fonts\//.test(css), false);
+  assert.match(css, /html\.redir-app body\{display:none\}/);
   assert.equal(fs.existsSync(path.join(root, 'inicio/fonts')), false);
+  assert.equal(fs.existsSync(path.join(root, 'inicio/landing.css')), false);
+  assert.equal(fs.existsSync(path.join(root, 'inicio/img')), false);
 });
 
 test('planos só Básico e Plus, cobrança no 8º dia e cobranca.js externo', () => {
-  const html = read('inicio/index.html');
-  const js = read('inicio/cobranca.js');
+  const html = read('index.html');
+  const js = read('cobranca.js');
   assert.equal(html.includes('799'), false);
   assert.equal(/\bPro\b/.test(html), false);
   assert.match(html, /preço visível e plano âncora destacado \(Plus\); anual fora por decisão do Hernandes em 17\/11/);
@@ -87,11 +96,15 @@ test('planos só Básico e Plus, cobrança no 8º dia e cobranca.js externo', ()
   assert.match(html, /<summary>Como cancelo\?<\/summary>/);
   assert.equal(html.includes(faqCancela), true);
 
-  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi), ['<script src="cobranca.js" defer></script>']);
+  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi), [
+    '<script src="/inicio/redirecionar-app.js"></script>',
+    '<script src="/cobranca.js" defer></script>',
+  ]);
   assert.equal(/<form\b/i.test(html), false);
   assert.match(js, /querySelectorAll\('\.data-cobranca'\)/);
   assert.match(js, /no 8º dia/);
-  assert.equal(fs.existsSync(path.join(root, 'inicio/cobranca.js')), true);
+  assert.equal(fs.existsSync(path.join(root, 'cobranca.js')), true);
+  assert.equal(fs.existsSync(path.join(root, 'inicio/cobranca.js')), false);
 });
 
 test('favicon linkado nas páginas HTML, arquivos existem e o manifest é válido', () => {
@@ -111,7 +124,7 @@ test('favicon linkado nas páginas HTML, arquivos existem e o manifest é válid
   assert.equal(manifest.name, 'Códigos do Poder');
   assert.equal(manifest.theme_color, '#0a0706');
   assert.equal(manifest.background_color, '#0a0706');
-  assert.equal(manifest.start_url, '/');
+  assert.equal(manifest.start_url, '/mapa/');
   assert.equal(manifest.display, 'standalone');
   assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 3);
   for (const icon of manifest.icons) {

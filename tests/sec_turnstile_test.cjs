@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 const siteRoot = path.resolve(__dirname, '..');
-const html = fs.readFileSync(path.join(siteRoot, 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(siteRoot, 'mapa', 'index.html'), 'utf8');
 const authScript = html.match(/<script>\s*(\/\* Login Supabase Auth e chat[\s\S]*?)<\/script>/)?.[1];
 assert.ok(authScript, 'script de auth embutido no index');
 

@@ -6,7 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '..', 'mapa', 'index.html'), 'utf8');
 const authScript = html.match(/<script>\s*(\/\* Login Supabase Auth e chat[\s\S]*?)<\/script>/)?.[1];
 const muralApi = html.match(/^\s*window\.mural=.+;$/m)?.[0];
 assert.ok(authScript, 'inline auth/chat script exists');
