@@ -319,7 +319,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
         const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
         if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
         const data = await fs.promises.readFile(file);
-        res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : 'application/octet-stream' });
+        res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/octet-stream' });
         res.end(data);
       } catch { res.writeHead(404); res.end(); }
     });

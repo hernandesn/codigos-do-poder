@@ -7,3 +7,4 @@ require('./ux6_ui_test.cjs');
 require('./sec_csp_test.cjs');
 require('./sec_turnstile_test.cjs');
 require('./mapa_mundi_test.cjs');
+require('./mapa_completo_grafo_test.cjs');

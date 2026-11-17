@@ -670,6 +670,7 @@ body.temas-mode .map-mode [data-mapa-completo]{border:2px solid var(--blood-text
 #auth-dialog .dialog-footer{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center}#auth-note,#auth-status{line-height:1.4}#auth-turnstile:empty{display:none}
 .data-status{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;font-size:13px;color:var(--ink-2);background:var(--bg)}.data-status[data-state=error] .data-status-text{color:var(--danger);max-width:340px;line-height:1.6}
 </style>
+<link rel="stylesheet" href="mapa-completo/grafo.css">
 </head>
 <body data-public="1">
   
@@ -738,13 +739,14 @@ body.temas-mode .map-mode [data-mapa-completo]{border:2px solid var(--blood-text
           <rect class="canvas-background" width="100%" height="100%" fill="url(#dots)"/>
           <g id="viewport"><g id="zone-layer"></g><g id="edge-layer"></g><g id="node-layer"></g><g id="edge-label-layer" aria-hidden="true"></g></g>
         </svg>
+        <div id="grafo-palco" class="grafo-palco" hidden><canvas id="grafo-canvas"></canvas><svg id="grafo-rotulos" class="grafo-rotulos"></svg></div>
         <div class="board-hint" id="board-hint"><span>Arraste o fundo para mover</span><i>·</i><span>Arraste cartões para reposicionar</span><i>·</i><span>Shift + roda move para os lados</span><i>·</i><span>Pinça para aproximar</span></div>
         <div class="canvas-toolbar"><button class="icon-button" id="zoom-out" aria-label="Diminuir zoom">−</button><output id="zoom-level">100%</output><button class="icon-button" id="zoom-in" aria-label="Aumentar zoom">＋</button><span class="tool-separator"></span><button class="tool-button pan-toggle" id="pan-mode" aria-label="Ativar modo de mover o mapa" aria-pressed="false" title="Arraste o mapa por cima de cartões e linhas">✋ <span class="pan-label">Mover mapa</span></button><button class="tool-button" id="fit">Enquadrar</button><button class="tool-button draft-only" id="layout">Organizar</button><button class="tool-button clear-highlight" id="clear-highlight" hidden>Limpar destaque</button></div>
         <div class="selection-toolbar" id="selection-toolbar" hidden><button class="highlight-chip" id="selection-label" aria-controls="inspector"></button><button class="tool-button" id="expand-node">Expandir conexões</button></div>
         <div id="data-status" class="data-status" role="status" aria-live="polite" data-state="loading"><span class="data-status-text">Carregando o mapa…</span><button class="button" id="data-retry" type="button" hidden>Tentar de novo</button></div>
         <div id="empty-state" class="empty-state" hidden><strong>Nenhuma conexão com estes filtros</strong><span>Reduza a intensidade mínima ou escolha outro mapa.</span><button class="button" id="empty-clear-filters">Limpar filtros</button></div>
       </div>
-      <footer class="board-footer"><details class="legend-menu"><summary>Legenda</summary><div class="legend"><span><i class="dot family"></i>Família</span><span><i class="dot person"></i>Pessoa</span><span><i class="dot organization"></i>Instituição</span><span id="relation-legend" class="relation-legend"></span></div></details></footer>
+      <footer class="board-footer"><details class="legend-menu"><summary>Legenda</summary><div class="legend"><span><i class="dot family"></i>Família</span><span><i class="dot person"></i>Pessoa</span><span><i class="dot organization"></i>Instituição</span><span id="relation-legend" class="relation-legend"></span><div id="grafo-legenda" class="grafo-legenda" hidden></div></div></details></footer>
     </main>
     <aside class="inspector pasta" id="inspector" aria-label="Detalhes da seleção" hidden>
       <div class="spine" aria-hidden="true"><span id="inspector-spine">Dossiê</span></div>
@@ -3394,6 +3396,7 @@ function refresh(){rebuild();filter();arrange();const needsFit=!layout().camera&
   };
 });
 </script>
+<script src="mapa-completo/grafo.js" defer></script>
 <script src="mapa-mundi/carregar.js" defer></script>
 </body>
 </html>

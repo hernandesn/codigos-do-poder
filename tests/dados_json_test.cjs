@@ -193,7 +193,7 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
         const file = path.resolve(root, '.' + (url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)));
         if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
         const body = await fs.promises.readFile(file);
-        const type = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : 'text/javascript; charset=utf-8';
+        const type = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8';
         res.writeHead(200, { 'content-type': type });
         res.end(body);
       } catch { res.writeHead(404); res.end(); }
