@@ -98,9 +98,10 @@
     issuance = run;
     try { await run; } finally { if (issuance === run) issuance = null; }
   });
-  $('copy').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText($('command').textContent); status('Comando copiado. Cole no chat privado do bot.'); }
-    catch { status('Selecione e copie o comando exibido para enviar ao bot.'); }
+  $('copy').addEventListener('click', () => {
+    const command = $('command');
+    // #status já é aria-live. O anúncio da cópia fica só no toast.
+    return window.copyText(command.textContent, command);
   });
   $('logout').addEventListener('click', async () => {
     if (loggingOut) return;

@@ -2,7 +2,7 @@
 <html lang="pt-BR" data-theme="couro-osso">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com 'sha256-ln5ZnwA321rqVVWpe86+7CMlXLcfu52QVMxn4JVikiU=' 'sha256-XpQU2LKF5fLK7JSzoPitSuIlLgR46YB88WycQLKxb5s='; style-src 'self' 'sha256-mu21KV6aAZCxuyuzwnUC2XuVjPHFaVhnA6Mp+Yue8mo='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src https://challenges.cloudflare.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com 'sha256-ln5ZnwA321rqVVWpe86+7CMlXLcfu52QVMxn4JVikiU=' 'sha256-AGWLN5xvI7H7YW5koY6qhNLYYqABQDVC2DsHEZab0KQ=' 'sha256-xLaNrDSu2lGXgvb4Xwm1tXtAKazF2VCa3okl588IbFc='; style-src 'self' 'sha256-8XnM2zicFjc3aXrZRbGV2T1Ne/Gus0+Vgs3zAFFvh3M='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src https://challenges.cloudflare.com;">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
@@ -132,6 +132,16 @@ button:disabled{background:var(--btn-off);color:var(--btn-off-ink);cursor:wait}.
 @media(max-width:500px){header{padding:14px 18px}.brand{font-size:21px}header>a:last-child{font-size:16px}main{margin-top:26px;padding:0 18px 24px}h1{font-size:34px}.panel{padding:18px}.actions button,.actions .button{width:100%;text-align:center}.code{font-size:20px}.bubble{padding:16px}}
 
 #auth-turnstile:empty{display:none}
+
+/* Toast de cópia: faixa fixa no rodapé, fora do botão. A folga em main reserva essa faixa. */
+main{padding-bottom:120px}
+@media(max-width:500px){main{padding-bottom:132px}}
+#command,.copy-select-all{user-select:all;-webkit-user-select:all}
+.copy-fallback{position:fixed;left:-10000px;top:0;width:1px;height:1px;margin:0;padding:0;border:0;opacity:0;pointer-events:none}
+.copy-toast{position:fixed;z-index:4;left:50%;bottom:0;transform:translateX(-50%);width:min(520px,100%);box-sizing:border-box;margin:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));background:var(--surface-1);color:var(--ink);border:1px solid var(--border);border-bottom:0;border-radius:6px 6px 0 0;box-shadow:0 12px 36px var(--shadow-soft);text-align:center;font-size:17px;line-height:1.35;pointer-events:none;opacity:0;visibility:hidden;transition:opacity 160ms ease}
+.copy-toast.is-visible{opacity:1;visibility:visible}
+@media(prefers-reduced-motion:reduce){.copy-toast{transition:none}}
+#copy{scroll-margin-bottom:96px}
 </style>
 </head>
 <body>
@@ -1123,6 +1133,101 @@ button:disabled{background:var(--btn-off);color:var(--btn-off-ink);cursor:wait}.
   };
 });
 </script>
+  <script>/* Cópia com um único toast. Texto só por textContent. Posição só por classe (CSP: sem atributo style). */
+(function (root) {
+  'use strict';
+  const TOAST_MS = 2000;
+  const ANNOUNCE_MS = 50;
+  let toastEl = null;
+  let hideTimer = 0;
+  let announceTimer = 0;
+
+  function mountToast() {
+    if (toastEl || !document.body) return toastEl;
+    const el = document.createElement('div');
+    el.className = 'copy-toast';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.setAttribute('aria-atomic', 'true');
+    document.body.appendChild(el);
+    toastEl = el;
+    return el;
+  }
+
+  if (document.body) mountToast();
+  else document.addEventListener('DOMContentLoaded', mountToast);
+
+  function showToast(msg) {
+    const el = mountToast();
+    const text = msg == null ? '' : String(msg);
+    clearTimeout(announceTimer);
+    clearTimeout(hideTimer);
+    el.textContent = '';
+    el.classList.add('is-visible');
+    hideTimer = setTimeout(() => { el.classList.remove('is-visible'); }, TOAST_MS);
+    announceTimer = setTimeout(() => { el.textContent = text; }, ANNOUNCE_MS);
+  }
+
+  function selectElement(selectEl) {
+    if (!selectEl) return;
+    if (selectEl.classList && typeof selectEl.classList.add === 'function') selectEl.classList.add('copy-select-all');
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(selectEl);
+      const selection = root.getSelection && root.getSelection();
+      if (!selection) return;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch { /* o CSS user-select: all deixa o código selecionável */ }
+  }
+
+  function fallbackCopy(text) {
+    if (typeof document.execCommand !== 'function') return false;
+    const area = document.createElement('textarea');
+    area.className = 'copy-fallback';
+    area.readOnly = true;
+    area.value = text;
+    const previous = document.activeElement || null;
+    document.body.appendChild(area);
+    try {
+      if (typeof area.focus === 'function') area.focus();
+      if (typeof area.select === 'function') area.select();
+      return document.execCommand('copy') === true;
+    } finally {
+      area.remove();
+      if (previous && previous !== area && typeof previous.focus === 'function') {
+        try { previous.focus(); } catch { /* o botão de copiar continua utilizável */ }
+      }
+    }
+  }
+
+  async function copyText(text, selectEl) {
+    const value = text == null ? '' : String(text);
+    let copied = false;
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+    if (root.isSecureContext === true && clipboard && typeof clipboard.writeText === 'function') {
+      try {
+        await clipboard.writeText(value);
+        copied = true;
+      } catch { copied = false; }
+    }
+    if (!copied) {
+      try { copied = fallbackCopy(value) === true; }
+      catch { copied = false; }
+    }
+    if (copied) {
+      showToast('Copiado!');
+      return true;
+    }
+    selectElement(selectEl);
+    showToast('Não deu para copiar, selecione o código');
+    return false;
+  }
+
+  root.copyText = copyText;
+  root.showToast = showToast;
+})(window);
+</script>
   <script>/* Reutiliza o cliente de autenticação existente do site, sem mudar seu bundle. */
 (async function () {
   'use strict';
@@ -1223,9 +1328,10 @@ button:disabled{background:var(--btn-off);color:var(--btn-off-ink);cursor:wait}.
     issuance = run;
     try { await run; } finally { if (issuance === run) issuance = null; }
   });
-  $('copy').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText($('command').textContent); status('Comando copiado. Cole no chat privado do bot.'); }
-    catch { status('Selecione e copie o comando exibido para enviar ao bot.'); }
+  $('copy').addEventListener('click', () => {
+    const command = $('command');
+    // #status já é aria-live. O anúncio da cópia fica só no toast.
+    return window.copyText(command.textContent, command);
   });
   $('logout').addEventListener('click', async () => {
     if (loggingOut) return;

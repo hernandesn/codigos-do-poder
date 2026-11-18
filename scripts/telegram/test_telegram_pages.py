@@ -68,6 +68,27 @@ class TelegramPagesTest(unittest.TestCase):
         self.assertNotIn('pagehide', link.split("window.addEventListener('pagehide', invalidateGeneration)", 1)[1])
         self.assertIn('id="auth-turnstile"', link)
 
+    def test_toast_de_copia_no_html_gerado(self):
+        component = (SITE / 'scripts/telegram/copy-toast.js').read_text()
+        self.assertIn("setAttribute('role', 'status')", component)
+        self.assertIn("setAttribute('aria-live', 'polite')", component)
+        self.assertIn("setAttribute('aria-atomic', 'true')", component)
+        self.assertIn('textContent', component)
+        self.assertIn('Copiado!', component)
+        self.assertIn('Não deu para copiar, selecione o código', component)
+        self.assertNotIn('innerHTML', component)
+        self.assertNotRegex(component, r'\sstyle=')
+        link = render('vincular')
+        self.assertIn(component, link)
+        self.assertIn('role="status"', link)
+        self.assertIn("setAttribute('role', 'status')", link)
+        self.assertIn('window.copyText(', link)
+        self.assertNotIn('Comando copiado.', link)
+        self.assertNotIn('innerHTML', component)
+        app = render('app')
+        self.assertNotIn('window.copyText(', app)
+        self.assertIn('.copy-toast', app)
+
 
 if __name__ == '__main__':
     unittest.main()
