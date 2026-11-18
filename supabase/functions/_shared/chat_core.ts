@@ -2117,20 +2117,67 @@ function semAspasNemUrl(frase: string): string {
     .replace(/"[^"\n]*"|“[^”\n]*”|«[^»\n]*»/g, ' ')
 }
 
-/** O corpo é declarativo. «?» fora de aspas e de URL encerra uma pergunta e a frase sai. */
+/**
+ * Pergunta: o «?» pode estar atrás de aspas, parênteses, colchetes ou pontuação.
+ * `"Onde está o papel?"`, `«Quem pagou?»` e `(Por quê?)` são pergunta.
+ */
+function terminaEmPergunta(frase: string): boolean {
+  let i = frase.length - 1
+  while (i >= 0 && /[\s"'“”«»‘’()[\]{}.,;:!\u2026\-–—]/.test(frase[i])) i--
+  return i >= 0 && frase[i] === '?'
+}
+
+/** O corpo é declarativo. «?» fora de aspas e de URL, ou atrás do delimitador final, encerra a pergunta. */
 function fraseInterrogativaSolta(frase: string): boolean {
-  return /\?\s*$/.test(semAspasNemUrl(frase))
+  return terminaEmPergunta(frase) || /\?\s*$/.test(semAspasNemUrl(frase))
 }
 
 const SNAKE_NOME = /\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b/
-const CODIGO_INTERNO = /\b(?:AP_E\d+|OP\d+|BR\d+_H\d+|PR\d+-(?:E|NF)\d+|[A-Z]{1,4}\d+(?:[_-][A-Z]*\d+)*)\b/
+/** Códigos de ficha, colchete e F/R. O genérico 2–4 maiúsculas + dígitos entra no mesmo detector. */
+const CODIGO_FIXO_SRC = String.raw`\b(?:AP_E\d+|OP\d+(?:_R\d+)?|BR\d+_H\d+|PR\d+-(?:E|NF)\d+|F\d+\s*/\s*R\d+)\b|\[(?:[1-9]\d{0,2})\]`
+const CODIGO_GENERICO_SRC = String.raw`\b[A-Z]{2,4}\d+\b`
+const CODIGO_INTERNO = new RegExp(`${CODIGO_FIXO_SRC}|${CODIGO_GENERICO_SRC}`)
+
+function tokensDoRecorte(ctx?: ChatContextPayload): Set<string> {
+  const set = new Set<string>()
+  if (!ctx) return set
+  const partes: string[] = []
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) partes.push(item?.nome || '', item?.nota || '')
+  for (const fonte of ctx.fontes ?? []) partes.push(fonte?.titulo || '', fonte?.editor || '', fonte?.localizador || '')
+  for (const rel of ctx.relacoes ?? []) partes.push(rel?.afirmacao || '', rel?.tipo || '')
+  const blob = partes.join('\n')
+  for (const achado of blob.matchAll(/\b[A-Z]{2,6}\b/g)) set.add(achado[0])
+  for (const achado of blob.matchAll(/\b[A-Z]{2,4}\d+\b/g)) set.add(achado[0])
+  for (const achado of blob.matchAll(/\b\d[A-Z]{1,3}\b/g)) set.add(achado[0])
+  for (const achado of blob.matchAll(/\b(?:1[5-9]\d{2}|20\d{2})\b/g)) set.add(achado[0])
+  return set
+}
+
+/** O genérico (SOE30, QQ123) fica se for sigla do recorte ou ano. AP_E, OP, BR, PR, [n] e F/R saem sempre. */
+function tokenProtegido(token: string, ctx?: ChatContextPayload): boolean {
+  if (/^(?:1[5-9]\d{2}|20\d{2})$/.test(token)) return true
+  if (!/^[A-Z]{2,4}\d+$/.test(token)) return false
+  return tokensDoRecorte(ctx).has(token)
+}
+
+function casaCodigo(texto: string, ctx?: ChatContextPayload): boolean {
+  if (new RegExp(CODIGO_FIXO_SRC, 'i').test(texto)) return true
+  const re = new RegExp(CODIGO_GENERICO_SRC, 'g')
+  let achado: RegExpExecArray | null
+  while ((achado = re.exec(texto))) {
+    if (!tokenProtegido(achado[0], ctx)) return true
+  }
+  return false
+}
 
 /** Tira snake_case, código de ficha e colchete. O que sobra é o nome que pode ir à pergunta. */
-function limparCodigosDoNome(value: string): string {
+function limparCodigosDoNome(value: string, ctx?: ChatContextPayload): string {
+  const protegidos = tokensDoRecorte(ctx)
   return value
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
-    .replace(new RegExp(CODIGO_INTERNO.source, 'g'), ' ')
+    .replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), ' ')
+    .replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => protegidos.has(m) ? m : ' ')
     .replace(/[\[\]]/g, ' ')
     .replace(/(?:\s*[-–—]\s*)+$/g, '')
     .replace(/^(?:\s*[-–—]\s*)+/g, '')
@@ -2138,8 +2185,8 @@ function limparCodigosDoNome(value: string): string {
     .trim()
 }
 
-function textoTemCodigoInterno(value: string): boolean {
-  return SNAKE_NOME.test(value) || CODIGO_INTERNO.test(value) || /\[\d+\]/.test(value)
+function textoTemCodigoInterno(value: string, ctx?: ChatContextPayload): boolean {
+  return SNAKE_NOME.test(value) || casaCodigo(value, ctx)
 }
 
 /**
@@ -2331,9 +2378,9 @@ function nomePublico(ctx: ChatContextPayload, id: string): string | null {
       break
     }
   }
-  const curto = limparCodigosDoNome(bruto.replace(/<[^>]*>/g, '').split('·')[0])
+  const curto = limparCodigosDoNome(bruto.replace(/<[^>]*>/g, '').split('·')[0], ctx)
   const util = curto.replace(/[^\p{L}\p{N}]+/gu, '')
-  if (util.length < 2 || curto === id || textoTemCodigoInterno(curto)) return null
+  if (util.length < 2 || curto === id || textoTemCodigoInterno(curto, ctx)) return null
   if (!/\s/.test(curto) && curto.includes('_')) return null
   return curto
 }
@@ -2356,14 +2403,14 @@ function parComAresta(ctx: ChatContextPayload, ranking: Array<[string, number]>)
 /** O mesmo saneador de id do texto visível. Código que sobrar troca a pergunta inteira. */
 function sanearPerguntaMontada(pergunta: string, ctx: ChatContextPayload): string {
   let t = ocultarIdsVisiveis(pergunta, ctx)
-  t = limparCodigosDoNome(t)
+  t = limparCodigosDoNome(t, ctx)
   t = publicChatText(t)
   t = t.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1
     ? parte
     : parte.replace(/\b\p{L}+(?:_+\p{L}+)+\b/gu, ' ')
   ).join('')
-  t = limparCodigosDoNome(t).replace(/\s+([,.;:!?])/g, '$1').replace(/\s+/g, ' ').trim()
-  if (!/\?\s*$/.test(t) || textoTemCodigoInterno(t)) return 'Que documento detalharia esta relação?'
+  t = limparCodigosDoNome(t, ctx).replace(/\s+([,.;:!?])/g, '$1').replace(/\s+/g, ' ').trim()
+  if (!/\?\s*$/.test(t) || textoTemCodigoInterno(t, ctx)) return 'Que documento detalharia esta relação?'
   return t
 }
 
@@ -2413,15 +2460,19 @@ function palavrasComLetras(frase: string): number {
   return frase.split(/\s+/).filter((palavra) => /\p{L}/u.test(palavra)).length
 }
 
+function frasesDeclarativas(texto: string): string[] {
+  return frasesDe(texto).map((frase) => frase.trim()).filter((frase) => frase && !terminaEmPergunta(frase) && !fraseRotuloAusencia(frase))
+}
+
 /**
- * Conteúdo que pode cobrar: frase que não termina em «?», não é rótulo de ausência
- * e tem ao menos 3 palavras com letras. Três frases curtas já cobradas pela suíte
- * («Um.», «Dois.», «Três.») somam 3 e continuam conteúdo.
+ * Conteúdo que pode cobrar: cada frase, sozinha, tem ao menos 3 palavras com letras.
+ * Pontuação e delimitadores finais não escondem o «?». Fragmentos curtos do mesmo
+ * parágrafo não se somam. Três parágrafos já cobrados pela suíte («Um.», «Dois.», «Três.») continuam conteúdo.
  */
 function temFraseDeclarativa(texto: string, _pergunta = ''): boolean {
-  const frases = frasesDe(texto).map((frase) => frase.trim()).filter((frase) => frase && !/\?\s*$/.test(frase) && !fraseRotuloAusencia(frase))
-  if (frases.some((frase) => palavrasComLetras(frase) >= 3)) return true
-  return frases.reduce((n, frase) => n + palavrasComLetras(frase), 0) >= 3
+  if (frasesDeclarativas(texto).some((frase) => palavrasComLetras(frase) >= 3)) return true
+  const paragrafos = texto.split(/\n+/).map((p) => p.trim()).filter(Boolean)
+  return paragrafos.length >= 3 && paragrafos.every((p) => frasesDeclarativas(p).some((frase) => palavrasComLetras(frase) >= 1))
 }
 
 function idsDeCodigo(ctx: ChatContextPayload): string[] {
@@ -2433,39 +2484,38 @@ function idsDeCodigo(ctx: ChatContextPayload): string[] {
 }
 
 function casouVazamento(texto: string, ctx?: ChatContextPayload): boolean {
-  if (/\b(?:AP_E\d+|OP\d+(?:_R\d+)?|BR\d+_H\d+|PR\d+-(?:E|NF)\d+)\b/i.test(texto)) return true
-  if (/\bF\d+\s*\/\s*R\d+\b/i.test(texto)) return true
+  if (casaCodigo(texto, ctx)) return true
   if (new RegExp(SNAKE_NOME.source).test(texto)) return true
-  if (new RegExp(CODIGO_INTERNO.source).test(texto)) return true
-  if (/\[\d+\]/.test(texto)) return true
   if (!ctx) return false
   return idsDeCodigo(ctx).some((id) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeReg(id)}(?![\\p{L}\\p{N}])`, 'u').test(texto))
 }
 
-/** Tira código, snake e id de código que voltou depois da máscara de citação. Aspas vazias saem. */
+/** O mesmo padrão de casaCodigo. Código vazio junta as letras ao lado (`cri"AP_E777"me` → `cri""me`); a guarda vê a palavra. */
 function semCodigosInternos(t: string, ctx?: ChatContextPayload): string {
   const ids = ctx ? idsDeCodigo(ctx) : []
+  const protegidos = tokensDoRecorte(ctx)
   return t.split(/(https?:\/\/\S+)/g).map((parte, i) => {
     if (i % 2 === 1) return parte
-    let pedaco = parte
-      .replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
-      .replace(/\b(?:AP_E\d+|OP\d+(?:_R\d+)?|BR\d+_H\d+|PR\d+-(?:E|NF)\d+)\b/gi, ' ')
-      .replace(/\bF\d+\s*\/\s*R\d+\b/gi, ' ')
-      .replace(/\[\d+\]/g, ' ')
-    if (ids.length) pedaco = pedaco.replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:${ids.map(escapeReg).join('|')})(?![\\p{L}\\p{N}])`, 'gu'), ' ')
+    let pedaco = parte.replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
+    pedaco = pedaco.replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), '')
+    pedaco = pedaco.replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => protegidos.has(m) ? m : '')
+    if (ids.length) pedaco = pedaco.replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:${ids.map(escapeReg).join('|')})(?![\\p{L}\\p{N}])`, 'gu'), '')
     return pedaco
   }).join('')
 }
 
 function fecharAspas(t: string): string {
   let s = t
-  const par = (re: RegExp) => {
-    s = s.replace(re, (m) => /[\p{L}\p{N}]/u.test(m) ? m : '')
+  // Só o miolo da citação. O espaço fora das aspas fica: «O "funding loan" pagou».
+  const par = (re: RegExp, abre: string, fecha: string) => {
+    s = s.replace(re, (m) => {
+      const miolo = m.slice(abre.length, m.length - fecha.length).trim()
+      return /[\p{L}\p{N}]/u.test(miolo) ? `${abre}${miolo}${fecha}` : ''
+    })
   }
-  par(/"[^"\n]*"/g)
-  par(/“[^”\n]*”/g)
-  par(/«[^»\n]*»/g)
-  s = s.replace(/"\s+/g, '"').replace(/\s+"/g, '"').replace(/«\s+/g, '«').replace(/\s+»/g, '»').replace(/“\s+/g, '“').replace(/\s+”/g, '”')
+  par(/"[^"\n]*"/g, '"', '"')
+  par(/“[^”\n]*”/g, '“', '”')
+  par(/«[^»\n]*»/g, '«', '»')
   const n = (ch: string) => s.split(ch).length - 1
   if (n('"') % 2 === 1) {
     const i = s.lastIndexOf('"')
@@ -2497,24 +2547,140 @@ function fecharAspas(t: string): string {
 }
 
 function sanearRestaurado(texto: string, ctx?: ChatContextPayload): string {
-  let t = ctx ? ocultarIdsVisiveis(texto, ctx) : texto
+  // Esconde o código inteiro para o passo de id (F14, [n], E99) não partir PR13-E006 no meio.
+  // A ficha só reescreve «a ficha do X registra» quando ainda vê o código, então o corte é depois.
+  const mascaras: string[] = []
+  const guardar = (m: string) => {
+    const token = `\u0005${mascaras.length}\u0005`
+    mascaras.push(m)
+    return token
+  }
+  let t = texto.replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), (m) => m.startsWith('[') ? m : guardar(m))
+  t = t.replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => tokenProtegido(m, ctx) ? m : guardar(m))
+  if (ctx) t = ocultarIdsVisiveis(t, ctx)
+  t = t.replace(/\u0005(\d+)\u0005/g, (_m, i: string) => mascaras[Number(i)] ?? '')
   t = semCodigosDeFicha(t, ctx)
   t = semCodigosInternos(t, ctx)
   return fecharAspas(t)
 }
 
-/** Depois da citação restaurada: o código que estava dentro das aspas sai. Sem frase declarativa, o trecho cai. */
+/** Depois da citação restaurada: o código sai. Se ainda casar, a frase cai. Sem declarativa, o trecho cai. */
 function aposRestaurar(texto: string, ctx?: ChatContextPayload): string {
   if (!texto || !casouVazamento(texto, ctx)) return texto
-  const limpo = sanearRestaurado(texto, ctx)
-  if (!temFraseDeclarativa(limpo)) return ''
-  return limpo
+  const kept = frasesDe(texto).map((frase) => {
+    const limpo = sanearRestaurado(frase, ctx).trim()
+    if (!limpo || casouVazamento(limpo, ctx)) return ''
+    return limpo
+  }).filter(Boolean)
+  const junto = kept.join(' ').trim()
+  if (!junto || !temFraseDeclarativa(junto)) return ''
+  return junto
 }
 
 /** Campo do evento final que não é corpo de bloco: tira o vazamento e não apaga a pergunta de fecho. */
 function limparCampo(texto: string, ctx?: ChatContextPayload): string {
   if (!texto || !casouVazamento(texto, ctx)) return texto
-  return sanearRestaurado(texto, ctx)
+  const limpo = sanearRestaurado(texto, ctx)
+  if (!casouVazamento(limpo, ctx)) return limpo
+  return frasesDe(limpo).map((frase) => {
+    const deNovo = sanearRestaurado(frase, ctx).trim()
+    return deNovo && !casouVazamento(deNovo, ctx) ? deNovo : ''
+  }).filter(Boolean).join(' ')
+}
+
+/** Limpa códigos (também dentro da citação) e só então aplica safePublicClaim por frase. */
+function textoDepoisDaGuarda(texto: string, ctx: ChatContextPayload, fontes: string[]): { texto: string; caiu: boolean } {
+  if (!texto.trim()) return { texto: '', caiu: false }
+  let caiu = false
+  let limpo = texto
+  if (casouVazamento(texto, ctx)) {
+    limpo = sanearRestaurado(texto, ctx)
+  }
+  if (casouVazamento(limpo, ctx)) {
+    const frases = frasesDe(limpo).map((frase) => frase.trim()).filter(Boolean)
+    const kept = frases.map((frase) => {
+      const deNovo = sanearRestaurado(frase, ctx).trim()
+      if (!deNovo || casouVazamento(deNovo, ctx)) { caiu = true; return '' }
+      return deNovo
+    }).filter(Boolean)
+    if (kept.length !== frases.length) caiu = true
+    limpo = kept.join(' ')
+  }
+  if (!limpo.trim()) return { texto: '', caiu: true }
+  const pub = separarFrasesPublicas(limpo, ctx, fontes)
+  return { texto: pub.texto, caiu: caiu || pub.caiu }
+}
+
+function fontesCitadasDoBloco(bloco: ChatBloco, ctx: ChatContextPayload): string[] {
+  if (bloco.tipo === 'documentado') return [...bloco.fontes]
+  const fontes: string[] = []
+  const rels = new Map((ctx.relacoes ?? []).map((rel) => [rel.id, rel]))
+  for (const id of bloco.base) {
+    const rel = rels.get(id)
+    if (rel?.fontes) fontes.push(...rel.fontes)
+    if ((ctx.fontes ?? []).some((fonte) => fonte.id === id)) fontes.push(id)
+  }
+  return [...new Set(fontes)]
+}
+
+/** Depois de todos os filtros: cada frase visível passa de novo pela guarda. A que falha cai. */
+function revalidarCampos(answer: SanitizedAnswer, ctx: ChatContextPayload): SanitizedAnswer {
+  const blocos: ChatBloco[] = []
+  for (const bloco of answer.blocos) {
+    const fontes = fontesCitadasDoBloco(bloco, ctx)
+    const texto = textoDepoisDaGuarda(bloco.texto, ctx, fontes).texto.trim()
+    if (!texto) continue
+    if (bloco.tipo === 'documentado') blocos.push({ ...bloco, texto })
+    else blocos.push({ ...bloco, texto, justificativa: textoDepoisDaGuarda(bloco.justificativa, ctx, fontes).texto.trim() })
+  }
+  const fontesResposta = [...new Set(blocos.flatMap((bloco) => fontesCitadasDoBloco(bloco, ctx)))]
+  const em = answer.em_aberto ? textoDepoisDaGuarda(answer.em_aberto, ctx, fontesResposta).texto.trim() : ''
+  const avisos = answer.avisos
+    .map((aviso) => ({ ...aviso, texto: textoDepoisDaGuarda(aviso.texto, ctx, fontesResposta).texto.trim() }))
+    .filter((aviso) => aviso.texto)
+  const next: SanitizedAnswer = { ...answer, blocos, avisos }
+  if (em) next.em_aberto = em
+  else delete next.em_aberto
+  return next
+}
+
+function sanearRotulo(valor: string, ctx?: ChatContextPayload): string {
+  const limpo = !valor || !casouVazamento(valor, ctx) ? valor : sanearRestaurado(valor, ctx)
+  return limpo.replace(/\s+/g, ' ').trim()
+}
+
+/** Nomes, títulos e descrições do evento final passam pelo mesmo saneador dos códigos. */
+function aplicarMetadadosFinais(answer: SanitizedAnswer, ctx: ChatContextPayload): void {
+  for (const bloco of answer.blocos) {
+    bloco.texto = limparCampo(bloco.texto, ctx)
+    if (bloco.tipo !== 'documentado') bloco.justificativa = limparCampo(bloco.justificativa, ctx)
+  }
+  if (answer.em_aberto) {
+    const em = limparCampo(answer.em_aberto, ctx).trim()
+    if (em) answer.em_aberto = em
+    else delete answer.em_aberto
+  }
+  answer.avisos = answer.avisos.map((aviso) => ({ ...aviso, texto: limparCampo(aviso.texto, ctx) })).filter((aviso) => aviso.texto.trim())
+  answer.entidades = answer.entidades.flatMap((ent) => {
+    const nome = sanearRotulo(ent.nome, ctx)
+    return nome ? [{ ...ent, nome }] : []
+  })
+  for (const detalhe of Object.values(answer.fontes_detalhe)) {
+    const titulo = sanearRotulo(detalhe.titulo, ctx)
+    detalhe.titulo = titulo || 'Documento'
+    if (detalhe.localizador) {
+      const loc = sanearRotulo(detalhe.localizador, ctx)
+      if (loc) detalhe.localizador = loc
+      else delete detalhe.localizador
+    }
+    if (detalhe.url) {
+      const url = detalhe.url
+        .replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), '')
+        .replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => tokenProtegido(m, ctx) ? m : '')
+      if (/^https?:\/\//.test(url)) detalhe.url = url
+      else delete detalhe.url
+    }
+  }
 }
 
 /** safePublicClaim por frase, com a citação mascarada para o corte não partir no meio. */
@@ -2525,6 +2691,8 @@ function separarFrasesPublicas(texto: string, ctx: ChatContextPayload, fontes: s
   let caiu = false
   const kept = semAnaforaPendente(frases, (frase) => {
     const visivel = restaurarTrechos(frase, mascaras).trim()
+    // A frase canônica da pauta nega a ilegalidade. A guarda de palavra a derrubaria.
+    if (foldName(visivel) === 'a base nao mostra prova de ilegalidade nesse vinculo') return false
     if (!safePublicClaim(visivel, ctx, fontes)) { caiu = true; return true }
     return false
   })
@@ -2692,12 +2860,14 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       continue
     }
     const fontesCitadas = asStringArray(row.fontes)
-    const publico = separarFrasesPublicas(row.texto, ctx, fontesCitadas)
+    // Códigos saem, inclusive dentro da citação, antes da guarda. A palavra que o corte junta («crime») cai aqui.
+    const publico = textoDepoisDaGuarda(row.texto, ctx, fontesCitadas)
     if (publico.caiu) removed = true
     if (!publico.texto.trim()) { removed = true; continue }
-    if (typeof row.justificativa === 'string' && row.justificativa && !safePublicClaim(row.justificativa, ctx, fontesCitadas)) {
-      row.justificativa = ''
-      removed = true
+    if (typeof row.justificativa === 'string' && row.justificativa) {
+      const justa = textoDepoisDaGuarda(row.justificativa, ctx, fontesCitadas)
+      if (justa.caiu) removed = true
+      row.justificativa = justa.texto
     }
     row.texto = publico.texto
     // Prosa corrida: hipótese e inferência viram parágrafo com as fontes das relações-base (a tese já vem marcada no texto).
@@ -2797,14 +2967,17 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
   if (Array.isArray(record.avisos)) {
     for (const item of record.avisos) {
       if (typeof item === 'string' && item.trim()) {
-        pushAviso({ tipo: 'outro', texto: visivel(item.trim()) })
+        const textoAviso = textoDepoisDaGuarda(visivel(item.trim()), ctx, [...fontesById.keys()]).texto.trim()
+        if (textoAviso) pushAviso({ tipo: 'outro', texto: textoAviso })
         continue
       }
       if (!item || typeof item !== 'object') continue
       const row = item as Record<string, unknown>
       if (typeof row.tipo !== 'string' || !AVISO_TIPOS.has(row.tipo as ChatAviso['tipo'])) continue
       if (typeof row.texto !== 'string' || !row.texto.trim()) continue
-      const aviso: ChatAviso = { tipo: row.tipo as ChatAviso['tipo'], texto: visivel(row.texto.trim()) }
+      const textoAviso = textoDepoisDaGuarda(visivel(row.texto.trim()), ctx, [...fontesById.keys()]).texto.trim()
+      if (!textoAviso) continue
+      const aviso: ChatAviso = { tipo: row.tipo as ChatAviso['tipo'], texto: textoAviso }
       if (typeof row.relacao === 'string' && row.relacao) aviso.relacao = row.relacao
       if (typeof row.valor === 'string' && row.valor) aviso.valor = row.valor
       pushAviso(aviso)
@@ -2854,7 +3027,12 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       fontes_detalhe,
       avisos,
       sem_base: record.sem_base === true,
-      ...(typeof record.em_aberto === 'string' && record.em_aberto.trim() ? { em_aberto: visivel(record.em_aberto.trim(), true) } : {}),
+      ...(typeof record.em_aberto === 'string' && record.em_aberto.trim()
+        ? (() => {
+          const em = textoDepoisDaGuarda(visivel(record.em_aberto.trim(), true), ctx, [...fontesById.keys()]).texto.trim()
+          return em ? { em_aberto: em } : {}
+        })()
+        : {}),
     },
   }
 }
@@ -3894,6 +4072,8 @@ async function streamPreparedInner(input: {
     answer.blocos = capped.blocos
     if (capped.trimmed) console.info(JSON.stringify({ evento: 'chat_basico_cortado' }))
   }
+  // Guarda jurídica de novo, depois de todos os filtros e antes do débito.
+  answer = revalidarCampos(answer, prepared.context)
   // Sem id válido continua fora da base, com o custo real da tentativa.
   const semId = answer.blocos.length > 0 && !hasValidId(answer.blocos)
   if (semId) console.info(JSON.stringify({ evento: 'sem_id_valido' }))
@@ -3979,6 +4159,7 @@ async function streamPreparedInner(input: {
   for (const bloco of answer.blocos) {
     if (bloco.tipo !== 'documentado') bloco.justificativa = limparCampo(bloco.justificativa, prepared.context)
   }
+  aplicarMetadadosFinais(answer, prepared.context)
   const finalEvent: ChatFinal = {
     conversa_id: prepared.conversaId,
     blocos: answer.blocos,

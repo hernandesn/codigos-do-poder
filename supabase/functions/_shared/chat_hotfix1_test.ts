@@ -1890,3 +1890,158 @@ Deno.test('hotfix1i seleção: tempo de permanência vai ao modelo; previsão e 
     if (chamadas === 0) eq(erroDe(events).message, 'Não encontrei isso na base do atlas.', `${nome}: recusa`)
   }
 })
+
+Deno.test('hotfix1j pergunta entre delimitador final não cobra', async () => {
+  const corpos = ['"Onde está o papel?"', '«Quem pagou?»', '(Por quê?)']
+  for (const modelo of ['basico', 'avancado'] as const) {
+    for (const corpo of corpos) {
+      const r = await rodarModelo({
+        modelo,
+        agora: 30_000,
+        respostas: [gerar(JSON.stringify({
+          blocos: [docCampanha(corpo)],
+          sem_base: false,
+          em_aberto: 'Não consta nos documentos.',
+        }), 0.0002)],
+      })
+      const nome = `${modelo}: ${corpo}`
+      eq(r.chamadas, 1, `${nome}: uma chamada`)
+      eq(erroDe(r.emitted).code, 'fora_da_base', `${nome}: fora_da_base`)
+      assert(!r.emitted.some((evento) => evento.event === 'final'), `${nome}: sem final`)
+      const snap = r.store.snapshot(USER, CLOCK())
+      eq(snap.used, 0, `${nome}: used 0`)
+      eq(snap.commitCalls, 0, `${nome}: nenhum crédito`)
+      eq(snap.releaseCalls, 1, `${nome}: crédito liberado`)
+      eq(snap.reserved, 0, `${nome}: reserva zerada`)
+      if (modelo === 'avancado') eq(snap.paid, 40, `${nome}: pago restaurado`)
+      eq(r.orcamento.commits.length, 1, `${nome}: orçamento liquidado`)
+      eq(r.orcamento.commits[0], 0.0002, `${nome}: custo real`)
+      eq(r.orcamento.solturas(), 0, `${nome}: hold não solto`)
+      eq(snap.logs[0]?.custo_usd, 0.0002, `${nome}: log`)
+      eq(snap.logs[0]?.status, 'fora_da_base', `${nome}: status do log`)
+    }
+  }
+})
+
+Deno.test('hotfix1j código no meio da palavra não publica o termo jurídico', async () => {
+  const crime = 'O grupo praticou cri"AP_E777"me.'
+  const esquema = 'O contrato comprova o es"AP_E777"quema.'
+  const curvo = 'O grupo praticou cri“OP901”me.'
+  const r = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [
+        docCampanha(`O contrato de 1936 ficou registrado no papel citado. ${crime} ${esquema} ${curvo}`),
+        {
+          tipo: 'hipotese',
+          texto: 'A base não mostra o contrato de 1936 no registro da casa.',
+          base: ['E150'],
+          justificativa: `${crime} ${esquema} ${curvo}`,
+        },
+      ],
+      sem_base: false,
+      em_aberto: crime,
+      avisos: [{ tipo: 'outro', texto: `${crime} ${esquema}` }],
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  const cru = JSON.stringify(final)
+  assert(!/\bcrime\b/i.test(cru), cru)
+  assert(!/\besquema\b/i.test(cru), cru)
+  assert(!/AP_E\d+|OP\d+/.test(cru), cru)
+  assert(/1936/.test(cru), cru)
+  const justa = final.blocos.map((bloco) => ('justificativa' in bloco ? bloco.justificativa : '')).join('\n')
+  assert(!/\bcrime\b/i.test(justa), justa)
+  assert(!/\besquema\b/i.test(justa), justa)
+})
+
+Deno.test('hotfix1j código genérico sai; sigla do recorte e ano ficam', async () => {
+  for (const corpo of ['"SOE30 pagou QQ123"', 'A SOE30 pagou.']) {
+    const r = await rodarModelo({
+      agora: 30_000,
+      respostas: [gerar(JSON.stringify({
+        blocos: [docCampanha(corpo)],
+        sem_base: false,
+        em_aberto: null,
+      }), 0.0002)],
+    })
+    const publicados = r.emitted.filter((evento) => evento.event === 'final' || evento.event === 'error')
+    const cru = JSON.stringify(publicados)
+    assert(!/SOE30|QQ123/.test(cru), cru)
+    for (const evento of r.emitted) {
+      if (evento.event !== 'final') continue
+      const prosa = prosaDoFinal(evento.data)
+      assert(aspasBalanceadas(prosa), prosa)
+      assert(!/"\s*"/.test(prosa), prosa)
+    }
+  }
+
+  const ctx = campanhaCtx()
+  ctx.entidades = ctx.entidades.map((item) => item.id === 'casa_ms'
+    ? { ...item, nome: 'Casa IBEC IPES BIB SNI UBB 3G' }
+    : item)
+  const citado = await rodarModelo({
+    ctx,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('Ele escreveu "SOE30 pagou QQ123" no relatório. O IBEC e o IPES citaram o BIB, o SNI, a UBB e o 3G em 1936.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const final = finalDe(citado.emitted)
+  const cru = JSON.stringify(final)
+  const prosa = prosaDoFinal(final)
+  assert(!/SOE30|QQ123/.test(cru), cru)
+  assert(aspasBalanceadas(prosa), prosa)
+  assert(!/"\s*"/.test(prosa), prosa)
+  for (const sigla of ['IBEC', 'IPES', 'BIB', 'SNI', 'UBB', '3G', '1936']) {
+    assert(prosa.includes(sigla), `${sigla} saiu: ${prosa}`)
+  }
+
+  const protegido = campanhaCtx()
+  protegido.entidades = protegido.entidades.map((item) => item.id === 'casa_ms'
+    ? { ...item, nome: 'Casa QQ12' }
+    : item)
+  const fica = await rodarModelo({
+    ctx: protegido,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 cita o QQ12 no papel. A SOE30 pagou.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const prosaFica = prosaDoFinal(finalDe(fica.emitted))
+  assert(prosaFica.includes('QQ12'), prosaFica)
+  assert(prosaFica.includes('1936'), prosaFica)
+  assert(!/SOE30/.test(JSON.stringify(finalDe(fica.emitted))), prosaFica)
+})
+
+Deno.test('hotfix1j nome e título do evento final não vazam código', async () => {
+  const ctx = campanhaCtx()
+  ctx.entidades = ctx.entidades.map((item) => item.id === 'casa_ms'
+    ? { ...item, nome: 'Casa Alfa AP_E777' }
+    : item)
+  ctx.fontes = ctx.fontes.map((fonte) => fonte.id === 'B01'
+    ? { ...fonte, titulo: 'Relatório AP_E777', localizador: 'p. AP_E777', url: 'https://example.com/AP_E777/OP901' }
+    : fonte)
+  const r = await rodarModelo({
+    ctx,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  const cru = JSON.stringify(final)
+  assert(!cru.includes('AP_E777'), cru)
+  assert(!/OP901|AP_E\d+/.test(cru), cru)
+  assert(cru.includes('Casa Alfa'), cru)
+  assert(cru.includes('1936'), cru)
+  const detalhe = final.fontes_detalhe.B01
+  assert(detalhe, 'fonte permanece')
+  assert(detalhe.titulo === 'Relatório' || detalhe.titulo === 'Documento', detalhe.titulo)
+})

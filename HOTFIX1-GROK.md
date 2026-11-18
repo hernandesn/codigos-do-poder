@@ -614,3 +614,37 @@ Teste: `chat_hotfix1_test.ts:1878`. «Como está o tempo de permanência no carg
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **181 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1i` desta seção. `git diff 426e2b3 -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
+
+## Hotfix1j
+
+Sobre `23d54ca`. A revisão Codex desse commit deu REPROVADO. Na função só muda `chat_core.ts`. `pauta.ts` não muda. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda: o evento final continua com `avisos: []` (`chat_core.ts:4169`). O prompt do sistema não cresce. A maiúscula escondida pelo placeholder, a citação em várias linhas e o espaço em volta das aspas ficam no backlog.
+
+### 1. Pergunta atrás do delimitador final não cobra
+
+Achado: `temFraseDeclarativa` só via o «?» colado no fim. `"Onde está o papel?"`, `«Quem pagou?»` e `(Por quê?)` terminam em aspas ou parêntese e eram cobrados. Fragmentos curtos do mesmo parágrafo (`Contrato. Registro. Documento.`) somavam palavras e também cobravam. `terminaEmPergunta` (`2124`) ignora aspas, parênteses, colchetes e pontuação finais. `temFraseDeclarativa` (`2472`) exige que cada frase, sozinha, tenha ao menos 3 palavras com letras. Três parágrafos separados («Um.», «Dois.», «Três.») continuam conteúdo. A checagem continua só no texto dos blocos, depois dos filtros e antes do débito (`4084`). Sem isso: `fora_da_base`, crédito liberado e orçamento no custo real. Vale para Básico e Avançado.
+
+Teste: `chat_hotfix1_test.ts:1894`.
+
+### 2. Código sai antes da guarda jurídica
+
+Achado: `semCodigosDeFicha` apagava `AP_E777` dentro das aspas e `fecharAspas` juntava `cri""me` em `crime` depois que `safePublicClaim` já tinha passado. A ordem agora é limpar ids e códigos, inclusive dentro da citação, e só então a guarda. `textoDepoisDaGuarda` (`2592`) faz isso no `sanitizeAnswer`. `revalidarCampos` (`2627`) repete a guarda em cada frase final de texto, justificativa, `em_aberto` e avisos, depois de todos os filtros e antes do débito (`4076`). A frase que falha cai. A frase canônica da pauta «A base não mostra prova de ilegalidade nesse vínculo.» fica (`2695`): é negação, e a guarda de palavra a derrubaria. `pauta.ts` não muda.
+
+Teste: `chat_hotfix1_test.ts:1926`. `cri"AP_E777"me`, `es"AP_E777"quema` e `cri“OP901”me` no texto e na justificativa não deixam `crime`, `esquema` nem código no JSON do evento final.
+
+### 3. Um padrão detecta e remove o código
+
+Achado: `CODIGO_INTERNO` via `SOE30`, mas `semCodigosInternos` não usava esse padrão, e `ocultarIdsVisiveis` partia `PR13-E006` no `E006`. `CODIGO_FIXO_SRC` e `CODIGO_GENERICO_SRC` (`2137`) servem para `casaCodigo` (`2163`) e para a remoção. Cobrem `AP_E\d+`, `OP\d+`, `BR\d+_H\d+`, `PR\d+-(E|NF)\d+`, `[n]`, `F\d+/R\d+` e 2–4 maiúsculas + dígitos. O genérico fica se for sigla do recorte ou ano. `sanearRestaurado` (`2549`) esconde o código inteiro, roda o corte de id e só então apaga. Se ainda casar, a frase cai. O espaço fora das aspas não é comido.
+
+Teste: `chat_hotfix1_test.ts:1958`. `"SOE30 pagou QQ123"` e `A SOE30 pagou.` não deixam código no evento final nem aspa órfã. `IBEC`, `IPES`, `BIB`, `SNI`, `UBB`, `3G` e `1936` do recorte ficam. `QQ12` presente no nome do recorte fica; `SOE30` solto sai.
+
+### 4. Vazamento no nome e no título do evento final
+
+Achado: a checagem final olhava o corpo e deixava código em nome de entidade, título, localizador e URL. `aplicarMetadadosFinais` (`2653`, chamada em `4162`) passa texto, justificativa, `em_aberto`, avisos, nomes e títulos/descrições pelo mesmo saneador. Código e snake_case saem. Fonte que esvazia vira «Documento». Entidade que esvazia sai. Os ids de citação continuam nos arrays.
+
+Teste: `chat_hotfix1_test.ts:2021`. Entidade «Casa Alfa AP_E777» e fonte «Relatório AP_E777» não deixam `AP_E777` em lugar nenhum do `JSON.stringify` do evento final.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**185 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os quatro `hotfix1j` desta seção. `git diff 23d54ca -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
