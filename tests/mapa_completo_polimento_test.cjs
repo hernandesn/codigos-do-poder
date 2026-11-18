@@ -364,3 +364,29 @@ test('na vista all o Tab não entra em cartão invisível e em Temas o cartão v
   } finally { await context.close(); }
 });
 
+test('Shift+Enter no rótulo de RF expande Rockefeller e não Mauá', { timeout: 120000 }, async () => {
+  const { context, page, errors } = await abrir(1440, 900);
+  try {
+    await mapaAberto(page);
+    await page.evaluate(() => { location.hash = 'e=maua'; });
+    await page.waitForFunction(() => window.mural.getState().selected && window.mural.getState().selected.id === 'maua');
+    await page.evaluate(() => window.mapaCompleto.enquadrar(false));
+    await page.waitForFunction(() => document.querySelector('#grafo-rotulos text[data-grafo-no="rf"]'));
+    await page.locator('#grafo-rotulos text[data-grafo-no="rf"]').focus();
+    await page.keyboard.press('Shift+Enter');
+    await page.waitForFunction(() => {
+      const st = window.mural.getState();
+      return st.view === 'custom' && st.selected && st.selected.id === 'rf';
+    }, null, { timeout: 8000 });
+    const estado = await page.evaluate(() => {
+      const st = window.mural.getState();
+      return { id: st.selected && st.selected.id, view: st.view, nos: st.visibleNodes };
+    });
+    assert.equal(estado.id, 'rf', JSON.stringify({ id: estado.id, view: estado.view, n: estado.nos.length }));
+    assert.equal(estado.view, 'custom');
+    assert.ok(estado.nos.includes('rf') && estado.nos.length > 1 && estado.nos.length < 1644, JSON.stringify({ n: estado.nos.length }));
+    assert.notEqual(estado.id, 'maua');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+

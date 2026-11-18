@@ -337,9 +337,36 @@
   }
 
   function expandir(id) {
-    if (id) abrirFicha(id, { centro: false });
     const botao = document.getElementById('expand-node');
-    if (botao) botao.click();
+    const acionar = () => { if (botao) botao.click(); };
+    if (!id) { acionar(); return; }
+    const ehAlvo = () => {
+      const st = lerEstado();
+      return !!(st && st.selected && st.selected.kind === 'node' && st.selected.id === id);
+    };
+    if (ehAlvo()) { acionar(); return; }
+    // O hashchange do mural seleciona o alvo depois deste turno. Clicar
+    // em expandir antes disso expande o nó que ainda está selecionado.
+    let feito = false;
+    let vezes = 0;
+    const seguir = () => {
+      if (feito) return;
+      if (ehAlvo()) { feito = true; acionar(); return; }
+      if (++vezes > 45) return;
+      requestAnimationFrame(seguir);
+    };
+    const noHash = () => {
+      window.removeEventListener('hashchange', noHash);
+      setTimeout(seguir, 0);
+    };
+    const hash = '#e=' + encodeURIComponent(id);
+    const jaEra = location.hash === hash;
+    window.addEventListener('hashchange', noHash);
+    abrirFicha(id, { centro: false });
+    if (jaEra) {
+      window.removeEventListener('hashchange', noHash);
+      setTimeout(seguir, 0);
+    }
   }
 
   function toqueNo(id) {
