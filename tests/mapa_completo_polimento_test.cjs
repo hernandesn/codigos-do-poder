@@ -286,3 +286,81 @@ test('arrastar 120 px move o grafo 120 px e o ponteiro solto não salta', { time
   }
 });
 
+test('na vista all o Tab não entra em cartão invisível e em Temas o cartão volta focável', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrir(1440, 900);
+  try {
+    await mapaAberto(page);
+    await page.locator('#search').focus();
+    const focos = [];
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.press('Tab');
+      focos.push(await page.evaluate(() => {
+        const el = document.activeElement;
+        let o = 1;
+        let visivel = true;
+        for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+          const s = getComputedStyle(n);
+          if (s.display === 'none' || s.visibility === 'hidden' || n.hasAttribute('hidden')) { visivel = false; o = 0; break; }
+          const op = Number.parseFloat(s.opacity);
+          if (!(op > 0)) { visivel = false; o = 0; break; }
+          o *= op;
+        }
+        const cls = el.className && (el.className.baseVal || el.className);
+        return {
+          tag: el.tagName,
+          id: el.id || '',
+          cls: String(cls || '').slice(0, 80),
+          o,
+          visivel,
+        };
+      }));
+    }
+    const invisiveis = focos.filter(f => !(f.visivel && f.o > 0));
+    assert.deepEqual(invisiveis, [], JSON.stringify(invisiveis));
+    await page.evaluate(() => { location.hash = 'e=ipes'; });
+    await page.waitForFunction(() => document.querySelector('#network .network-node.selected'));
+    const selecionado = await page.evaluate(() => {
+      const card = document.querySelector('#network .network-node.selected');
+      card.focus();
+      const el = document.activeElement;
+      let o = 1;
+      for (let n = card; n && n.nodeType === 1; n = n.parentElement) o *= Number.parseFloat(getComputedStyle(n).opacity) || 0;
+      return { focado: el === card || card.contains(el), tab: card.getAttribute('tabindex'), o, inert: card.hasAttribute('inert') };
+    });
+    assert.equal(selecionado.focado, true, JSON.stringify(selecionado));
+    assert.notEqual(selecionado.tab, '-1', JSON.stringify(selecionado));
+    assert.equal(selecionado.inert, false, JSON.stringify(selecionado));
+    assert.ok(selecionado.o > 0, JSON.stringify(selecionado));
+    await page.locator('[data-modo-temas]').click();
+    await page.waitForFunction(() => window.mural.getState().view === 'temas' && window.mapaCompleto && !window.mapaCompleto.ativo);
+    await page.locator('#temas-screen [data-tema]').first().click();
+    await page.waitForFunction(() => {
+      const v = window.mural.getState().view;
+      return v && v !== 'temas' && v !== 'all' && document.querySelector('#network .network-node');
+    });
+    const cartoes = await page.evaluate(() => {
+      const nos = [...document.querySelectorAll('#network .network-node')];
+      const amostra = nos.slice(0, 12).map(n => ({
+        tab: n.getAttribute('tabindex'),
+        inert: n.hasAttribute('inert'),
+        hidden: n.getAttribute('aria-hidden'),
+      }));
+      const primeiro = nos[0];
+      primeiro.focus();
+      return {
+        n: nos.length,
+        amostra,
+        focado: document.activeElement === primeiro || primeiro.contains(document.activeElement),
+      };
+    });
+    assert.ok(cartoes.n > 0, JSON.stringify(cartoes));
+    assert.equal(cartoes.focado, true, JSON.stringify(cartoes));
+    for (const c of cartoes.amostra) {
+      assert.equal(c.tab, '0', JSON.stringify(c));
+      assert.equal(c.inert, false, JSON.stringify(c));
+      assert.notEqual(c.hidden, 'true', JSON.stringify(c));
+    }
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+

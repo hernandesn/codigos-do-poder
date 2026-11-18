@@ -166,6 +166,7 @@
     fundoChave: '',
     rotulos: new Map(),
     guias: new Map(),
+    obsCartoes: null,
   };
 
   function contagemDesenhada(cena) {
@@ -410,6 +411,7 @@
     }
     vivo.pularCentro = false;
     pedirQuadro();
+    ajustarFocoCartoes();
   }
 
   function assinatura() {
@@ -606,6 +608,7 @@
       estiloCritico(true);
       montarLegenda();
       aplicarEstado(st, { semCamera: true });
+      ajustarFocoCartoes();
       requestAnimationFrame(() => {
         if (!vivo.ativo) return;
         if (!calcularEnquadramento()) { enquadrar(false); return; }
@@ -629,6 +632,7 @@
     vivo.pinca = null;
     vivo.ponteiros.clear();
     estiloCritico(false);
+    ajustarFocoCartoes();
     const svg = document.getElementById('grafo-rotulos');
     if (svg) svg.replaceChildren();
     vivo.rotulos.clear();
@@ -963,6 +967,26 @@
     return true;
   }
 
+  function ajustarFocoCartoes() {
+    const camada = document.getElementById('node-layer');
+    if (!camada) return;
+    const ligado = vivo.ativo;
+    for (const no of camada.querySelectorAll('.network-node')) {
+      const esconder = ligado && !no.classList.contains('selected');
+      if (esconder) {
+        if (!no.hasAttribute('data-grafo-tab')) no.setAttribute('data-grafo-tab', no.getAttribute('tabindex') ?? '0');
+        if (no.getAttribute('tabindex') !== '-1') no.setAttribute('tabindex', '-1');
+        if (no.getAttribute('aria-hidden') !== 'true') no.setAttribute('aria-hidden', 'true');
+        if (!no.hasAttribute('inert')) no.setAttribute('inert', '');
+      } else if (no.hasAttribute('data-grafo-tab')) {
+        no.setAttribute('tabindex', no.getAttribute('data-grafo-tab') || '0');
+        no.removeAttribute('data-grafo-tab');
+        no.removeAttribute('aria-hidden');
+        no.removeAttribute('inert');
+      }
+    }
+  }
+
   function desenhar() {
     const t0 = performance.now();
     const canvas = document.getElementById('grafo-canvas');
@@ -1199,6 +1223,12 @@
       ev.stopPropagation();
       enquadrar(true);
     }, true);
+
+    const camadaCartoes = document.getElementById('node-layer');
+    if (camadaCartoes && !vivo.obsCartoes) {
+      vivo.obsCartoes = new MutationObserver(() => { if (vivo.ativo) ajustarFocoCartoes(); });
+      vivo.obsCartoes.observe(camadaCartoes, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    }
 
     window.addEventListener('hashchange', agendarSync);
     const obs = new MutationObserver(agendarSync);
