@@ -1092,7 +1092,7 @@ Deno.test('hotfix1d pergunta final e fecho sem insinuação', async () => {
       }), 0.0002)],
     })
     const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
-    assert(/Que documento do atlas detalharia a relação entre Casa Bancária Moreira Salles e Campanha de 1916\?/.test(visivel), em_aberto)
+    assert(/Que documento detalharia a relação entre Casa Bancária Moreira Salles e Campanha de 1916\?/.test(visivel), em_aberto)
     assert(!visivel.includes(em_aberto), 'em_aberto do modelo não entra')
     assert(!/nunca abriu|sabia do tamanho|quem mais recebeu|critérios ocultos|não apareceu|fora dos registros|quem dentro do|quais contratos|peça judicial/i.test(visivel), em_aberto)
     assert(visivel.includes('contrato de 1936'), 'fato fica')
@@ -1138,7 +1138,7 @@ Deno.test('hotfix1e insinuação no bloco, par sem aresta e nome inteiro', async
     }), 0.0002)],
   })
   const textoSolto = finalDe(desligado.emitted).blocos.map((item) => item.texto).join('\n')
-  assert(textoSolto.includes('Que documento do atlas detalharia o papel de Grupo Alfa?'), textoSolto)
+  assert(textoSolto.includes('Que documento detalharia o papel de Grupo Alfa?'), textoSolto)
   assert(!/Instituição Beta|ligam Grupo Alfa/i.test(textoSolto), 'par sem aresta não entra na pergunta')
 
   const longo = `${'Campanha Internacional '.repeat(20).trim()}`
@@ -1390,7 +1390,7 @@ Deno.test('hotfix1f R3 sem nome repete e não monta o recorte', async () => {
   assert(!texto.includes('Walther presidiu o IBEC.'), 'não monta a afirmação do recorte')
   const doc = finalDe(r.emitted).blocos.find((bloco) => bloco.tipo === 'documentado')
   assert(doc && doc.tipo === 'documentado' && doc.relacoes.includes('REL_W') && doc.fontes.includes('FONTE_W'), 'ids da repetição')
-  assert(/Que documento do atlas detalharia /.test(texto), 'pergunta do código')
+  assert(/Que documento detalharia /.test(texto), 'pergunta do código')
 })
 
 Deno.test('hotfix1f pergunta estrutural, grupo_b e prosa com em troca', async () => {
@@ -1413,7 +1413,7 @@ Deno.test('hotfix1f pergunta estrutural, grupo_b e prosa com em troca', async ()
   assert(visivel.includes('"pagamento em troca de apoio"'), visivel)
   assert(visivel.includes('https://example.com/oculto/arquivo'), visivel)
   assert(!visivel.includes('grupo_b'), visivel)
-  assert(/Que documento do atlas detalharia a relação entre Casa Bancária Moreira Salles e Campanha de 1916\?/.test(visivel), visivel)
+  assert(/Que documento detalharia a relação entre Casa Bancária Moreira Salles e Campanha de 1916\?/.test(visivel), visivel)
   assert(!visivel.includes('Quem pagou o contrato de 1936?'), 'em_aberto do modelo não entra')
 })
 
@@ -1499,7 +1499,7 @@ Deno.test('hotfix1g pergunta neutra sai no fluxo e a estrutural fica', async () 
   assert(!/Onde está o papel/i.test(visivel), visivel)
   assert(visivel.includes('contrato de 1936'), visivel)
   assert(visivel.includes('A casa pagou'), visivel)
-  assert(/Que documento do atlas detalharia /.test(visivel), visivel)
+  assert(/Que documento detalharia /.test(visivel), visivel)
 })
 
 Deno.test('hotfix1g nome com snake_case na pergunta estrutural', async () => {
@@ -1519,7 +1519,7 @@ Deno.test('hotfix1g nome com snake_case na pergunta estrutural', async () => {
   const textoNome = finalDe(comNome.emitted).blocos.map((bloco) => bloco.texto).join('\n')
   assert(textoNome.includes('Casa Alfa'), textoNome)
   assert(!textoNome.includes('grupo_b'), textoNome)
-  assert(/Que documento do atlas detalharia a relação entre Casa Alfa e Campanha de 1916\?/.test(textoNome), textoNome)
+  assert(/Que documento detalharia a relação entre Casa Alfa e Campanha de 1916\?/.test(textoNome), textoNome)
 
   const soSlug = campanhaCtx()
   soSlug.raizes = [{ id: 'grupo_b', nome: 'grupo_b', tipo: 'instituicao' }]
@@ -1534,7 +1534,7 @@ Deno.test('hotfix1g nome com snake_case na pergunta estrutural', async () => {
   })
   const textoSlug = finalDe(semNome.emitted).blocos.map((bloco) => bloco.texto).join('\n')
   assert(!textoSlug.includes('grupo_b'), textoSlug)
-  assert(textoSlug.includes('Que documento do atlas detalharia esta relação?'), textoSlug)
+  assert(textoSlug.includes('Que documento detalharia esta relação?'), textoSlug)
 })
 
 Deno.test('hotfix1g seleção: jogo, clima e código políticos vão ao modelo', async () => {

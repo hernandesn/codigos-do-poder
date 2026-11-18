@@ -485,7 +485,7 @@ Deno.test('streamPrepared normaliza antes do sanitize e manda lacunas ao modelo'
   const data = final.data as ChatFinal
   const doc = data.blocos[0]
   assert(doc.tipo === 'documentado', 'documentado')
-  eq(doc.texto, 'A documentação cita o golpe.\n\nQue documento do atlas detalharia a relação entre Golpe de 1964 e IPES?', 'texto do modelo e pergunta do código')
+  eq(doc.texto, 'A documentação cita o golpe.\n\nQue documento detalharia a relação entre Golpe de 1964 e IPES?', 'texto do modelo e pergunta do código')
   eq(JSON.stringify(doc.entidades), JSON.stringify(['golpe64']), 'id:golpe64 virou golpe64')
   eq(JSON.stringify(doc.relacoes), JSON.stringify(['E219']), 'relação saiu de entidades')
   eq(JSON.stringify(doc.fontes), JSON.stringify(['B10']), 'fonte saiu de entidades')

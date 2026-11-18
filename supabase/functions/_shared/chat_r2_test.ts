@@ -90,7 +90,7 @@ const json = (blocos: unknown[], em_aberto: string | null = 'Quem mais sentou ne
 const PROIBIDO: Array<[string, RegExp]> = [
   ['rótulo após « · »', / · /],
   ['recorte', /\brecorte\b/i],
-  ['atlas', /\batlas\b(?!\s+detalharia\b)/i],
+  ['atlas', /\batlas\b/i],
   ['apelido [n]', /\[\d+\]/],
   ['id de relação/fonte', /\b(?:E1[0-9]{2}|B0[0-9])\b/],
   ['slug interno', /\b[a-z]+_[a-z0-9_]+\b/],
@@ -134,7 +134,7 @@ Deno.test('R2 vazamento: texto sujo do modelo sai limpo no Básico e no Avançad
     assert(!/BR\d+_H\d+|PR\d+-(?:E|NF)\d+|AP_E\d+/.test(texto), `${modelo}: sem código de ficha`)
     assert(final.blocos.length >= 3, `${modelo}: prosa preservada (${final.blocos.length} blocos)`)
     assert(final.blocos.every((b) => b.tipo === 'documentado'), `${modelo}: hipótese/inferência viram parágrafo`)
-    assert(/\n\nQue documento do atlas detalharia /.test(final.blocos.at(-1)!.texto), `${modelo}: pergunta final em parágrafo próprio`)
+    assert(/\n\nQue documento detalharia /.test(final.blocos.at(-1)!.texto), `${modelo}: pergunta final em parágrafo próprio`)
     assert(final.blocos.every((b) => b.relacoes.length <= 5 && b.fontes.length <= 5 && b.entidades.length <= 5), `${modelo}: teto de ids por parágrafo`)
     const terceiro = final.blocos.find((b) => b.texto.includes('capital'))
     assert(!terceiro || terceiro.relacoes.length > 0, `${modelo}: base inválida reatribuída pelos nomes`)

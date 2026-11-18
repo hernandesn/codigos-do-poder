@@ -2320,12 +2320,12 @@ function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; re
   }
   const citados = [...contagem.entries()].filter(([id]) => ehEntidade(id) && nomePublico(ctx, id))
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  if (!citados.length) return 'Que documento do atlas detalharia esta relação?'
+  if (!citados.length) return 'Que documento detalharia esta relação?'
   const par = parComAresta(ctx, citados)
   if (par) {
-    return `Que documento do atlas detalharia a relação entre ${nomePublico(ctx, par[0])} e ${nomePublico(ctx, par[1])}?`
+    return `Que documento detalharia a relação entre ${nomePublico(ctx, par[0])} e ${nomePublico(ctx, par[1])}?`
   }
-  return `Que documento do atlas detalharia o papel de ${nomePublico(ctx, citados[0][0])}?`
+  return `Que documento detalharia o papel de ${nomePublico(ctx, citados[0][0])}?`
 }
 
 function limparPergunta(texto: string, blocos: readonly { texto: string }[], ctx?: ChatContextPayload): string {

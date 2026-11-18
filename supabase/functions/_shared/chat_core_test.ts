@@ -1313,7 +1313,7 @@ Deno.test('F1c(a): sem_base:true com documentado válido responde, cobra e loga 
 
 Deno.test('F1c(b): a pergunta estrutural fecha o último bloco sem chave nova; em_aberto do modelo não entra; sem_base com blocos vazios segue fora_da_base', async () => {
   const pergunta = 'O que o recorte ainda deixa em aberto?'
-  const fim = 'A leitura não cria fato novo.\n\nQue documento do atlas detalharia o papel de Mauá?'
+  const fim = 'A leitura não cria fato novo.\n\nQue documento detalharia o papel de Mauá?'
   for (const over of [{ em_aberto: pergunta }, {}, { em_aberto: null }] as const) {
     const model = scripted([{ delta: answerJson(over) }])
     const final = finalOf(await chat({ database: db(), openrouter: model.client, inferenceKey: acceptedKey() }))
@@ -1753,7 +1753,7 @@ Deno.test('SPEC4 streamPrepared preserva resposta válida do modelo em dois tema
     }), { store, modelo, repetirCurto: false })
     const final = finalOf(result)
     eq(final.blocos.length, 1, 'R2: sem fallback e sem frase de lacuna')
-    eq(final.blocos[0].texto, 'Resposta do modelo.\n\nQue documento do atlas detalharia a relação entre Golpe de 1964 e IPES?', 'texto preservado e pergunta do código')
+    eq(final.blocos[0].texto, 'Resposta do modelo.\n\nQue documento detalharia a relação entre Golpe de 1964 e IPES?', 'texto preservado e pergunta do código')
     assert(!final.avisos.some((a) => a.texto === SEM_LIGACAO_AVISO), 'sem aviso de fallback')
     const state = store.snapshot(USER, CLOCK())
     eq(state.used, modelo === 'basico' ? 5 : 4, 'Básico consome um grátis; Avançado preserva cota')
@@ -1781,7 +1781,7 @@ Deno.test('CRED1 resposta documentada no Básico pago cobra um crédito e preser
   }), { store, modelo: 'basico' })
   const final = finalOf(result)
   eq(final.blocos.length, 1, 'R2: sem fallback e sem frase de lacuna')
-  eq(final.blocos[0].texto, 'Resposta do modelo.\n\nQue documento do atlas detalharia a relação entre Golpe de 1964 e IPES?', 'texto preservado e pergunta do código')
+  eq(final.blocos[0].texto, 'Resposta do modelo.\n\nQue documento detalharia a relação entre Golpe de 1964 e IPES?', 'texto preservado e pergunta do código')
   assert(!final.avisos.some((a) => a.texto === SEM_COBRANCA_AVISO), 'resposta cobrada não avisa gratuidade')
   const state = store.snapshot(USER, CLOCK())
   eq(state.used, 20, 'cota grátis intacta')
