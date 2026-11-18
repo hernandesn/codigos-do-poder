@@ -2121,6 +2121,58 @@ function fraseInterrogativaSolta(frase: string): boolean {
   return /\?\s*$/.test(semAspasNemUrl(frase))
 }
 
+const SNAKE_NOME = /\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b/
+const CODIGO_INTERNO = /\b(?:AP_E\d+|OP\d+|BR\d+_H\d+|PR\d+-(?:E|NF)\d+|[A-Z]{1,4}\d+(?:[_-][A-Z]*\d+)*)\b/
+
+/** Tira snake_case, código de ficha e colchete. O que sobra é o nome que pode ir à pergunta. */
+function limparCodigosDoNome(value: string): string {
+  return value
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
+    .replace(new RegExp(CODIGO_INTERNO.source, 'g'), ' ')
+    .replace(/[\[\]]/g, ' ')
+    .replace(/(?:\s*[-–—]\s*)+$/g, '')
+    .replace(/^(?:\s*[-–—]\s*)+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function textoTemCodigoInterno(value: string): boolean {
+  return SNAKE_NOME.test(value) || CODIGO_INTERNO.test(value) || /\[\d+\]/.test(value)
+}
+
+/**
+ * Antes de cortar frases: URL, citação inteira (várias frases, sem aspas órfãs)
+ * e nome ou título do recorte viram placeholder. O miolo não derruba a frase.
+ */
+function protegerTrechos(texto: string, ctx: ChatContextPayload | undefined, mascaras: string[]): string {
+  const guarda = (literal: string) => {
+    const token = `\u0003${mascaras.length}\u0003`
+    mascaras.push(literal)
+    return token
+  }
+  let t = texto
+  t = t.replace(/"[^"\n]*"|“[^”\n]*”|«[^»\n]*»/g, (m) => guarda(m))
+  t = t.replace(/(?:^|(?<=\s))['‘’][^'’\n]*['’](?=\s|[,.;:!?)\]}]|$)/g, (m) => guarda(m))
+  t = t.replace(/https?:\/\/\S+/g, (m) => guarda(m))
+  for (const nome of nomesProtegidos(ctx)) {
+    if (nome.length < 3 || !t.includes(nome)) continue
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeReg(nome)}(?![\\p{L}\\p{N}])`, 'gu')
+    t = t.replace(re, (m) => guarda(m))
+  }
+  return t
+}
+
+function restaurarTrechos(texto: string, mascaras: string[]): string {
+  let atual = texto
+  for (let i = 0; i < 4; i++) {
+    const next = atual.replace(/\u0003(\d+)\u0003/g, (_m, n: string) => mascaras[Number(n)] ?? '')
+    if (next === atual) return atual
+    atual = next
+  }
+  return atual
+}
+
 /** Fecho e frase de bloco. Lista curta; «em troca» e o restante da lista antiga não entram. */
 function fraseInsinuacao(frase: string): boolean {
   const fora = semAspasNemUrl(frase).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
@@ -2235,14 +2287,19 @@ function frasesDe(t: string): string[] {
  * Por linha, para o gancho da pauta não colar no fato. `preservar` é a frase
  * exata de ausência (fraseAusentes): essa frase fica, o resto do eco sai.
  */
-function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPayload, manterPergunta = false): string {
+function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPayload, manterPergunta = false, preservarFrase = ''): string {
   const alvo = preservar ? foldName(preservar) : ''
+  const extra = preservarFrase ? foldName(preservarFrase) : ''
   const linhas = texto.split('\n').map((linha) => {
     const comIdioma = linha.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1 ? parte : deslizesDeIdioma(parte, ctx)).join('')
-    const frases = frasesDe(comIdioma)
+    const mascaras: string[] = []
+    const mascarado = protegerTrechos(comIdioma, ctx, mascaras)
+    const frases = frasesDe(mascarado)
     let tirouCjk = 0
     const kept = semAnaforaPendente(frases, (f) => {
-      if (fraseAusenciaExata(f) || (alvo && foldName(f) === alvo)) return false
+      const visivel = restaurarTrechos(f, mascaras)
+      const chave = foldName(visivel)
+      if (fraseAusenciaExata(visivel) || (alvo && chave === alvo) || (extra && chave === extra)) return false
       if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
       if (fraseInglesSolta(f) || fraseEco(f) || fraseInsinuacao(f)) return true
       // A pergunta final (pauta / em_aberto) é a única que pode terminar em «?».
@@ -2250,7 +2307,7 @@ function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPay
       return false
     })
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
-    return semCodigosDeFicha(kept.join(' ').trim(), ctx)
+    return restaurarTrechos(semCodigosDeFicha(kept.join(' ').trim(), ctx), mascaras)
   }).filter((linha) => linha.trim())
   return linhas.join('\n').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.;:!?])/g, '$1').trim()
 }
@@ -2264,7 +2321,7 @@ function ultimaPerguntaValida(blocos: readonly { texto: string }[]): string {
   return ''
 }
 
-/** Nome público: campo nome, parte antes de « · ». Vazio, igual ao id ou snake_case (sem espaço e com «_») não serve. */
+/** Nome público: campo nome, parte antes de « · ». Snake, código interno ou menos de 2 letras não servem. */
 function nomePublico(ctx: ChatContextPayload, id: string): string | null {
   let bruto = ''
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
@@ -2273,13 +2330,9 @@ function nomePublico(ctx: ChatContextPayload, id: string): string | null {
       break
     }
   }
-  let curto = bruto.replace(/<[^>]*>/g, '').split('·')[0]
-  curto = curto.replace(/\[[^\]]*\]/g, ' ')
-  curto = curto.replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/g, ' ')
-  curto = curto.replace(/\b[A-Z]{1,3}\d+\b/g, ' ')
-  curto = curto.replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim()
+  const curto = limparCodigosDoNome(bruto.replace(/<[^>]*>/g, '').split('·')[0])
   const util = curto.replace(/[^\p{L}\p{N}]+/gu, '')
-  if (util.length < 2 || curto === id) return null
+  if (util.length < 2 || curto === id || textoTemCodigoInterno(curto)) return null
   if (!/\s/.test(curto) && curto.includes('_')) return null
   return curto
 }
@@ -2297,6 +2350,20 @@ function parComAresta(ctx: ChatContextPayload, ranking: Array<[string, number]>)
     }
   }
   return null
+}
+
+/** O mesmo saneador de id do texto visível. Código que sobrar troca a pergunta inteira. */
+function sanearPerguntaMontada(pergunta: string, ctx: ChatContextPayload): string {
+  let t = ocultarIdsVisiveis(pergunta, ctx)
+  t = limparCodigosDoNome(t)
+  t = publicChatText(t)
+  t = t.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1
+    ? parte
+    : parte.replace(/\b\p{L}+(?:_+\p{L}+)+\b/gu, ' ')
+  ).join('')
+  t = limparCodigosDoNome(t).replace(/\s+([,.;:!?])/g, '$1').replace(/\s+/g, ' ').trim()
+  if (!/\?\s*$/.test(t) || textoTemCodigoInterno(t)) return 'Que documento detalharia esta relação?'
+  return t
 }
 
 /** Pergunta final sempre do código. O em_aberto do modelo não entra. Sem nome público válido: a frase genérica. */
@@ -2320,12 +2387,22 @@ function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; re
   }
   const citados = [...contagem.entries()].filter(([id]) => ehEntidade(id) && nomePublico(ctx, id))
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  if (!citados.length) return 'Que documento detalharia esta relação?'
-  const par = parComAresta(ctx, citados)
-  if (par) {
-    return `Que documento detalharia a relação entre ${nomePublico(ctx, par[0])} e ${nomePublico(ctx, par[1])}?`
-  }
-  return `Que documento detalharia o papel de ${nomePublico(ctx, citados[0][0])}?`
+  const texto = !citados.length
+    ? 'Que documento detalharia esta relação?'
+    : (() => {
+      const par = parComAresta(ctx, citados)
+      if (par) return `Que documento detalharia a relação entre ${nomePublico(ctx, par[0])} e ${nomePublico(ctx, par[1])}?`
+      return `Que documento detalharia o papel de ${nomePublico(ctx, citados[0][0])}?`
+    })()
+  return sanearPerguntaMontada(texto, ctx)
+}
+
+function temFraseDeclarativa(texto: string, pergunta: string): boolean {
+  const alvo = foldName(pergunta)
+  return frasesDe(texto).some((frase) => {
+    const limpa = frase.trim()
+    return limpa.length > 0 && (!alvo || foldName(limpa) !== alvo)
+  })
 }
 
 function limparPergunta(texto: string, blocos: readonly { texto: string }[], ctx?: ChatContextPayload): string {
@@ -2420,12 +2497,15 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
     // Parágrafos (linha em branco) sobrevivem ao saneamento: a repetição do Avançado conta esses parágrafos.
     let tirouFora = 0
     let tirouCjk = 0
+    const mascaras: string[] = []
     const saida = t.split(/\n\s*\n/).map((paragrafo) => {
+      const mascarado = protegerTrechos(paragrafo, ctx, mascaras)
       // Na pergunta final, "de hoje / até hoje" sem data atual sai da frase em vez de derrubar a pergunta inteira.
-      const frases = frasesDe(paragrafo).map((f) => /\?\s*$/.test(f) && !/\b202[5-6]\b/.test(f)
+      const frases = frasesDe(mascarado).map((f) => /\?\s*$/.test(f) && !/\b202[5-6]\b/.test(f)
         ? f.replace(/(?:,\s*)?\b(?:até|ate) os dias de hoje\b|(?:,\s*)?\b(?:até|ate|ainda) hoje\b|\s+de hoje\b/gi, '')
         : f)
       const semEco = semAnaforaPendente(frases, (f) => {
+        const visivel = restaurarTrechos(f, mascaras)
         if (supera(f) || FORA.some((re, i) => re.test(fold1(f)) && (i < FORA_SEMPRE || !re.test(ctxTexto)))) {
           tirouFora += 1
           return true
@@ -2433,17 +2513,20 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
         if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
         if (fraseInglesSolta(f)) return true
         if (!pergunta && fraseInsinuacao(f)) return true
-        if (!pergunta && !fraseAusenciaExata(f) && fraseEco(f)) return true
+        if (!pergunta && !fraseAusenciaExata(visivel) && fraseEco(f)) return true
         return false
       })
       const ajustadas = pergunta
-        ? semEco.map((f) => fraseEco(f) && !fraseAusenciaExata(f) ? tirarTrechosEco(f) : f).filter((f) => f.trim())
+        ? semEco.map((f) => {
+          const visivel = restaurarTrechos(f, mascaras)
+          return fraseEco(f) && !fraseAusenciaExata(visivel) ? tirarTrechosEco(f) : f
+        }).filter((f) => f.trim())
         : semEco
       return ajustadas.map((f) => f.trim()).filter(Boolean).join(' ')
     }).filter((paragrafo) => paragrafo.trim())
     if (tirouFora) console.info(JSON.stringify({ evento: 'chat_frase_fora_da_base', n: tirouFora }))
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
-    return semCodigosDeFicha(saida.join('\n\n'), ctx)
+    return restaurarTrechos(semCodigosDeFicha(saida.join('\n\n'), ctx), mascaras)
   }
   const visivel = (value: string, pergunta = false) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))), pergunta)
   const allowedEntities = new Set<string>()
@@ -2762,10 +2845,18 @@ function temVocabularioAtlas(mensagem: string): boolean {
   return /\b(?:vinculo|ligacao|relacao|conexao|financi\w*|doac\w*|patrocin\w*|pagamento|contribu\w*|controle|controlad\w*|acionist\w*|socio|conselho|cargo|fundador|fundou|empresa|banco|governo|golpe|campanha|saude|vacina|familia|herdeiro|papel|influencia|origem|historico|data|ano|quando|quem|onde|como|porque|quanto)\b/.test(q)
 }
 
+/** Lista curta que impede a recusa da seleção, inclusive dentro de uma frase de tempo ou de jogo. */
+function vocabularioAtlasNaPergunta(mensagem: string): boolean {
+  const q = normalizeQuery(mensagem)
+  return /\b(?:mandato|conselho|politicos?|politicas?|poder|governo|eleicoes?|partido|banco|empresa|familia|fundacoes?|contrato|golpe|regime|ditadura|ministro|presidente|diretor(?:a|es|as)?|acionistas?|financiamento|doacoes?)\b/.test(q)
+}
+
 /**
  * Tema externo por expressão. jogo/clima sozinhos continuam na lista porque
- * testes já travam «Indica um jogo» e «Fale do clima»; «jogo político»,
- * «jogos de poder» e «clima político» não casam. «código» sozinho não recusa.
+ * testes já travam «Indica um jogo» e «Fale do clima». «jogo(s) político(s)»,
+ * «jogo(s) de poder» e «clima político» não casam. O tempo só entra como
+ * «previsão do tempo» ou «como está o tempo hoje|amanhã|agora».
+ * «código» sozinho não recusa.
  */
 const TEMA_EXTERNO = new RegExp([
   String.raw`\breceitas?\s+de\b`,
@@ -2773,10 +2864,10 @@ const TEMA_EXTERNO = new RegExp([
   String.raw`\bbolos?\b`,
   String.raw`\bculinaria\b`,
   String.raw`\bfutebol\b`,
-  String.raw`\bjogos?\b(?!\s+politico\b)(?!\s+de\s+poder\b)`,
-  String.raw`\bclima\b(?!\s+politico\b)`,
+  String.raw`\bjogos?\b(?!\s+politicos?\b)(?!\s+de\s+poder\b)`,
+  String.raw`\bclima\b(?!\s+politicos?\b)`,
   String.raw`\bprevisao\s+do\s+tempo\b`,
-  String.raw`\bcomo\s+esta\s+o\s+tempo\b`,
+  String.raw`\bcomo\s+esta\s+o\s+tempo\s+(?:hoje|amanha|agora)\b`,
   String.raw`\bresultado\s+do\s+jogo\b`,
   String.raw`\bcampeonato\b`,
   String.raw`\bhoroscopo\b`,
@@ -2794,7 +2885,8 @@ const TEMA_EXTERNO = new RegExp([
 function selecaoForaDaPergunta(mensagem: string, ctx: ChatContextPayload, textoVazio: boolean, entityIds: readonly string[]): boolean {
   if (entityIds.length === 0 || !textoVazio) return false
   const q = normalizeQuery(mensagem)
-  // «como» é vocabulário do atlas; a expressão do tempo recusa mesmo assim.
+  if (vocabularioAtlasNaPergunta(mensagem)) return false
+  // «Como está o tempo?» sem o vocabulário acima continua fora: o teste antigo trava a frase.
   if (/\bcomo esta o tempo\b/.test(q)) return true
   if (!TEMA_EXTERNO.test(q)) return false
   if (temVocabularioAtlas(mensagem)) return false
@@ -3641,10 +3733,36 @@ async function streamPreparedInner(input: {
     answer.sem_base = false
     console.info(JSON.stringify({ evento: 'sem_base_ignorado' }))
   }
+  // Filtros antes do crédito. Sem frase declarativa além da pergunta estrutural: fora_da_base, sem débito.
+  const avisoPrevisto = fraseAusentes(prepared.ausentes)
+  const emAbertoBruto = parsed && typeof parsed === 'object' && typeof (parsed as { em_aberto?: unknown }).em_aberto === 'string'
+    ? (parsed as { em_aberto: string }).em_aberto
+    : ''
+  // Eco do modelo não fecha a resposta. A pergunta válida que o teste antigo trava permanece no corpo.
+  const perguntaNoCorpo = !prepared.pauta && !prepared.pressure && fraseEco(emAbertoBruto)
+    ? ultimaPerguntaValida(answer.blocos)
+    : ''
+  answer = {
+    ...answer,
+    blocos: answer.blocos.map((bloco) => {
+      const texto = filtrarProsaVisivel(bloco.texto, avisoPrevisto, prepared.context, false, perguntaNoCorpo)
+      if (bloco.tipo === 'documentado') return { ...bloco, texto }
+      return { ...bloco, texto, justificativa: filtrarProsaVisivel(bloco.justificativa, avisoPrevisto, prepared.context, false, perguntaNoCorpo) }
+    }).filter((bloco) => bloco.texto.trim()),
+  }
+  if (prepared.modelo === 'basico' && !prepared.pauta) {
+    const capped = capBasicWords(answer.blocos, CHAT_MAX_WORDS.basico)
+    answer.blocos = capped.blocos
+    if (capped.trimmed) console.info(JSON.stringify({ evento: 'chat_basico_cortado' }))
+  }
   // Sem id válido continua fora da base, com o custo real da tentativa.
   const semId = answer.blocos.length > 0 && !hasValidId(answer.blocos)
   if (semId) console.info(JSON.stringify({ evento: 'sem_id_valido' }))
-  const semConteudo = answer.blocos.length === 0 || (answer.sem_base && countValidDocumentado(answer.blocos) === 0) || semId
+  const perguntaFinal = !prepared.pauta && !prepared.pressure && answer.blocos.length
+    ? perguntaEstrutural(answer.blocos, prepared.context)
+    : ''
+  const temDeclarativo = answer.blocos.some((bloco) => temFraseDeclarativa(bloco.texto, perguntaFinal))
+  const semConteudo = answer.blocos.length === 0 || !temDeclarativo || (answer.sem_base && countValidDocumentado(answer.blocos) === 0) || semId
   const podeFallback = prepared.origem !== 'selecao' && prepared.entityIds.length === 0 && perguntaDeLigacao(prepared.mensagem)
   // CRED1: só a resposta trocada pelo fallback é sem_ligacao e não cobra.
   let semLigacao = false
@@ -3697,34 +3815,14 @@ async function streamPreparedInner(input: {
     }
   }
 
-  if (prepared.modelo === 'basico' && !prepared.pauta) {
-    const capped = capBasicWords(answer.blocos, CHAT_MAX_WORDS.basico)
-    answer.blocos = capped.blocos
-    if (capped.trimmed) console.info(JSON.stringify({ evento: 'chat_basico_cortado' }))
-  }
   // F1e(b): só quando a pergunta é sobre a ligação; nas outras a lacuna fica no prompt.
   const lacuna = !prepared.pauta && !prepared.pressure && perguntaDeLigacao(prepared.mensagem) ? fraseLacunaFaltante(answer.blocos, prepared.context) : null
   if (lacuna && false) {
     answer.blocos.push({ tipo: 'documentado', texto: lacuna ?? '', entidades: [], relacoes: [], fontes: [] })
     console.info(JSON.stringify({ evento: 'lacuna_canonica' }))
   }
-  // CJK, idioma, eco e código de ficha, depois da pauta e antes da frase de ausência.
-  const avisoPrevisto = fraseAusentes(prepared.ausentes)
-  // Eco no em_aberto não é pergunta: a última pergunta válida do corpo substitui esse eco.
-  const emAbertoModelo = typeof answer.em_aberto === 'string' ? answer.em_aberto.trim() : ''
-  const substituiEco = !prepared.pauta && !prepared.pressure && emAbertoModelo && !/\?\s*$/.test(emAbertoModelo)
-    ? ultimaPerguntaValida(answer.blocos)
-    : ''
-  answer = {
-    ...answer,
-    blocos: answer.blocos.map((bloco) => {
-      const texto = filtrarProsaVisivel(bloco.texto, avisoPrevisto, prepared.context)
-      if (bloco.tipo === 'documentado') return { ...bloco, texto }
-      return { ...bloco, texto, justificativa: filtrarProsaVisivel(bloco.justificativa, avisoPrevisto, prepared.context) }
-    }).filter((bloco) => bloco.texto.trim()),
-  }
   if (!prepared.pauta && !prepared.pressure && answer.blocos.length) {
-    answer.em_aberto = substituiEco || perguntaEstrutural(answer.blocos, prepared.context)
+    answer.em_aberto = perguntaFinal
   } else if (answer.em_aberto !== undefined) {
     const pergunta = limparPergunta(answer.em_aberto, answer.blocos, prepared.context)
     if (pergunta.trim()) answer.em_aberto = pergunta

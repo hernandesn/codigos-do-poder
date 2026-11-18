@@ -1600,3 +1600,152 @@ Deno.test('hotfix1g tentativa vazia sem usage entra na soma', async () => {
   eq(semCobranca.orcamento.solturas(), 0, 'não solta o orçamento')
   eq(semCobranca.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, parcialErro, 'log da parcial')
 })
+
+Deno.test('hotfix1h fechamento é sempre a pergunta estrutural', async () => {
+  const r = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado. Quem mais recebeu dinheiro por fora? A casa pagou no mesmo ano.')],
+      sem_base: false,
+      em_aberto: 'A documentação é parcial.',
+    }), 0.0002)],
+  })
+  const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(!visivel.includes('Quem mais recebeu dinheiro por fora'), visivel)
+  assert(!visivel.includes('dinheiro por fora'), visivel)
+  assert(!visivel.includes('A documentação é parcial'), visivel)
+  assert(visivel.includes('O contrato de 1936 ficou registrado'), visivel)
+  assert(visivel.includes('A casa pagou no mesmo ano'), visivel)
+  assert(/Que documento detalharia /.test(visivel), visivel)
+})
+
+Deno.test('hotfix1h bloco só com pergunta: fora_da_base, sem crédito, custo real', async () => {
+  for (const modelo of ['basico', 'avancado'] as const) {
+    const r = await rodarModelo({
+      modelo,
+      agora: 30_000,
+      respostas: [gerar(JSON.stringify({
+        blocos: [docCampanha('Onde está o papel?')],
+        sem_base: false,
+        em_aberto: null,
+      }), 0.0002)],
+    })
+    eq(r.chamadas, 1, `${modelo}: uma chamada`)
+    eq(erroDe(r.emitted).code, 'fora_da_base', `${modelo}: fora_da_base`)
+    assert(!r.emitted.some((evento) => evento.event === 'final'), `${modelo}: sem final`)
+    const snap = r.store.snapshot(USER, CLOCK())
+    eq(snap.used, 0, `${modelo}: used 0`)
+    eq(snap.commitCalls, 0, `${modelo}: nenhum crédito`)
+    eq(snap.releaseCalls, 1, `${modelo}: crédito liberado`)
+    eq(snap.reserved, 0, `${modelo}: reserva zerada`)
+    if (modelo === 'avancado') eq(snap.paid, 40, `${modelo}: pago restaurado`)
+    eq(r.orcamento.commits.length, 1, `${modelo}: orçamento liquidado`)
+    eq(r.orcamento.commits[0], 0.0002, `${modelo}: custo real`)
+    eq(r.orcamento.solturas(), 0, `${modelo}: hold não solto`)
+    eq(snap.logs[0]?.custo_usd, 0.0002, `${modelo}: log`)
+    eq(snap.logs[0]?.status, 'fora_da_base', `${modelo}: status do log`)
+  }
+})
+
+Deno.test('hotfix1h nome, título, citação e URL ficam; secreto solto sai', async () => {
+  const ctx = campanhaCtx()
+  ctx.entidades.push({ id: 'secreta', nome: 'Casa Secreta', tipo: 'instituicao' })
+  ctx.fontes[0] = { ...ctx.fontes[0], titulo: 'Poder Oculto' }
+  const texto = [
+    'A Casa Secreta pagou o contrato de 1936.',
+    'O relatório Poder Oculto registra o aporte.',
+    "O diretor disse 'por que pagar?' na reunião.",
+    'Ele escreveu: "Pagamos. Por que esconder?" no relatório.',
+    'O diretor perguntou: “Por que pagar? A casa pagou no mesmo ano”. O arquivo seguiu.',
+    'O arquivo está em https://example.com/oculto/busca?q=1 e segue.',
+    'O pagamento secreto ficou sem registro.',
+    'A casa pagou no mesmo ano.',
+  ].join(' ')
+  const r = await rodarModelo({
+    ctx, agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha(texto)],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(visivel.includes('A Casa Secreta pagou o contrato de 1936.'), visivel)
+  assert(visivel.includes('Poder Oculto'), visivel)
+  assert(visivel.includes("O diretor disse 'por que pagar?' na reunião."), visivel)
+  assert(visivel.includes('Ele escreveu: "Pagamos. Por que esconder?" no relatório.'), visivel)
+  assert(visivel.includes('“Por que pagar? A casa pagou no mesmo ano”'), visivel)
+  assert(visivel.includes('https://example.com/oculto/busca?q=1'), visivel)
+  assert(!/pagamento secreto/i.test(visivel), visivel)
+  assert(!/\bsecreto\b/i.test(visivel), visivel)
+  assert(visivel.includes('A casa pagou no mesmo ano.'), visivel)
+})
+
+Deno.test('hotfix1h nome público tira snake e código interno', async () => {
+  const base = (nome: string, id = 'casa_ms') => {
+    const ctx = campanhaCtx()
+    ctx.raizes = [{ id, nome, tipo: 'instituicao' }]
+    ctx.entidades = [
+      { id, nome, tipo: 'instituicao' },
+      { id: 'campanha', nome: 'Campanha de 1916', tipo: 'instituicao' },
+    ]
+    return ctx
+  }
+  const textoDe = (eventos: ChatSseEvent[]) => finalDe(eventos).blocos.map((bloco) => bloco.texto).join('\n')
+  const snake = await rodarModelo({
+    ctx: base('Casa Alfa Grupo_B'), agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false, em_aberto: null,
+    }), 0.0002)],
+  })
+  const textoSnake = textoDe(snake.emitted)
+  assert(textoSnake.includes('Casa Alfa'), textoSnake)
+  assert(!textoSnake.includes('Grupo_B'), textoSnake)
+  assert(/Que documento detalharia a relação entre Casa Alfa e Campanha de 1916\?/.test(textoSnake), textoSnake)
+
+  const codigo = await rodarModelo({
+    ctx: base('Casa Alfa AP_E39'), agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false, em_aberto: null,
+    }), 0.0002)],
+  })
+  const textoCodigo = textoDe(codigo.emitted)
+  assert(textoCodigo.includes('Casa Alfa'), textoCodigo)
+  assert(!textoCodigo.includes('AP_E39'), textoCodigo)
+  assert(/Que documento detalharia a relação entre Casa Alfa e Campanha de 1916\?/.test(textoCodigo), textoCodigo)
+
+  const soCodigo = campanhaCtx()
+  soCodigo.raizes = [{ id: 'AP_E39', nome: 'AP_E39', tipo: 'instituicao' }]
+  soCodigo.entidades = [{ id: 'AP_E39', nome: 'AP_E39', tipo: 'instituicao' }]
+  soCodigo.relacoes = []
+  const semNome = await rodarModelo({
+    ctx: soCodigo, agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [{ tipo: 'documentado', texto: 'O contrato de 1936 ficou registrado no papel citado.', entidades: ['AP_E39'], relacoes: [], fontes: ['B01'] }],
+      sem_base: false, em_aberto: null,
+    }), 0.0002)],
+  })
+  const textoSo = textoDe(semNome.emitted)
+  assert(!textoSo.includes('AP_E39'), textoSo)
+  assert(textoSo.includes('Que documento detalharia esta relação?'), textoSo)
+})
+
+Deno.test('hotfix1h seleção: mandato e jogo político vão ao modelo; previsão e S-15 recusam', async () => {
+  const mapa = { 'casa_ms|': campanhaCtx() }
+  const casos: Array<[string, string, number]> = [
+    ['mandato', 'Como está o tempo de mandato no conselho?', 1],
+    ['jogos politicos', 'Analise os jogos políticos', 1],
+    ['jogo politico', 'Analise o jogo político', 1],
+    ['previsao', 'qual a previsão do tempo amanhã?', 0],
+    ['s15', S15, 0],
+  ]
+  for (const [nome, mensagem, chamadas] of casos) {
+    const store = bancoDe(mapa)
+    const modelo = cliente()
+    const { events } = await pedir(store, mensagem, ['casa_ms'], modelo.openrouter)
+    eq(modelo.chamadas(), chamadas, `${nome}: chamadas`)
+    if (chamadas === 0) eq(erroDe(events).message, 'Não encontrei isso na base do atlas.', `${nome}: recusa`)
+  }
+})

@@ -540,3 +540,43 @@ Teste: `chat_hotfix1_test.ts:716–722`. «O método quadratic entrou» permanec
 **171 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1g` desta seção.
 
 Sobre `37e4358`, continuação. `perguntaEstrutural` (`chat_core.ts:2323-2328`) monta «Que documento detalharia a relação entre X e Y?», «Que documento detalharia o papel de X?» ou «Que documento detalharia esta relação?». `git diff 37e4358 -- 'supabase/functions/_shared/*_test.ts'` tem 14 linhas e nada além disto: `chat_r2_test.ts:93` volta a `['atlas', /\batlas\b/i],`; o texto esperado «Que documento do atlas detalharia» vira «Que documento detalharia» em `chat_core_test.ts:1316`, `:1756` e `:1784`, `chat_fix_selecao_test.ts:444`, `chat_hotfix1_test.ts:1095`, `:1141`, `:1393`, `:1416`, `:1502`, `:1522` e `:1537`, `chat_r2_test.ts:137` e `citation_ids_test.ts:488`. Nenhuma outra asserção mudou. Suíte `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`: **171 passed, 0 failed, 3 skipped, 9 ignored.**
+
+## Hotfix1h
+
+Sobre `67ad746`. A revisão Codex desse commit deu REPROVADO. Na função só muda `chat_core.ts`. Auth, CORS, SQL e limites não mudam. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda.
+
+### 1. Fechamento
+
+Achado: o fecho reaproveitava uma pergunta do corpo ou do `em_aberto`. `substituiEco` saiu. O fecho é sempre `perguntaEstrutural` (`chat_core.ts:2370`), depois de `sanearPerguntaMontada` (`2356`). No fluxo, `answer.em_aberto = perguntaFinal` (`3825`). Se o `em_aberto` bruto do modelo casa `fraseEco`, a última pergunta válida do corpo só permanece no corpo (`perguntaNoCorpo`, `3742`): é o que mantém «Quem pagou o contrato de 1936?» na asserção antiga (`chat_hotfix1_test.ts:772`).
+
+Teste: `chat_hotfix1_test.ts:1604`. `em_aberto` «A documentação é parcial.» e corpo com «Quem mais recebeu dinheiro por fora?»: essa pergunta e o texto do `em_aberto` não aparecem; os fatos ficam; o fecho é «Que documento detalharia…».
+
+### 2. Crédito
+
+Achado: um bloco só com pergunta ainda debitava. `filtrarProsaVisivel` (`2290`) e o teto do Básico rodam antes de `commitCredits`. `temFraseDeclarativa` (`2400`) exige ao menos uma frase além da pergunta estrutural. Sem isso, `semConteudo` (`3765`) segue o `fora_da_base` de depois do modelo: crédito liberado (`releaseReserve`, `used` 0) e orçamento liquidado com `costNow()`.
+
+Teste: `chat_hotfix1_test.ts:1622`. No Básico e no Avançado, bloco só com «Onde está o papel?»: `fora_da_base`, `used` 0, `commitCalls` 0, `releaseCalls` 1, orçamento `0.0002`, nenhuma soltura do hold.
+
+### 3. Citação, nome e URL
+
+Achado: nome do recorte, citação com várias frases e URL caíam no corte. `protegerTrechos` (`2148`) mascara antes de `frasesDe`, e `restaurarTrechos` devolve o trecho inteiro. Entram: nomes de entidade e títulos de fonte do recorte; citações entre `" " “ ” « »` e entre aspas simples que abrem após espaço ou início e fecham antes de espaço ou pontuação; URLs. A chamada está em `filtrarProsaVisivel` (`2296`) e em `semForaDaBase` (`2502`). Termo de insinuação e «?» dentro da máscara não derrubam a frase. Se a frase sai, a citação inteira sai junto.
+
+Teste: `chat_hotfix1_test.ts:1650`. «A Casa Secreta pagou o contrato de 1936.» fica, com Casa Secreta no recorte. A fonte «Poder Oculto» fica. «O diretor disse 'por que pagar?' na reunião.» fica. «Ele escreveu: "Pagamos. Por que esconder?" no relatório.» fica inteira, e a citação “Por que pagar? A casa pagou no mesmo ano” também. A frase solta com «secreto», sem nome cadastrado, sai.
+
+### 4. Nome público
+
+`limparCodigosDoNome` (`2128`) tira snake_case sem distinção de maiúsculas (`/\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b/`), `AP_E\d+`, `OP\d+`, `BR\d+_H\d+`, `PR\d+-(E|NF)\d+`, `/\b[A-Z]{1,4}\d+(?:[_-][A-Z]*\d+)*\b/` e `[n]`, e normaliza espaços. `nomePublico` (`2325`): menos de 2 caracteres úteis, igual ao id, ou código que sobrou, a entidade não entra. `sanearPerguntaMontada` (`2356`) aplica `ocultarIdsVisiveis`, `limparCodigosDoNome` e `publicChatText`. Se ainda casar código interno, a pergunta vira «Que documento detalharia esta relação?».
+
+Teste: `chat_hotfix1_test.ts:1684`. «Casa Alfa Grupo_B» e «Casa Alfa AP_E39» viram «Casa Alfa» na relação com Campanha de 1916. «AP_E39» sozinho não entra; a pergunta é «Que documento detalharia esta relação?».
+
+### 5. Seleção
+
+`vocabularioAtlasNaPergunta` (`2849`) roda antes da recusa (`selecaoForaDaPergunta`, `2888`): mandato, conselho, político(s)/política, poder, governo, eleição, partido, banco, empresa, família, fundação, contrato, golpe, regime, ditadura, ministro, presidente, diretor, acionista, financiamento, doação. Com um desses termos a seleção não recusa. `TEMA_EXTERNO` (`2861`) não tem mais «como está o tempo» solto: ficam «previsão do tempo» e «como está o tempo hoje|amanhã|agora». «jogo(s) político(s)» e «jogo(s) de poder» não casam (`2867`). «Como está o tempo?» sem esse vocabulário continua fora (`2890`).
+
+Teste: `chat_hotfix1_test.ts:1735`. Com seleção, «Como está o tempo de mandato no conselho?», «Analise os jogos políticos» e «Analise o jogo político» chamam o modelo. «qual a previsão do tempo amanhã?» e S-15 recusam.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**176 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1h` desta seção. `git diff 67ad746 -- 'supabase/functions/_shared/*_test.ts' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
