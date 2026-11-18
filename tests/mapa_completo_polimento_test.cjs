@@ -220,3 +220,69 @@ test('cartão do nó selecionado fica visível sobre o canvas', { timeout: 12000
     } finally { await context.close(); }
   }
 });
+
+function assentar(page) {
+  return page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+test('arrastar 120 px move o grafo 120 px e o ponteiro solto não salta', { timeout: 180000 }, async () => {
+  for (const [width, height] of [[1440, 900], [393, 852]]) {
+    const { context, page, errors } = await abrir(width, height);
+    try {
+      await mapaAberto(page);
+      await page.evaluate(() => { location.hash = 'e=ipes'; });
+      await page.waitForFunction(() => window.mural.getState().selected && window.mural.getState().selected.id === 'ipes', null, { timeout: 8000 });
+      await page.waitForFunction(() => {
+        const card = document.querySelector('#network .network-node.selected .node-card');
+        if (!card) return false;
+        const r = card.getBoundingClientRect();
+        const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        if (x < 2 || y < 2 || x > innerWidth - 2 || y > innerHeight - 2) return false;
+        const hit = document.elementFromPoint(x, y);
+        return !!(hit && hit.closest && hit.closest('.network-node.selected'));
+      }, null, { timeout: 8000 });
+      const antes = await page.evaluate(() => ({
+        g: window.mapaCompleto.pontoNaTela('kochpac'),
+        m: window.mural.getState().camera,
+        hit: (() => {
+          const card = document.querySelector('#network .network-node.selected .node-card');
+          const r = card.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        })(),
+      }));
+      await page.mouse.move(antes.hit.x, antes.hit.y);
+      await page.mouse.down();
+      await page.mouse.move(antes.hit.x + 120, antes.hit.y, { steps: 6 });
+      await page.mouse.up();
+      await assentar(page);
+      const depois = await page.evaluate(() => ({
+        g: window.mapaCompleto.pontoNaTela('kochpac'),
+        m: window.mural.getState().camera,
+      }));
+      const dgx = depois.g.x - antes.g.x, dgy = depois.g.y - antes.g.y;
+      const dmx = depois.m.x - antes.m.x, dmy = depois.m.y - antes.m.y;
+      assert.ok(Math.abs(dmx - 120) <= 1 && Math.abs(dmy) <= 1, `${width} mural ${dmx},${dmy}`);
+      assert.ok(Math.abs(dgx - 120) <= 1 && Math.abs(dgy) <= 1, `${width} grafo ${dgx},${dgy}`);
+
+      const outro = await page.evaluate(() => window.mapaCompleto.pontoNaTela('rf'));
+      await page.evaluate(() => { location.hash = 'e=rf'; });
+      await page.waitForFunction(() => window.mural.getState().selected && window.mural.getState().selected.id === 'rf', null, { timeout: 8000 });
+      await assentar(page);
+      await assentar(page);
+      const parado = await page.evaluate(() => ({
+        g: window.mapaCompleto.pontoNaTela('kochpac'),
+        m: window.mural.getState().camera,
+      }));
+      await page.mouse.move(Math.min(width - 20, Math.max(20, outro.x + 30)), Math.min(height - 20, Math.max(20, outro.y + 24)));
+      await assentar(page);
+      const solto = await page.evaluate(() => ({
+        g: window.mapaCompleto.pontoNaTela('kochpac'),
+        m: window.mural.getState().camera,
+      }));
+      assert.ok(Math.abs(solto.m.x - parado.m.x) <= 1 && Math.abs(solto.m.y - parado.m.y) <= 1, `${width} câmera solta ${solto.m.x - parado.m.x},${solto.m.y - parado.m.y}`);
+      assert.ok(Math.abs(solto.g.x - parado.g.x) <= 1 && Math.abs(solto.g.y - parado.g.y) <= 1, `${width} grafo solto ${solto.g.x - parado.g.x},${solto.g.y - parado.g.y}`);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+

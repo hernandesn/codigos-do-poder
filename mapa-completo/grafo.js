@@ -947,15 +947,16 @@
     ctx.stroke();
   }
 
-  function espelharCameraMural() {
+  function espelharCameraMural(aplicar) {
     const vp = document.getElementById('viewport');
     const base = vp && vp.transform && vp.transform.baseVal;
     if (!base || !base.numberOfItems) return false;
     const m = base.getItem(0).matrix;
+    const x = m.e, y = m.f;
     const prev = vivo.muralCam;
-    vivo.muralCam = { x: m.e, y: m.f };
-    if (!prev) return false;
-    const dx = m.e - prev.x, dy = m.f - prev.y;
+    vivo.muralCam = { x, y };
+    if (!aplicar || !prev) return false;
+    const dx = x - prev.x, dy = y - prev.y;
     if (!dx && !dy) return false;
     vivo.cam.x += dx;
     vivo.cam.y += dy;
@@ -1153,9 +1154,22 @@
       expandir(n.id);
     });
 
-    document.addEventListener('pointermove', () => {
-      if (vivo.ativo && espelharCameraMural()) pedirQuadro();
-    }, true);
+    // A linha de base acompanha o mural no pointerdown, antes do arrasto.
+    // O pointermove lê o transform no quadro seguinte: o mural só grava a
+    // câmera no rAF, e no capture este listener via a câmera do evento anterior.
+    // Sem botão não aplica o delta — seleção e enquadrar não podem saltar o grafo.
+    document.addEventListener('pointerdown', () => {
+      if (!vivo.ativo) return;
+      espelharCameraMural(false);
+    }, false);
+    document.addEventListener('pointermove', ev => {
+      if (!vivo.ativo) return;
+      const aplicar = (ev.buttons & 1) === 1;
+      requestAnimationFrame(() => {
+        if (!vivo.ativo) return;
+        if (espelharCameraMural(aplicar)) pedirQuadro();
+      });
+    }, false);
 
     document.addEventListener('pointerup', ev => {
       if (!vivo.ativo || !vivo.ultimoNo) return;
