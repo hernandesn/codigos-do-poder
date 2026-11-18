@@ -42,15 +42,15 @@ after(async () => {
   if (server) await new Promise(resolve => server.close(resolve));
 });
 
-async function abrir(width, height) {
-  const context = await browser.newContext({
+async function abrir(width, height, extra) {
+  const context = await browser.newContext(Object.assign({
     viewport: { width, height },
     deviceScaleFactor: 1,
     isMobile: width < 500,
     hasTouch: width < 500,
     reducedMotion: 'reduce',
     serviceWorkers: 'block',
-  });
+  }, extra || {}));
   await context.addInitScript(() => {
     localStorage.setItem('aion.tutorial', 'visto-v1');
     localStorage.setItem('aion.dica-toque', 'visto-v1');
@@ -420,3 +420,100 @@ test('Home na alça recolhe o painel e Home num rótulo enquadra o grafo', { tim
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+function amostraZoom(id) {
+  const card = document.querySelector('#network .network-node.selected');
+  const r = card.getBoundingClientRect();
+  const cursor = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  const rede = document.getElementById('network').getBoundingClientRect();
+  const cam = window.mural.getState().camera;
+  const pos = window.mural.getState().positions[id];
+  return {
+    cursor,
+    g: window.mapaCompleto.pontoNaTela(id),
+    gz: window.__grafo.zoom(),
+    mk: cam.k,
+    mural: { x: rede.left + pos.x * cam.k + cam.x, y: rede.top + pos.y * cam.k + cam.y },
+  };
+}
+
+test('roda e pinça sobre o cartão mantêm a escala do mural e do grafo', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrir(1440, 900, { hasTouch: true });
+  try {
+    await mapaAberto(page);
+    await page.evaluate(() => { location.hash = 'e=ipes'; });
+    await page.waitForFunction(() => window.mural.getState().selected && window.mural.getState().selected.id === 'ipes' && window.mural.getState().camera.k >= 0.89, null, { timeout: 8000 });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('#network .network-node.selected .node-card');
+      if (!card) return false;
+      const r = card.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (x < 2 || y < 2 || x > innerWidth - 2 || y > innerHeight - 2) return false;
+      const hit = document.elementFromPoint(x, y);
+      return !!(hit && hit.closest && hit.closest('.network-node.selected'));
+    }, null, { timeout: 8000 });
+    await assentar(page);
+
+    const antes = await page.evaluate(amostraZoom, 'kochpac');
+    const antesNo = await page.evaluate(amostraZoom, 'ipes');
+    await page.mouse.move(antes.cursor.x, antes.cursor.y);
+    await page.mouse.wheel(0, -120);
+    await page.waitForFunction(k => window.mural.getState().camera.k > k + 0.02, antes.mk, { timeout: 4000 });
+    await assentar(page);
+    const depois = await page.evaluate(amostraZoom, 'kochpac');
+    const depoisNo = await page.evaluate(amostraZoom, 'ipes');
+    const fatorM = depois.mk / antes.mk;
+    const fatorG = depois.gz / antes.gz;
+    assert.ok(fatorM > 1.05 && fatorG > 1.05, JSON.stringify({ fatorM, fatorG, antes, depois }));
+    assert.ok(Math.abs(fatorM - fatorG) < 0.02, JSON.stringify({ fatorM, fatorG }));
+    const ex = antes.cursor.x + (antes.g.x - antes.cursor.x) * fatorG;
+    const ey = antes.cursor.y + (antes.g.y - antes.cursor.y) * fatorG;
+    assert.ok(Math.abs(depois.g.x - ex) <= 1 && Math.abs(depois.g.y - ey) <= 1, JSON.stringify({ dx: depois.g.x - ex, dy: depois.g.y - ey, fatorG }));
+    assert.ok(Math.abs(depoisNo.mural.x - antesNo.mural.x) <= 1 && Math.abs(depoisNo.mural.y - antesNo.mural.y) <= 1, JSON.stringify({ mural: depoisNo.mural, antes: antesNo.mural, cursor: antes.cursor }));
+
+    const fundo = await page.evaluate(() => {
+      const canvas = document.getElementById('grafo-canvas');
+      for (let y = 48; y < innerHeight - 80; y += 28) {
+        for (let x = 36; x < innerWidth - 36; x += 28) {
+          if (document.elementFromPoint(x, y) === canvas) return { x, y };
+        }
+      }
+      return null;
+    });
+    assert.ok(fundo, 'sem ponto livre no canvas');
+    const antesFundo = await page.evaluate(amostraZoom, 'kochpac');
+    await page.mouse.move(fundo.x, fundo.y);
+    await page.mouse.wheel(0, -120);
+    await page.waitForFunction(k => window.mural.getState().camera.k > k + 0.02, antesFundo.mk, { timeout: 4000 });
+    await assentar(page);
+    const depoisFundo = await page.evaluate(amostraZoom, 'kochpac');
+    const fatorMf = depoisFundo.mk / antesFundo.mk;
+    const fatorGf = depoisFundo.gz / antesFundo.gz;
+    assert.ok(Math.abs(fatorMf - fatorGf) < 0.02, JSON.stringify({ fatorMf, fatorGf }));
+    const fx = fundo.x + (antesFundo.g.x - fundo.x) * fatorGf;
+    const fy = fundo.y + (antesFundo.g.y - fundo.y) * fatorGf;
+    assert.ok(Math.abs(depoisFundo.g.x - fx) <= 1 && Math.abs(depoisFundo.g.y - fy) <= 1, JSON.stringify({ dx: depoisFundo.g.x - fx, dy: depoisFundo.g.y - fy }));
+
+    const cdp = await context.newCDPSession(page);
+    const toques = (type, pts) => cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: pts.map((p, i) => ({ x: p.x, y: p.y, id: i })),
+    });
+    const antesPinca = await page.evaluate(amostraZoom, 'ipes');
+    const cx = antesPinca.cursor.x, cy = antesPinca.cursor.y;
+    await toques('touchStart', [{ x: cx - 36, y: cy }, { x: cx + 36, y: cy }]);
+    for (let i = 1; i <= 6; i++) {
+      await toques('touchMove', [{ x: cx - 36 - i * 8, y: cy }, { x: cx + 36 + i * 8, y: cy }]);
+      await page.waitForTimeout(20);
+    }
+    await toques('touchEnd', []);
+    await assentar(page);
+    const depoisPinca = await page.evaluate(amostraZoom, 'ipes');
+    const fatorMp = depoisPinca.mk / antesPinca.mk;
+    const fatorGp = depoisPinca.gz / antesPinca.gz;
+    assert.ok(fatorMp > 1.05 && fatorGp > 1.05, JSON.stringify({ fatorMp, fatorGp, antes: antesPinca.mk, gz: [antesPinca.gz, depoisPinca.gz] }));
+    assert.ok(Math.abs(fatorMp - fatorGp) < 0.03, JSON.stringify({ fatorMp, fatorGp }));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
