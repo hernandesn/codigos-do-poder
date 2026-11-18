@@ -2223,3 +2223,40 @@ Deno.test('hotfix1l aspas ficam balanceadas quando o código sai da citação', 
   assert(!texto.includes('AP_E777'), texto)
   assert(texto.includes('https://example.com/acervo/BR101.pdf'), texto)
 })
+
+Deno.test('hotfix1m ocorrência de termo jurídico fora de URL: a URL não autoriza o que o corte cria', async () => {
+  const pedido = (ctx: ChatContextPayload) => rodarModelo({
+    ctx,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const tituloDe = (titulo: string) => {
+    const ctx = campanhaCtx()
+    ctx.fontes = ctx.fontes.map((fonte) => fonte.id === 'B01' ? { ...fonte, titulo } : fonte)
+    return ctx
+  }
+
+  const rUrl = await pedido(tituloDe('O grupo praticou cri"AP_E777"me em https://example.com/crime.json.'))
+  const finalUrl = finalDe(rUrl.emitted)
+  eq(finalUrl.fontes_detalhe.B01.titulo, 'Documento', JSON.stringify(finalUrl.fontes_detalhe))
+  const semUrl = JSON.stringify(finalUrl).replace(/https?:\/\/[^\s"'“”«»‘’]+/g, ' ')
+  assert(!/\bcrime\b/i.test(semUrl), semUrl)
+
+  const ctxEnt = campanhaCtx()
+  ctxEnt.entidades = ctxEnt.entidades.map((item) => item.id === 'casa_ms'
+    ? { ...item, nome: 'Casa cri"AP_E777"me https://example.com/crime' }
+    : item)
+  const finalEnt = finalDe((await pedido(ctxEnt)).emitted)
+  assert(!finalEnt.entidades.some((ent) => ent.id === 'casa_ms'), JSON.stringify(finalEnt))
+
+  const tituloBom = 'Relatório sobre crime organizado'
+  const finalBom = finalDe((await pedido(tituloDe(tituloBom))).emitted)
+  eq(finalBom.fontes_detalhe.B01.titulo, tituloBom, JSON.stringify(finalBom.fontes_detalhe))
+
+  const finalDobro = finalDe((await pedido(tituloDe('Relatório sobre crime e cri"AP_E777"me'))).emitted)
+  eq(finalDobro.fontes_detalhe.B01.titulo, 'Documento', JSON.stringify(finalDobro.fontes_detalhe))
+})

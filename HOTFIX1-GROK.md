@@ -724,3 +724,26 @@ Teste: `chat_hotfix1_test.ts:2201`. Aspas balanceadas, sem `AP_E777`, URL `https
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **194 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os três `hotfix1l` desta seção. `git diff 57fc995 -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts` e só as duas linhas da exceção acima (`assert(!cru.includes('AP_E777')` e `assert(!/OP901|AP_E\d+/)`. Nenhuma outra asserção ou fixture foi removida.
+
+## Hotfix1m
+
+Sobre `cc3d0f5`. A revisão Codex desse commit deu REPROVADO (um médio novo contra `e981dc6`). Em `chat_core.ts` só muda `termoJuridicoCriado`. `pauta.ts` não muda. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda: o evento final continua com `avisos: []` (`chat_core.ts:4260`). O prompt do sistema não muda.
+
+### Termo jurídico: contagem fora da URL
+
+Achado: `termoJuridicoCriado` (`2208` em `cc3d0f5`) comparava um `Set`. Um «crime» que existia só dentro de `https://example.com/crime.json` autorizava o «crime» que o saneamento junta em `cri"AP_E777"me`. A função (`2211`) agora tira `http(s)` dos dois lados com `URL_HTTP_SRC` (`1674`) e conta cada termo em minúsculas. Se o saneado tem mais ocorrências fora da URL do que o original tinha fora da URL, o termo foi criado. Ocorrência dentro da URL não entra na conta e não autoriza nada.
+
+Título de fonte cai para «Documento» (`2766`). Entidade sai da lista exibida (`2761`). `nomePublico` (`2471`) devolve nulo nesse caso, então o nome não entra na pergunta. A mesma contagem fora da URL fica. Uma segunda ocorrência criada pelo corte também cai.
+
+Teste: `chat_hotfix1_test.ts:2227`.
+
+- Título `O grupo praticou cri"AP_E777"me em https://example.com/crime.json.` vira «Documento». No `JSON.stringify` do evento final, depois de tirar `http(s)`, não há «crime».
+- Entidade `Casa cri"AP_E777"me https://example.com/crime` sai do evento final.
+- Título «Relatório sobre crime organizado» continua igual.
+- Título `Relatório sobre crime e cri"AP_E777"me` vira «Documento»: o saneamento criaria a segunda ocorrência.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**195 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. O teste novo é o `hotfix1m` desta seção. `git diff cc3d0f5 -- 'supabase/functions/_shared/*_test.ts' | grep '^-'` devolve só o cabeçalho `--- a/supabase/functions/_shared/chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.

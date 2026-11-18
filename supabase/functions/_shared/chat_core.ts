@@ -2204,10 +2204,26 @@ function termosJuridicos(valor: string): string[] {
   return [...valor.matchAll(new RegExp(TERMO_JURIDICO_SRC, 'giu'))].map((achado) => achado[0])
 }
 
-/** O saneamento criou termo jurídico que o valor original não tinha como palavra inteira. */
+/**
+ * Fora de http(s), o saneamento tem mais ocorrências de algum termo jurídico.
+ * O que está dentro da URL não conta e não autoriza o termo criado.
+ */
 function termoJuridicoCriado(original: string, saneado: string): boolean {
-  const antes = new Set(termosJuridicos(original).map((termo) => termo.toLowerCase()))
-  return termosJuridicos(saneado).some((termo) => !antes.has(termo.toLowerCase()))
+  const contar = (texto: string) => {
+    const fora = texto.replace(new RegExp(URL_HTTP_SRC, 'g'), ' ')
+    const n = new Map<string, number>()
+    for (const termo of termosJuridicos(fora)) {
+      const chave = termo.toLowerCase()
+      n.set(chave, (n.get(chave) ?? 0) + 1)
+    }
+    return n
+  }
+  const antes = contar(original)
+  const depois = contar(saneado)
+  for (const [termo, vezes] of depois) {
+    if (vezes > (antes.get(termo) ?? 0)) return true
+  }
+  return false
 }
 
 /** http(s) sai e volta inteira. A aspa de fecho não entra no token. Índice que esta chamada não guardou fica. */
