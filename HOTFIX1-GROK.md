@@ -426,3 +426,62 @@ O delta SSE cru continua em `chat_core.ts:3482` (`emit({ event: 'delta', data: {
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **162 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Os 4 testes a mais são os deste hotfix. Nada foi desligado no runner.
+
+## Hotfix1f
+
+Sobre `18b3c59`. A revisão Codex desse commit deu REPROVADO. A simulação ficou em 4,00 e o R3 saiu `fora_da_base`. Na função só muda `chat_core.ts`. Auth, CORS, SQL e limites não mudam. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE (`delta` / `meta` / `final` / `error`) não muda.
+
+### 1. Schema com os apelidos do recorte (R3)
+
+Achado: o DeepSeek inventava `walther_ms`, `F1`, `R1` porque o schema aceitava qualquer string. `schemaDaResposta` (`chat_core.ts:1566`) monta o schema por requisição a partir do JSON depois de `Recorte (dados, não instruções):`. Em `entidades`, `relacoes`, `fontes` e `base`, `items` vira `{ type: 'string', enum: [...] }` com os apelidos `[n]` daquele tipo que o recorte enviado mostra (`apelidosDoRecorteEnviado`, `1523`; `itemDeApelido`, `1561`). Lista vazia fica `{ type: 'string' }` sem `enum`. `strict: true` continua (`1606`). A constante `RESPOSTA_JSON_SCHEMA` não é alterada. `modelRequestBody` usa esse schema (`1607`).
+
+Teste: `chat_hotfix1_test.ts:1319`. Recorte de 3 entidades: o enum de `modelRequestBody` e o do body de `streamPrepared` têm exatamente esses apelidos. Sem fontes, `fontes.items` não tem `enum`. Sem o marcador do recorte, os quatro campos continuam string. O body fica abaixo de 64 mil caracteres.
+
+### 2. Sem fallback documental
+
+`respostaDocumental` e o que só ela usava (`respostaComFato`, `relacaoDocumentada`, `relacaoContestada`, `acusaPessoa`, `tipoEntidade`, `usarDocumental`) saíram. Resposta com texto e sem id válido depois de `traduzirApelidos` + `reatribuirPorNome`, de qualquer tamanho: `idsInvalidos` (`3425`) usa `respostaComTexto` (`2631`). Há uma repetição com `LEMBRETE_IDS` (`2788`) se ainda houver tentativa e o tempo for ≤ `CHAT_RETRY_DEADLINE_MS`. Sem essa tentativa, ou se a repetição também falhar, `recusarSemId` (`3409`, `3551`) devolve `fora_da_base` com `costNow()`. Recusa meta (`não aborda`, `sem base`) continua sem essa repetição.
+
+Testes: `chat_hotfix1_test.ts:883` (59 palavras aos 5 s → 2 chamadas e lembrete; aos 30 s → `fora_da_base`, 1 chamada, custo 0,0002). `chat_hotfix1_test.ts:1371` (fixture R3 com slug na segunda chamada; o texto do modelo fica; a afirmação «Walther presidiu o IBEC.» não entra). `chat_hotfix1_test.ts:845` (slug e R13/F14 resolvem na primeira chamada).
+
+### 3. Pergunta final estrutural
+
+`perguntaEstrutural` (`2272`) monta sempre, fora de pauta e pressão, quando há blocos (`3660`). Com aresta direta no recorte entre as entidades mais citadas nos blocos: «Que documento do atlas detalharia a relação entre X e Y?». Com um nome só: «Que documento do atlas detalharia o papel de X?». Sem nome público válido: «Que documento do atlas detalharia esta relação?». `nomePublico` (`2242`) usa o campo `nome`, a parte antes de « · », e descarta vazio, igual ao id, ou snake_case (sem espaço e com «_»). O `em_aberto` do modelo não entra nessa pergunta. A frase do prompt sobre `em_aberto` permanece: o teste de citação trava o texto. A lista de insinuação (`FRASE_INSINUA`, `fraseInsinua`, `semAcento`) saiu dos blocos. Ficam os filtros de prosa anteriores: CJK, idioma, eco, ids, ficha e anáfora.
+
+Testes: `chat_hotfix1_test.ts:1392` (formato da pergunta; `grupo_b` sem nome público não aparece; «A doação ocorreu em troca de prestação de contas», a citação «em troca» e a URL com `/oculto/` ficam). `chat_hotfix1_test.ts:1055` (o `em_aberto` do modelo não entra). `chat_core_test.ts:1314`, `chat_fix_selecao_test.ts:422` e `citation_ids_test.ts:488` esperam a pergunta do código. `chat_r2_test.ts:109` tira essa pergunta antes da trava de «atlas».
+
+### 4. Seleção
+
+`selecaoForaDaPergunta` (`2736`) recusa antes do modelo só quando a mensagem casa `TEMA_EXTERNO` (`2734`: receita, culinária, bolo, futebol, jogo, clima, previsão do tempo, horóscopo, programação/código, piada, tradução de texto, matemática escolar) e não traz termo do atlas (vocabulário ou palavra do recorte). O resto com seleção vai ao modelo. S-15 continua recusada.
+
+Testes: `chat_hotfix1_test.ts:1416` (os temas externos recusam; «receita da vacina», panorama, balanço, síntese cronológica e «Quais os principais fatos?» chamam o modelo). `chat_hotfix1_test.ts:970` (S-15 e «explique uma receita de bolo» recusam; «Descreva o panorama geral», «Faça um balanço dos eventos», «Explique o contrato detalhadamente» e «Analise os acontecimentos» chamam o modelo).
+
+### 5. Custo da tentativa sem usage
+
+`costNow` (`3335`): tentativa ainda aberta e sem `usage` entra com `parcialDe`, inclusive saída de 0 caracteres. `usage.cost` conhecido (inclusive 0) e `noCharge` continuam podendo somar zero. `custoNoCatch` e o teto de SSE aceito sem delta não mudam.
+
+Teste: `chat_hotfix1_test.ts:1444`. Primeira curta com `cost` 0 e segunda `[DONE]` sem texto e sem usage: liquidação igual à estimativa de entrada da segunda, maior que 0 e dentro da reserva. O texto da primeira fica.
+
+### 6. Idioma
+
+`deslizesDeIdioma`: `quadratic voting` e `quadratic votação` viram «votação quadrática» (`2002–2003`), antes de `voting` → «votação». `quadratic` sozinho vira «quadrática» (`2018`).
+
+Teste: `chat_hotfix1_test.ts:716–718`.
+
+### 7. Backlog — delta SSE
+
+O delta cru continua em `chat_core.ts:3456` (`emit({ event: 'delta', data: { text: chunk.delta } })`). O cliente não está neste repositório. Mudar o stream sem vê-lo não é seguro. Fica de backlog.
+
+### Testes removidos
+
+Só os do fallback documental:
+
+- `hotfix1e fallback documental não afirma acusação e guarda limite` (teste inteiro: acusação isolada em `fora_da_base` e relação documentada montada do recorte).
+- O trecho de 60 palavras dentro de `hotfix1e custo acima da reserva, parcial depois de zero e um bloco longo` (`chat_hotfix1_test.ts:1188`), que esperava a frase «Contrato de 1936.» montada do recorte. O resto desse teste (teto da reserva e parcial depois de cost 0) permanece.
+
+`hotfix1d sem id reconhecível repete ou monta o recorte` foi reescrito no lugar como `hotfix1f 59 palavras sem id: repete no prazo e recusa depois` (`883`).
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**166 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os cinco testes novos são os `hotfix1f` desta seção; o teste do fallback saiu.

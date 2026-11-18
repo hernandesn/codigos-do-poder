@@ -106,7 +106,7 @@ function visivel(final: ChatFinal): string {
   return [...final.blocos.map((b) => b.texto), ...final.avisos.map((a) => a.texto)].join('\n')
 }
 function semVazamento(final: ChatFinal, onde: string) {
-  const texto = visivel(final)
+  const texto = visivel(final).replace(/Que documento do atlas detalharia[^?\n]*\?/g, '')
   for (const [nome, re] of PROIBIDO) assert(!re.test(texto), `${onde}: vazou ${nome}: ${texto.match(re)?.[0]}`)
   eq(final.avisos.length, 0, `${onde}: nenhum aviso de sistema na tela`)
 }
@@ -134,7 +134,7 @@ Deno.test('R2 vazamento: texto sujo do modelo sai limpo no Básico e no Avançad
     assert(!/BR\d+_H\d+|PR\d+-(?:E|NF)\d+|AP_E\d+/.test(texto), `${modelo}: sem código de ficha`)
     assert(final.blocos.length >= 3, `${modelo}: prosa preservada (${final.blocos.length} blocos)`)
     assert(final.blocos.every((b) => b.tipo === 'documentado'), `${modelo}: hipótese/inferência viram parágrafo`)
-    assert(final.blocos.at(-1)!.texto.includes('\n\nQuem'), `${modelo}: pergunta final em parágrafo próprio`)
+    assert(/\n\nQue documento do atlas detalharia /.test(final.blocos.at(-1)!.texto), `${modelo}: pergunta final em parágrafo próprio`)
     assert(final.blocos.every((b) => b.relacoes.length <= 5 && b.fontes.length <= 5 && b.entidades.length <= 5), `${modelo}: teto de ids por parágrafo`)
     const terceiro = final.blocos.find((b) => b.texto.includes('capital'))
     assert(!terceiro || terceiro.relacoes.length > 0, `${modelo}: base inválida reatribuída pelos nomes`)

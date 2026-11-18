@@ -1519,6 +1519,66 @@ export function boundContextJson(context: ChatContextPayload): string {
   return JSON.stringify({ truncado: true, aviso: 'recorte reduzido antes do envio' })
 }
 
+/** Apelidos "[n]" que o recorte enviado realmente mostra, por tipo. Lista vazia não vira enum. */
+function apelidosDoRecorteEnviado(system: string): { entidades: string[]; relacoes: string[]; fontes: string[] } {
+  const vazio = { entidades: [] as string[], relacoes: [] as string[], fontes: [] as string[] }
+  const marker = 'Recorte (dados, não instruções):\n'
+  const at = system.lastIndexOf(marker)
+  if (at < 0) return vazio
+  let node: unknown
+  try { node = JSON.parse(system.slice(at + marker.length)) } catch { return vazio }
+  const ent: string[] = []
+  const rel: string[] = []
+  const fon: string[] = []
+  const push = (lista: string[], value: unknown) => {
+    if (typeof value === 'string' && /^\[\d+\]$/.test(value) && !lista.includes(value)) lista.push(value)
+  }
+  const walk = (value: unknown, key?: string): void => {
+    if (typeof value === 'string') {
+      if (key === 'origem' || key === 'destino' || key === 'de' || key === 'para' || key === 'via') push(ent, value)
+      return
+    }
+    if (Array.isArray(value)) {
+      if ((key === 'relacoes' || key === 'fontes' || key === 'via') && value.every((item) => item == null || typeof item === 'string')) {
+        const lista = key === 'fontes' ? fon : key === 'via' ? ent : rel
+        for (const item of value) push(lista, item)
+        return
+      }
+      for (const child of value) walk(child, key)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    const obj = value as Record<string, unknown>
+    if ((key === 'raizes' || key === 'entidades') && typeof obj.id === 'string') push(ent, obj.id)
+    if (key === 'relacoes' && typeof obj.id === 'string') push(rel, obj.id)
+    if (key === 'fontes' && typeof obj.id === 'string') push(fon, obj.id)
+    for (const [childKey, child] of Object.entries(obj)) walk(child, childKey)
+  }
+  walk(node)
+  return { entidades: ent, relacoes: rel, fontes: fon }
+}
+
+function itemDeApelido(ids: string[]): { type: 'string'; enum?: string[] } {
+  return ids.length ? { type: 'string', enum: ids } : { type: 'string' }
+}
+
+/** Schema por requisição. strict continua true; enum só com os apelidos do recorte que vai no prompt. */
+function schemaDaResposta(system: string): Record<string, unknown> {
+  const schema = JSON.parse(JSON.stringify(RESPOSTA_JSON_SCHEMA)) as {
+    properties: { blocos: { items: { oneOf: Array<{ properties: Record<string, { items: unknown }> }> } } }
+  }
+  const grupos = apelidosDoRecorteEnviado(system)
+  const base = [...grupos.entidades]
+  for (const id of grupos.relacoes) if (!base.includes(id)) base.push(id)
+  const doc = schema.properties.blocos.items.oneOf[0].properties
+  const inf = schema.properties.blocos.items.oneOf[1].properties
+  doc.entidades.items = itemDeApelido(grupos.entidades)
+  doc.relacoes.items = itemDeApelido(grupos.relacoes)
+  doc.fontes.items = itemDeApelido(grupos.fontes)
+  inf.base.items = itemDeApelido(base)
+  return schema as unknown as Record<string, unknown>
+}
+
 export function modelRequestBody(modelo: Modelo, system: string, mensagem: string): Record<string, unknown> {
   return {
     model: MODEL_SLUGS[modelo],
@@ -1544,7 +1604,7 @@ export function modelRequestBody(modelo: Modelo, system: string, mensagem: strin
       json_schema: {
         name: 'resposta_atlas',
         strict: true,
-        schema: RESPOSTA_JSON_SCHEMA,
+        schema: schemaDaResposta(system),
       },
     },
   }
@@ -1939,6 +1999,8 @@ function deslizesDeIdioma(t: string, ctx?: ChatContextPayload): string {
   frase('ownership and management', 'controle e gestão')
   frase('funding loan', 'empréstimo de consolidação')
   frase('financiamento loan', 'empréstimo')
+  frase('quadratic voting', 'votação quadrática')
+  frase('quadratic votação', 'votação quadrática')
   const troca = (de: string, para: string, soMinusculo = false) => {
     t = t.replace(new RegExp(`\\b${de}\\b`, soMinusculo ? 'g' : 'gi'), (w: string, offset: number, todo: string) => {
       if (entreDoisCapitais(todo, offset, w.length)) return w
@@ -1953,6 +2015,7 @@ function deslizesDeIdioma(t: string, ctx?: ChatContextPayload): string {
   troca('members', 'membros')
   troca('member', 'membro')
   troca('voting', 'votação')
+  troca('quadratic', 'quadrática')
   troca('sharply', 'fortemente')
   troca('however', 'porém')
   troca('although', 'embora')
@@ -2128,16 +2191,6 @@ function semAnaforaPendente(frases: string[], cai: (frase: string) => boolean): 
   return saida
 }
 
-const FRASE_INSINUA = /nunca\s+(?:abriu|revelou|explicou|divulgou|respondeu|prestou\s+contas)|quem\s+sabia|sabia\s+d[oa]\s+(?:\S+\s+){0,4}(?:buraco|rombo|esquema)|escond|ocult|encobr|abafad|por\s+que\b.*\bnunca\b|ainda\s+nao\s+(?:foi|foram)\s+(?:identificad|cobrad|punid)|quem\s+mais\s+(?:recebeu|lucrou|ganhou)|nao\s+apareceu|criterios\s+ocultos|por\s+baixo\s+dos\s+panos|fora\s+dos\s+registros|termos\s+(?:que\s+)?ficaram\s+fora|quais\s+contratos|que\s+contratos|quem\s+decidiu|quem\s+audita|quem\s+responde|quem\s+lucrou|quem\s+ganhou|quem\s+se\s+beneficiou|quem\s+assinou\b.*\bcomo\s+seus|quem\s+dentro\s+d[oa]\b|quem\s+recebeu|em\s+troca|transformar\b.*\bem\s+(?:peca|arma)\b|por\s+tras\b|de\s+fato\s+mandou|verdadeir[oa]\s+(?:dono|interesse|motivo)/i
-
-function semAcento(texto: string): string {
-  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-}
-
-function fraseInsinua(frase: string): boolean {
-  return FRASE_INSINUA.test(semAcento(frase))
-}
-
 function frasesDe(t: string): string[] {
   const out: string[] = []
   let ini = 0
@@ -2167,7 +2220,7 @@ function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPay
     const kept = semAnaforaPendente(frases, (f) => {
       if (fraseAusenciaExata(f) || (alvo && foldName(f) === alvo)) return false
       if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
-      if (fraseInglesSolta(f) || fraseEco(f) || fraseInsinua(f)) return true
+      if (fraseInglesSolta(f) || fraseEco(f)) return true
       return false
     })
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
@@ -2180,13 +2233,24 @@ function ultimaPerguntaValida(blocos: readonly { texto: string }[]): string {
   const frases = blocos.flatMap((bloco) => frasesDe(bloco.texto))
   for (let i = frases.length - 1; i >= 0; i--) {
     const f = frases[i].trim()
-    if (/\?\s*$/.test(f) && !fraseEco(f) && !fraseInglesSolta(f) && !CJK_VISIVEL.test(f) && !fraseInsinua(f)) return f
+    if (/\?\s*$/.test(f) && !fraseEco(f) && !fraseInglesSolta(f) && !CJK_VISIVEL.test(f)) return f
   }
   return ''
 }
 
-function nomeCurtoEntidade(ctx: ChatContextPayload, id: string): string {
-  return entityName(ctx, id).replace(/<[^>]*>/g, '').split(' · ')[0].trim()
+/** Nome público: campo nome, parte antes de « · ». Vazio, igual ao id ou snake_case (sem espaço e com «_») não serve. */
+function nomePublico(ctx: ChatContextPayload, id: string): string | null {
+  let bruto = ''
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
+    if (item?.id === id && typeof item.nome === 'string' && item.nome.trim()) {
+      bruto = item.nome.trim()
+      break
+    }
+  }
+  const curto = bruto.replace(/<[^>]*>/g, '').split('·')[0].trim()
+  if (!curto || curto === id) return null
+  if (!/\s/.test(curto) && curto.includes('_')) return null
+  return curto
 }
 
 function ligadosDireto(ctx: ChatContextPayload, a: string, b: string): boolean {
@@ -2204,7 +2268,8 @@ function parComAresta(ctx: ChatContextPayload, ranking: Array<[string, number]>)
   return null
 }
 
-function perguntaNeutra(blocos: readonly { entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx: ChatContextPayload): string {
+/** Pergunta final sempre do código. O em_aberto do modelo não entra. Sem nome público válido: a frase genérica. */
+function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx: ChatContextPayload): string {
   const contagem = new Map<string, number>()
   const soma = (id: string | undefined) => { if (id) contagem.set(id, (contagem.get(id) ?? 0) + 1) }
   const rels = new Map((ctx.relacoes ?? []).map((rel) => [rel.id, rel]))
@@ -2222,32 +2287,19 @@ function perguntaNeutra(blocos: readonly { entidades?: readonly string[]; relaco
       else soma(id)
     }
   }
-  const ordenar = (entries: Array<[string, number]>) => entries.filter(([id]) => ehEntidade(id) && nomeCurtoEntidade(ctx, id))
+  const citados = [...contagem.entries()].filter(([id]) => ehEntidade(id) && nomePublico(ctx, id))
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  const nome = (id: string) => nomeCurtoEntidade(ctx, id)
-  const formatoPar = (a: string, b: string) => `Que outros documentos do atlas detalham a relação entre ${nome(a)} e ${nome(b)}?`
-  const formatoUm = (id: string) => `Que outros documentos do atlas detalham o papel de ${nome(id)}?`
-  const escolher = (ranking: Array<[string, number]>) => {
-    if (!ranking.length) return ''
-    const par = parComAresta(ctx, ranking)
-    return par ? formatoPar(par[0], par[1]) : formatoUm(ranking[0][0])
+  if (!citados.length) return 'Que documento do atlas detalharia esta relação?'
+  const par = parComAresta(ctx, citados)
+  if (par) {
+    return `Que documento do atlas detalharia a relação entre ${nomePublico(ctx, par[0])} e ${nomePublico(ctx, par[1])}?`
   }
-  const citados = ordenar([...contagem.entries()])
-  if (citados.length) return escolher(citados)
-  const freq = new Map<string, number>()
-  for (const rel of ctx.relacoes ?? []) {
-    if (rel?.origem && ehEntidade(rel.origem)) freq.set(rel.origem, (freq.get(rel.origem) ?? 0) + 1)
-    if (rel?.destino && ehEntidade(rel.destino)) freq.set(rel.destino, (freq.get(rel.destino) ?? 0) + 1)
-  }
-  const doRecorte = escolher(ordenar([...freq.entries()]))
-  return doRecorte || 'Que outros documentos do atlas detalham esse registro?'
+  return `Que documento do atlas detalharia o papel de ${nomePublico(ctx, citados[0][0])}?`
 }
 
-function limparPergunta(texto: string, blocos: readonly { texto: string; entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx?: ChatContextPayload): string {
+function limparPergunta(texto: string, blocos: readonly { texto: string }[], ctx?: ChatContextPayload): string {
   const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto, '', ctx)).trim()
-  const ok = /\?\s*$/.test(filtrada) && !fraseInsinua(texto) && !fraseInsinua(filtrada)
-  if (ok) return filtrada
-  if (ctx) return perguntaNeutra(blocos, ctx)
+  if (/\?\s*$/.test(filtrada)) return filtrada
   return ultimaPerguntaValida(blocos) || filtrada
 }
 
@@ -2348,7 +2400,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
           return true
         }
         if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
-        if (fraseInglesSolta(f) || fraseInsinua(f)) return true
+        if (fraseInglesSolta(f)) return true
         if (!pergunta && !fraseAusenciaExata(f) && fraseEco(f)) return true
         return false
       })
@@ -2575,11 +2627,9 @@ function textoSubstantivo(texto: string): boolean {
   return !/\b(?:nao aborda|nao e possivel|sem base|nao encontrei|nao consta|nao sustenta|nao documenta)\b/.test(f)
 }
 
-/** Qualquer resposta com fato: dois blocos substantivos, ou um com pelo menos 60 palavras. */
-function respostaComFato(blocos: readonly { texto: string }[]): boolean {
-  const substantivos = blocos.filter((bloco) => textoSubstantivo(bloco.texto))
-  if (substantivos.length >= 2) return true
-  return substantivos.some((bloco) => bloco.texto.split(/\s+/).filter(Boolean).length >= 60)
+/** Texto de fato, de qualquer tamanho. Recusa meta («não aborda», «sem base») não conta. */
+function respostaComTexto(blocos: readonly { texto: string }[]): boolean {
+  return blocos.some((bloco) => textoSubstantivo(bloco.texto))
 }
 
 /**
@@ -2656,14 +2706,6 @@ function soLigacaoComAusente(mensagem: string, ausentes: readonly string[]): boo
   })
 }
 
-/** Dêixis, pedido sobre a seleção, ou pergunta curta (quando/onde/quem/como/por que/quanto). */
-function referenciaSelecao(mensagem: string): boolean {
-  const q = normalizeQuery(mensagem)
-  return /\b(?:essas?|esses?|estas?|estes?|isso|isto|selecionad\w*|entidades?|mural|ligac(?:ao|oes)|relac(?:ao|oes)|liga|conecta\w*|compar\w*|resum\w*|fale|conte|quem|quando|onde|como|quanto)\b/.test(q)
-    || /\bpor\s*que\b/.test(q)
-    || /\bo que (?:e|foi)\b/.test(q)
-}
-
 function termoNoRecorte(termo: string, ctx: ChatContextPayload): boolean {
   const partes: string[] = []
   for (const ent of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
@@ -2688,27 +2730,16 @@ function temVocabularioAtlas(mensagem: string): boolean {
   return /\b(?:vinculo|ligacao|relacao|conexao|financi\w*|doac\w*|patrocin\w*|pagamento|contribu\w*|controle|controlad\w*|acionist\w*|socio|conselho|cargo|fundador|fundou|empresa|banco|governo|golpe|campanha|saude|vacina|familia|herdeiro|papel|influencia|origem|historico|data|ano|quando|quem|onde|como|porque|quanto)\b/.test(q)
 }
 
-/**
- * Seleção preenchida e busca por texto vazia. Só recusa quando o escopo é
- * claramente externo: 2+ termos de conteúdo sem casamento no recorte e nenhum
- * termo do vocabulário do atlas. Dêixis e um termo só continuam no modelo.
- */
-/** Pedido genérico sobre a seleção. Receita, futebol, clima e programação continuam externos. */
-function pedidoGenericoSelecao(mensagem: string): boolean {
-  const q = normalizeQuery(mensagem)
-  if (/\b(?:receita|bolo|futebol|clima|programacao|python|javascript)\b/.test(q)) return false
-  return /\b(?:explique|resuma|detalhe|detalhadamente|fatos|principais|contrato|documento|isso|eles|elas|analise|analisem|sintetize|sintetizem|sintese|acontecimentos|contexto)\b/.test(q)
-    || /\bcronolog/.test(q)
-    || /\blinha do tempo\b/.test(q)
-}
+/** Tema claramente fora do atlas. Com um termo do atlas na mesma mensagem, não recusa. */
+const TEMA_EXTERNO = /\b(?:receitas?|culinaria|bolos?|futebol|jogos?|clima|horoscopo|piadas?|programacao|programar|python|javascript|codigos?)\b|\bprevisao do tempo\b|\btraducao de texto\b|\bmatematica escolar\b/
 
 function selecaoForaDaPergunta(mensagem: string, ctx: ChatContextPayload, textoVazio: boolean, entityIds: readonly string[]): boolean {
   if (entityIds.length === 0 || !textoVazio) return false
-  if (referenciaSelecao(mensagem) || temVocabularioAtlas(mensagem) || pedidoGenericoSelecao(mensagem)) return false
+  if (!TEMA_EXTERNO.test(normalizeQuery(mensagem))) return false
+  if (temVocabularioAtlas(mensagem)) return false
   const termos = contextSearchTokens(mensagem)
-  if (termos.length <= 1) return false
-  const semCasamento = termos.filter((termo) => !termoNoRecorte(radicalSimples(termo), ctx))
-  return semCasamento.length >= 2
+  if (termos.some((termo) => termoNoRecorte(radicalSimples(termo), ctx))) return false
+  return true
 }
 
 /** Responde sobre os temas documentados sem inventar uma ligação entre eles. */
@@ -2752,64 +2783,6 @@ export function fallbackSemLigacao(ctx: ChatContextPayload): SanitizedAnswer | n
 
 function unique(ids: string[]): string[] {
   return [...new Set(ids)]
-}
-
-function tipoEntidade(ctx: ChatContextPayload, id: string | undefined): string {
-  if (!id) return ''
-  return [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])].find((item) => item?.id === id)?.tipo ?? ''
-}
-
-/** Acusação contra pessoa (pelo id ou pelo nome no texto) não vira fato. */
-function acusaPessoa(ctx: ChatContextPayload, texto: string, ids: Array<string | undefined> = []): boolean {
-  if (!/\b(?:desviou|desvio|desviar|fraud\w*|roub\w*|propina\w*|suborn\w*|corrup\w*|crime\w*|lavagem\w*)\b/i.test(foldName(texto))) return false
-  if (ids.some((id) => PERSON_TYPES.has(tipoEntidade(ctx, id)))) return true
-  const f = foldName(texto)
-  return [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])].some((item) => {
-    if (!item?.tipo || !PERSON_TYPES.has(item.tipo)) return false
-    const nome = foldName((item.nome || '').split('·')[0])
-    return nome.length > 2 && f.includes(nome)
-  })
-}
-
-function relacaoDocumentada(rel: { confianca?: string; limite?: string | null; estado?: string }): boolean {
-  const estado = foldName(rel.estado ?? '')
-  const conf = foldName(rel.confianca ?? '')
-  return estado === 'retrato documental' || estado === 'historico' || estado === 'identificacao'
-    || /\balta\b/.test(conf)
-    || /documentad/.test(conf)
-    || /documentad/.test(estado)
-}
-
-function relacaoContestada(rel: { confianca?: string; limite?: string | null; estado?: string }): boolean {
-  const sinais = foldName(`${rel.confianca ?? ''} ${rel.limite ?? ''} ${rel.estado ?? ''}`)
-  return /contestad|sem prova|nao ha prova|alegac|acusac|hipotese|inferencia|rascunho|\bbaixa\b/.test(sinais)
-}
-
-/** Resposta documental do recorte quando o modelo escreveu fato e não citou apelido. */
-function respostaDocumental(ctx: ChatContextPayload): Record<string, unknown> {
-  const fontesOk = new Set((ctx.fontes ?? []).filter((fonte) => fonte?.id && !isInternalSource(fonte)).map((fonte) => fonte.id))
-  const blocos: Array<Record<string, unknown>> = []
-  for (const rel of ctx.relacoes ?? []) {
-    const afirmacao = (rel?.afirmacao || '').trim()
-    if (!afirmacao || !rel?.id || relacaoContestada(rel) || !relacaoDocumentada(rel)) continue
-    if (acusaPessoa(ctx, afirmacao, [rel.origem, rel.destino])) continue
-    const extras = [rel.confianca?.trim() ? `confiança ${rel.confianca.trim()}` : '', rel.limite?.trim() || ''].filter(Boolean)
-    blocos.push({
-      tipo: 'documentado',
-      texto: extras.length ? `${afirmacao} (${extras.join('; ')})` : afirmacao,
-      entidades: [rel.origem, rel.destino].filter((id): id is string => !!id),
-      relacoes: [rel.id],
-      fontes: (rel.fontes ?? []).filter((id) => fontesOk.has(id)),
-    })
-  }
-  if (!blocos.length) {
-    for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
-      const nota = (item?.nota || '').trim()
-      if (!nota || !item?.id || acusaPessoa(ctx, nota, [item.id])) continue
-      blocos.push({ tipo: 'documentado', texto: nota, entidades: [item.id], relacoes: [], fontes: [] })
-    }
-  }
-  return { blocos, sem_base: false }
 }
 
 const LEMBRETE_IDS = 'Cite só os apelidos [n] do recorte nos campos entidades/relacoes/fontes.'
@@ -3358,7 +3331,8 @@ async function streamPreparedInner(input: {
   const costNow = () => {
     const atual = custoAtual()
     if (atual !== null) return realDe(atual)
-    if (gastos.length > 0) return realDe(charsTentativa > 0 ? parcialDe(charsTentativa) : 0)
+    // Tentativa ainda aberta e sem usage: estimativa parcial, mesmo com saída vazia ([DONE] sem texto).
+    if (gastos.length > 0) return realDe(tentativasEnviadas > gastos.length ? parcialDe(charsTentativa) : 0)
     return prepared.estimate
   }
   const custoNoCatch = (err: unknown) => {
@@ -3432,7 +3406,7 @@ async function streamPreparedInner(input: {
   let emLaco = false
   let textoGuardado: string | null = null
   let blocosGuardados = 0
-  let usarDocumental = false
+  let recusarSemId = false
   let jaTentouIds = false
   let chamadasModelo = 0
   const lerModelo = (bruto: string) => {
@@ -3452,7 +3426,7 @@ async function streamPreparedInner(input: {
     try {
       const sane = lerModelo(bruto)
       if (sane.sem_base && countValidDocumentado(sane.blocos) > 0) return false
-      return respostaComFato(sane.blocos) && !hasValidId(sane.blocos)
+      return respostaComTexto(sane.blocos) && !hasValidId(sane.blocos)
     } catch {
       return false
     }
@@ -3502,7 +3476,7 @@ async function streamPreparedInner(input: {
         if (jaTentouIds || textoGuardado) {
           registrarFalha(err)
           produced = true
-          if (jaTentouIds) usarDocumental = true
+          if (jaTentouIds) recusarSemId = true
           else text = textoGuardado ?? ''
           falhaGuardada = true
           break
@@ -3517,7 +3491,7 @@ async function streamPreparedInner(input: {
     const podeRepetir = qualidade < 1 && chamadasModelo < CHAT_MAX_ATTEMPTS && !input.signal.aborted && decorrido <= CHAT_RETRY_DEADLINE_MS
     const precisaRepetir = emLaco || !legivel
     if (precisaRepetir) {
-      if (jaTentouIds) { usarDocumental = true; break }
+      if (jaTentouIds) { recusarSemId = true; break }
       if (textoGuardado) { text = textoGuardado; break }
       if (!podeRepetir) break
       console.info(JSON.stringify({ evento: 'chat_saida_repetida', motivo: emLaco ? 'laco' : truncada ? 'truncada' : 'json' }))
@@ -3533,7 +3507,7 @@ async function streamPreparedInner(input: {
         requestBody = comLembrete(prepared.requestBody)
         continue
       }
-      usarDocumental = true
+      recusarSemId = true
       break
     }
     // Poucos parágrafos: uma segunda tentativa, nos dois modelos, sem piso de relógio.
@@ -3574,38 +3548,38 @@ async function streamPreparedInner(input: {
     return 200
   }
 
+  if (recusarSemId) {
+    console.info(JSON.stringify({ evento: 'sem_id_valido' }))
+    const custoFora = costNow()
+    await unwind(custoFora)
+    finish(errorEvent('fora_da_base', mensagemForaDaBase(prepared.ausentes)))
+    await safeLog(db, logRow(prepared, { ...usage, cost: custoFora }, 'fora_da_base', started))
+    return sentMeta ? 200 : CHAT_ERROR_STATUS.fora_da_base
+  }
+
   let parsed: unknown
   let answer: SanitizedAnswer
   let semBaseIgnorado = false
-  if (usarDocumental) {
-    answer = sanitizeAnswer(respostaDocumental(prepared.context), prepared.context).answer
-    console.info(JSON.stringify({ evento: 'resposta_documental' }))
-  } else {
-    try {
-      try { parsed = parseModelJson(text) } catch { parsed = parseModelJson(repararJsonTruncado(text)); console.info(JSON.stringify({ evento: 'chat_json_reparado' })) }
-    } catch {
-      const custoParse = costNow()
-      await unwind(custoParse)
-      finish(errorEvent('modelo_indisponivel', chatErrorMessage('modelo_indisponivel')))
-      await safeLog(db, logRow(prepared, { ...usage, cost: custoParse }, 'modelo_indisponivel', started))
-      return sentMeta ? 200 : 503
-    }
-
-    answer = sanearModelo(parsed, prepared.context, prepared.apelidos).answer
-    // Pauta/pressão: prosa do modelo nunca transforma uma acusação em Fato.
-    if (prepared.pauta || prepared.pressure) answer = buildPautaAnswer(prepared.context, prepared.pauta || { avisos: [] }, traduzirApelidos(parsed, prepared.apelidos, prepared.context), !!prepared.pressure)
-    // sem_base:true com bloco documentado válido (texto e fonte do recorte, já saneado) é resposta normal.
-    semBaseIgnorado = answer.sem_base && countValidDocumentado(answer.blocos) > 0
-    if (semBaseIgnorado) {
-      answer.sem_base = false
-      console.info(JSON.stringify({ evento: 'sem_base_ignorado' }))
-    }
-    if (!prepared.pauta && !prepared.pressure && !hasValidId(answer.blocos) && respostaComFato(answer.blocos)) {
-      answer = sanitizeAnswer(respostaDocumental(prepared.context), prepared.context).answer
-      console.info(JSON.stringify({ evento: 'resposta_documental' }))
-    }
+  try {
+    try { parsed = parseModelJson(text) } catch { parsed = parseModelJson(repararJsonTruncado(text)); console.info(JSON.stringify({ evento: 'chat_json_reparado' })) }
+  } catch {
+    const custoParse = costNow()
+    await unwind(custoParse)
+    finish(errorEvent('modelo_indisponivel', chatErrorMessage('modelo_indisponivel')))
+    await safeLog(db, logRow(prepared, { ...usage, cost: custoParse }, 'modelo_indisponivel', started))
+    return sentMeta ? 200 : 503
   }
-  // Sem id válido e sem texto substantivo continua fora da base. Resposta com fato não vira recusa.
+
+  answer = sanearModelo(parsed, prepared.context, prepared.apelidos).answer
+  // Pauta/pressão: prosa do modelo nunca transforma uma acusação em Fato.
+  if (prepared.pauta || prepared.pressure) answer = buildPautaAnswer(prepared.context, prepared.pauta || { avisos: [] }, traduzirApelidos(parsed, prepared.apelidos, prepared.context), !!prepared.pressure)
+  // sem_base:true com bloco documentado válido (texto e fonte do recorte, já saneado) é resposta normal.
+  semBaseIgnorado = answer.sem_base && countValidDocumentado(answer.blocos) > 0
+  if (semBaseIgnorado) {
+    answer.sem_base = false
+    console.info(JSON.stringify({ evento: 'sem_base_ignorado' }))
+  }
+  // Sem id válido continua fora da base, com o custo real da tentativa.
   const semId = answer.blocos.length > 0 && !hasValidId(answer.blocos)
   if (semId) console.info(JSON.stringify({ evento: 'sem_id_valido' }))
   const semConteudo = answer.blocos.length === 0 || (answer.sem_base && countValidDocumentado(answer.blocos) === 0) || semId
@@ -3682,7 +3656,9 @@ async function streamPreparedInner(input: {
       return { ...bloco, texto, justificativa: filtrarProsaVisivel(bloco.justificativa, avisoPrevisto, prepared.context) }
     }).filter((bloco) => bloco.texto.trim()),
   }
-  if (answer.em_aberto !== undefined) {
+  if (!prepared.pauta && !prepared.pressure && answer.blocos.length) {
+    answer.em_aberto = perguntaEstrutural(answer.blocos, prepared.context)
+  } else if (answer.em_aberto !== undefined) {
     const pergunta = limparPergunta(answer.em_aberto, answer.blocos, prepared.context)
     if (pergunta.trim()) answer.em_aberto = pergunta
     else delete answer.em_aberto

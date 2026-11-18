@@ -441,8 +441,9 @@ Deno.test('9 em_aberto fecha o último bloco em parágrafo próprio', async () =
   const final = finalOf(fluxo.emitted)
   const ultimo = final.blocos.at(-1)
   assert(ultimo, 'último bloco')
-  assert(ultimo.texto.includes('\n\nO que a documentação ainda deixa em aberto?'), 'parágrafo próprio (R2: «recorte» vira «documentação»)')
-  assert(!ultimo.texto.includes('novo. O que'), 'não fica na mesma frase')
+  assert(ultimo.texto.includes('\n\nQue documento do atlas detalharia o papel de Mauá?'), 'parágrafo próprio, pergunta do código')
+  assert(!ultimo.texto.includes('novo. Que documento'), 'não fica na mesma frase')
+  assert(!ultimo.texto.includes('deixa em aberto'), 'em_aberto do modelo não entra')
 })
 
 Deno.test('10 Fundação X troca para foundation só com raiz do tipo fundacao', async () => {

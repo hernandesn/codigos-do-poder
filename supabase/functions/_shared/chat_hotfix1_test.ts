@@ -4,6 +4,8 @@ import {
   apelidarRecorte,
   assessInferenceKey,
   buildSystemPrompt,
+  modelRequestBody,
+  RESPOSTA_JSON_SCHEMA,
   CHAT_MAX_TOKENS,
   CHAT_MODEL_PRICE_USD_PER_TOKEN,
   CHAT_OUTPUT_USD_PER_TOKEN,
@@ -180,7 +182,7 @@ Deno.test('hotfix1 S-15 com seleção recusa; dêixis, resumo, um termo, Soros e
     ['receita', S15, SELECAO, 0, 'Não encontrei isso na base do atlas.'],
     ['liga', 'o que liga essas entidades?', SELECAO, 1],
     ['resumo', 'resuma', SELECAO, 1],
-    ['um termo', 'bolo', SELECAO, 1],
+    ['bolo', 'bolo', SELECAO, 0, 'Não encontrei isso na base do atlas.'],
     ['soros sem seleção', SOROS, [], 1],
     ['soros com seleção', SOROS, SELECAO, 1],
     ['vacina', VACINA, SELECAO, 1],
@@ -711,6 +713,9 @@ Deno.test('hotfix1c idioma: decades, nomes próprios e frase inglesa solta', () 
   assert(!/\bthe\b/i.test(misto), 'frase com the sai')
   assert(misto.includes('A campanha seguiu em 1936.'), 'a frase portuguesa fica')
   eq(t('O grant pagou o contrato.'), 'A doação pagou o contrato.', 'grant minúsculo vira doação feminina')
+  eq(t('Usaram quadratic voting no contrato.'), 'Usaram votação quadrática no contrato.', 'quadratic voting')
+  eq(t('Usaram quadratic votação no contrato.'), 'Usaram votação quadrática no contrato.', 'quadratic votação')
+  eq(t('O método quadratic entrou no contrato.'), 'O método quadrática entrou no contrato.', 'quadratic')
   eq(t('International Health Board e o board local.'), 'International Health Board e o conselho local.', 'board só fora do nome')
 })
 
@@ -871,33 +876,38 @@ Deno.test('hotfix1d R3 traduz slug e R13/F14 numa chamada', async () => {
   eq(r.orcamento.commits[0], 0.0002, 'uma liquidação')
 })
 
-Deno.test('hotfix1d sem id reconhecível repete ou monta o recorte', async () => {
-  const semNome = JSON.stringify({
-    blocos: [
-      { tipo: 'documentado', texto: 'O pagamento ocorreu no ano citado pelo registro.', entidades: ['zzz_sem_nome'], relacoes: ['zzz_sem_nome'], fontes: ['zzz_sem_nome'] },
-      { tipo: 'documentado', texto: 'O segundo parágrafo também não cita entidade alguma.', entidades: ['yyy_sem_nome'], relacoes: ['yyy_sem_nome'], fontes: ['yyy_sem_nome'] },
-    ],
+function textoDe59Palavras(): string {
+  return ['Contrato', ...Array.from({ length: 58 }, () => 'registrado')].join(' ')
+}
+
+Deno.test('hotfix1f 59 palavras sem id: repete no prazo e recusa depois', async () => {
+  const invalido = (texto: string) => JSON.stringify({
+    blocos: [{ tipo: 'documentado', texto, entidades: ['zzz_sem_nome'], relacoes: ['zzz_sem_nome'], fontes: ['zzz_sem_nome'] }],
     sem_base: false, em_aberto: null,
   })
+  const frase = `${textoDe59Palavras()}.`
+  eq(frase.split(/\s+/).filter(Boolean).length, 59, '59 palavras')
   const cedo = await rodarModelo({
     agora: 5_000,
-    respostas: [gerar(semNome, 0.0002), gerar(semNome, 0.0003)],
+    respostas: [gerar(invalido(frase), 0.0002), gerar(invalido(frase), 0.0003)],
   })
-  eq(cedo.chamadas, 2, 'aos 5s abre uma repetição')
+  eq(cedo.chamadas, 2, '59 palavras aos 5s abrem a repetição')
   assert(sistemaDe(cedo.corpos[1]).includes('Cite só os apelidos [n] do recorte nos campos entidades/relacoes/fontes.'), 'lembrete no system')
   eq(cedo.corpos[1]?.temperature, cedo.corpos[0]?.temperature, 'mesmo corpo, sem temperature nova')
-  assert(!cedo.emitted.some((event) => event.event === 'error'), 'não recusa')
-  assert(finalDe(cedo.emitted).blocos.some((bloco) => bloco.texto.includes('Contrato de 1936')), 'cai no recorte')
-  eq(cedo.orcamento.commits[0], 0.0005, 'soma as duas')
+  eq(erroDe(cedo.emitted).code, 'fora_da_base', 'a repetição também sem id recusa')
+  eq(cedo.orcamento.commits[0], 0.0005, 'custo das duas')
+  assert(!JSON.stringify(cedo.emitted).includes('Contrato de 1936.'), 'não monta o recorte')
 
   const tarde = await rodarModelo({
     agora: 30_000,
-    respostas: [gerar(semNome, 0.0002), gerar(semNome, 0.0009)],
+    respostas: [gerar(invalido(frase), 0.0002), gerar(invalido('segunda chamada'), 0.0009)],
   })
-  eq(tarde.chamadas, 1, 'aos 30s não repete')
-  assert(!tarde.emitted.some((event) => event.event === 'error'), 'nunca fora_da_base')
-  assert(finalDe(tarde.emitted).blocos.some((bloco) => bloco.texto.includes('Contrato de 1936')), 'resposta documental')
-  eq(tarde.orcamento.commits[0], 0.0002, 'só a tentativa feita')
+  eq(tarde.chamadas, 1, '59 palavras aos 30s não repetem')
+  eq(erroDe(tarde.emitted).code, 'fora_da_base', 'fora_da_base')
+  eq(tarde.orcamento.commits[0], 0.0002, 'custo liquidado')
+  assert(tarde.orcamento.commits[0] <= tarde.prepared.estimate, 'dentro da reserva')
+  eq(tarde.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, 0.0002, 'log com o custo real')
+  assert(!JSON.stringify(tarde.emitted).includes('Contrato de 1936.'), 'não monta o recorte')
 })
 
 Deno.test('hotfix1d custo por tentativa, teto de chamadas e JSON ruim devolve a primeira', async () => {
@@ -966,7 +976,10 @@ Deno.test('hotfix1d seleção genérica vai ao modelo; receita continua fora', a
     ['cronologia', 'Faça uma síntese cronológica', 1],
     ['linha', 'Monte a linha do tempo.', 1],
     ['contexto', 'sintetize o contexto', 1],
+    ['panorama', 'Descreva o panorama geral', 1],
+    ['balanco', 'Faça um balanço dos eventos', 1],
     ['bolo', 'explique uma receita de bolo', 0],
+    ['cenoura', S15, 0],
   ]
   for (const [nome, mensagem, chamadas] of casos) {
     const store = bancoDe(MAPA)
@@ -1054,7 +1067,7 @@ Deno.test('hotfix1d pergunta final e fecho sem insinuação', async () => {
     assert(prompt.includes(regra), regra)
     assert(basico.includes(regra), `básico: ${regra}`)
   }
-  const fatos = 'O contrato de 1936 ficou registrado.\n\nA casa bancária pagou no mesmo ano.\n\nO que liga tudo: critérios ocultos de repasse entre as casas.'
+  const fatos = 'O contrato de 1936 ficou registrado.\n\nA casa bancária pagou no mesmo ano.\n\nO que liga tudo: o contrato de 1936 reúne as casas.'
   const perguntas = [
     'por que a família Marinho nunca abriu os arquivos internos da casa?',
     'quem dentro do grupo de controle da Americanas sabia do tamanho do buraco?',
@@ -1075,9 +1088,8 @@ Deno.test('hotfix1d pergunta final e fecho sem insinuação', async () => {
       }), 0.0002)],
     })
     const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
-    const neutra = em_aberto !== 'Quem pagou o contrato de 1936?'
-    if (neutra) assert(/Que outros documentos do atlas detalham a relação entre .+ e .+\?/.test(visivel), em_aberto)
-    else assert(visivel.includes('Quem pagou o contrato de 1936?'), 'pergunta factual fica')
+    assert(/Que documento do atlas detalharia a relação entre Casa Bancária Moreira Salles e Campanha de 1916\?/.test(visivel), em_aberto)
+    assert(!visivel.includes(em_aberto), 'em_aberto do modelo não entra')
     assert(!/nunca abriu|sabia do tamanho|quem mais recebeu|critérios ocultos|não apareceu|fora dos registros|quem dentro do|quais contratos|peça judicial/i.test(visivel), em_aberto)
     assert(visivel.includes('contrato de 1936'), 'fato fica')
     assert(visivel.trimEnd().endsWith('?'), 'fecha com pergunta')
@@ -1094,7 +1106,7 @@ Deno.test('hotfix1e insinuação no bloco, par sem aresta e nome inteiro', async
     }), 0.0002)],
   })
   const textoBloco = finalDe(bloco.emitted).blocos.map((item) => item.texto).join('\n')
-  assert(!/nunca abriu/i.test(textoBloco), 'frase do bloco sai')
+  assert(/nunca abriu/i.test(textoBloco), 'frase do bloco fica')
   assert(textoBloco.includes('contrato de 1936'), 'fato do bloco fica')
   assert(textoBloco.includes('A casa pagou'), 'frase seguinte fica')
 
@@ -1122,7 +1134,7 @@ Deno.test('hotfix1e insinuação no bloco, par sem aresta e nome inteiro', async
     }), 0.0002)],
   })
   const textoSolto = finalDe(desligado.emitted).blocos.map((item) => item.texto).join('\n')
-  assert(textoSolto.includes('Que outros documentos do atlas detalham o papel de Grupo Alfa?'), textoSolto)
+  assert(textoSolto.includes('Que documento do atlas detalharia o papel de Grupo Alfa?'), textoSolto)
   assert(!/Instituição Beta|ligam Grupo Alfa/i.test(textoSolto), 'par sem aresta não entra na pergunta')
 
   const longo = `${'Campanha Internacional '.repeat(20).trim()}`
@@ -1226,61 +1238,221 @@ Deno.test('hotfix1e custo acima da reserva, parcial depois de zero e um bloco lo
   })
   assert(depoisDeZero.orcamento.commits[0] > 0, `parcial depois de cost 0: ${depoisDeZero.orcamento.commits[0]}`)
   eq(depoisDeZero.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, depoisDeZero.orcamento.commits[0], 'log acompanha a soma')
-
-  const palavras = ['Contrato', ...Array.from({ length: 59 }, () => 'registrado')].join(' ')
-  const longo = await rodarModelo({
-    agora: 30_000,
-    respostas: [gerar(JSON.stringify({
-      blocos: [{ tipo: 'documentado', texto: `${palavras}.`, entidades: ['zzz_sem_nome'], relacoes: ['zzz_sem_nome'], fontes: ['zzz_sem_nome'] }],
-      sem_base: false, em_aberto: null,
-    }), 0.0002), gerar('{}', 0.0009)],
-  })
-  eq(longo.chamadas, 1, 'um bloco de 60 palavras aos 30s não repete')
-  assert(!longo.emitted.some((event) => event.event === 'error'), 'não é fora_da_base')
-  assert(finalDe(longo.emitted).blocos.some((bloco) => bloco.texto.includes('Contrato de 1936')), 'cai no recorte')
 })
 
-Deno.test('hotfix1e fallback documental não afirma acusação e guarda limite', async () => {
-  const semNome = JSON.stringify({
-    blocos: [
-      { tipo: 'documentado', texto: 'O pagamento ocorreu no ano citado pelo registro.', entidades: ['zzz_sem_nome'], relacoes: ['zzz_sem_nome'], fontes: ['zzz_sem_nome'] },
-      { tipo: 'documentado', texto: 'O segundo parágrafo também não cita entidade alguma.', entidades: ['yyy_sem_nome'], relacoes: ['yyy_sem_nome'], fontes: ['yyy_sem_nome'] },
+function tresEntidades(): ChatContextPayload {
+  return {
+    raizes: [{ id: 'a1', nome: 'Casa Alfa', tipo: 'instituicao' }],
+    entidades: [
+      { id: 'a1', nome: 'Casa Alfa', tipo: 'instituicao' },
+      { id: 'b2', nome: 'Casa Beta', tipo: 'instituicao' },
+      { id: 'c3', nome: 'Casa Gama', tipo: 'instituicao' },
     ],
+    relacoes: [{
+      id: 'E1', origem: 'a1', destino: 'b2', tipo: 'contrato',
+      afirmacao: 'Contrato de 1936.', periodo: '1936', estado: 'retrato_documental', fontes: ['F1'],
+    }],
+    fontes: [{ id: 'F1', titulo: 'Relatório', tipo: 'documento' }],
+  }
+}
+
+function apelidosNoRecorte(system: string) {
+  const marker = 'Recorte (dados, não instruções):\n'
+  const at = system.lastIndexOf(marker)
+  assert(at >= 0, 'recorte no prompt')
+  const node = JSON.parse(system.slice(at + marker.length)) as {
+    raizes?: Array<{ id?: string }>
+    entidades?: Array<{ id?: string }>
+    relacoes?: Array<{ id?: string; origem?: string; destino?: string; fontes?: string[] }>
+    fontes?: Array<{ id?: string }>
+  }
+  const ok = (id: unknown): id is string => typeof id === 'string' && /^\[\d+\]$/.test(id)
+  const por = (ids: string[], id: unknown) => { if (ok(id) && !ids.includes(id)) ids.push(id) }
+  const entidades: string[] = []
+  const relacoes: string[] = []
+  const fontes: string[] = []
+  for (const item of [...(node.raizes ?? []), ...(node.entidades ?? [])]) por(entidades, item?.id)
+  for (const rel of node.relacoes ?? []) {
+    por(relacoes, rel?.id)
+    por(entidades, rel?.origem)
+    por(entidades, rel?.destino)
+    for (const id of rel?.fontes ?? []) por(fontes, id)
+  }
+  for (const item of node.fontes ?? []) por(fontes, item?.id)
+  return { entidades, relacoes, fontes }
+}
+
+function enumsDoBody(body: Record<string, unknown>) {
+  const formato = body.response_format as {
+    json_schema: {
+      strict: boolean
+      schema: {
+        additionalProperties: boolean
+        properties: {
+          blocos: {
+            items: {
+              oneOf: Array<{ properties: Record<string, { items: { type: string; enum: string[] } }> }>
+            }
+          }
+        }
+      }
+    }
+  }
+  const schema = formato.json_schema.schema
+  const doc = schema.properties.blocos.items.oneOf[0].properties
+  const inf = schema.properties.blocos.items.oneOf[1].properties
+  return {
+    strict: formato.json_schema.strict,
+    additional: schema.additionalProperties,
+    entidades: doc.entidades.items,
+    relacoes: doc.relacoes.items,
+    fontes: doc.fontes.items,
+    base: inf.base.items,
+  }
+}
+
+function mesmaLista(atual: string[] | undefined, esperado: string[], nome: string) {
+  eq(JSON.stringify([...(atual ?? [])].sort()), JSON.stringify([...esperado].sort()), nome)
+  eq(atual?.length, esperado.length, `${nome} sem repetido`)
+}
+
+Deno.test('hotfix1f schema da resposta enumera só os apelidos do recorte', async () => {
+  const constante = JSON.stringify(RESPOSTA_JSON_SCHEMA)
+  const ctx = tresEntidades()
+  const system = buildSystemPrompt('avancado', ctx)
+  const body = modelRequestBody('avancado', system, 'qual a relacao?')
+  const grupos = apelidosNoRecorte(system)
+  eq(grupos.entidades.length, 3, 'três entidades no recorte enviado')
+  const itens = enumsDoBody(body)
+  eq(itens.strict, true, 'strict')
+  eq(itens.additional, false, 'additionalProperties false')
+  mesmaLista(itens.entidades.enum, grupos.entidades, 'entidades')
+  mesmaLista(itens.relacoes.enum, grupos.relacoes, 'relacoes')
+  mesmaLista(itens.fontes.enum, grupos.fontes, 'fontes')
+  mesmaLista(itens.base.enum, [...new Set([...grupos.entidades, ...grupos.relacoes])], 'base')
+  assert(JSON.stringify(body).length < 64_000, `body ${JSON.stringify(body).length}`)
+
+  const semFonte = tresEntidades()
+  semFonte.fontes = []
+  semFonte.relacoes[0].fontes = []
+  const seco = modelRequestBody('avancado', buildSystemPrompt('avancado', semFonte), 'qual a relacao?')
+  const itensSem = enumsDoBody(seco)
+  assert(!('enum' in itensSem.fontes), 'lista vazia fica string')
+  eq(itensSem.fontes.type, 'string', 'fontes continua string')
+  assert((itensSem.entidades.enum?.length ?? 0) === 3, 'entidades seguem no enum')
+
+  const solto = enumsDoBody(modelRequestBody('avancado', 'abc', 'm'))
+  for (const campo of [solto.entidades, solto.relacoes, solto.fontes, solto.base]) {
+    assert(!('enum' in campo), 'sem recorte não há enum')
+    eq(campo.type, 'string', 'string')
+  }
+  eq(JSON.stringify(RESPOSTA_JSON_SCHEMA), constante, 'a constante não muda')
+
+  const enviado = await rodarModelo({
+    ctx, agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [
+        { tipo: 'documentado', texto: 'O contrato de 1936 aproximou as casas.', entidades: ['a1'], relacoes: ['E1'], fontes: ['F1'] },
+        { tipo: 'documentado', texto: 'A casa beta aparece no mesmo registro.', entidades: ['b2'], relacoes: ['E1'], fontes: ['F1'] },
+        { tipo: 'documentado', texto: 'A casa gama fica no papel citado.', entidades: ['c3'], relacoes: [], fontes: ['F1'] },
+      ],
+      sem_base: false, em_aberto: null,
+    }), 0.0002)],
+  })
+  const doStream = enumsDoBody(enviado.corpos[0])
+  const doPrompt = apelidosNoRecorte(sistemaDe(enviado.corpos[0]))
+  eq(doPrompt.entidades.length, 3, 'stream manda três entidades')
+  mesmaLista(doStream.entidades.enum, doPrompt.entidades, 'stream entidades')
+  mesmaLista(doStream.relacoes.enum, doPrompt.relacoes, 'stream relacoes')
+  mesmaLista(doStream.fontes.enum, doPrompt.fontes, 'stream fontes')
+  eq(doStream.strict, true, 'stream strict')
+})
+
+Deno.test('hotfix1f R3 sem nome repete e não monta o recorte', async () => {
+  const ctx = ctxR3()
+  const semNome = JSON.stringify({
+    blocos: [{ tipo: 'documentado', texto: 'O registro numerado ficou no arquivo do periodo.', entidades: ['zzz_inventado'], relacoes: ['R1'], fontes: ['F1'] }],
     sem_base: false, em_aberto: null,
   })
-  const acusacao = campanhaCtx()
-  acusacao.entidades.push({ id: 'pessoa_viva', nome: 'Pessoa Fictícia', tipo: 'pessoa' })
-  acusacao.relacoes = [{
-    id: 'E150', origem: 'casa_ms', destino: 'campanha',
-    afirmacao: 'Pessoa Fictícia desviou recursos do contrato.',
-    limite: 'Não há prova de participação individual; o texto acima é alegação contestada.',
-    fontes: ['B01'],
-  }]
-  const soAcusacao = await rodarModelo({ ctx: acusacao, agora: 30_000, respostas: [gerar(semNome, 0.0002)] })
-  eq(erroDe(soAcusacao.emitted).code, 'fora_da_base', 'sem relação documentada recusa')
-  assert(!JSON.stringify(soAcusacao.emitted).includes('desviou'), 'acusação não vira fato')
+  const comSlug = JSON.stringify({
+    blocos: [{ tipo: 'documentado', texto: 'O cargo ficou registrado no relatorio de 1952.', entidades: ['walther_ms'], relacoes: ['R13'], fontes: ['F14'] }],
+    sem_base: false, em_aberto: null,
+  })
+  const r = await rodarModelo({ ctx, agora: 5_000, respostas: [gerar(semNome, 0.0002), gerar(comSlug, 0.0003)] })
+  eq(r.chamadas, 2, 'a repetição resolve o slug')
+  assert(sistemaDe(r.corpos[1]).includes('Cite só os apelidos [n] do recorte nos campos entidades/relacoes/fontes.'), 'lembrete')
+  const texto = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(texto.includes('O cargo ficou registrado no relatorio de 1952.'), texto)
+  assert(!texto.includes('Walther presidiu o IBEC.'), 'não monta a afirmação do recorte')
+  const doc = finalDe(r.emitted).blocos.find((bloco) => bloco.tipo === 'documentado')
+  assert(doc && doc.tipo === 'documentado' && doc.relacoes.includes('REL_W') && doc.fontes.includes('FONTE_W'), 'ids da repetição')
+  assert(/Que documento do atlas detalharia /.test(texto), 'pergunta do código')
+})
 
-  const misto = campanhaCtx()
-  misto.entidades.push({ id: 'pessoa_viva', nome: 'Pessoa Fictícia', tipo: 'pessoa' })
-  misto.relacoes = [
-    {
-      id: 'E150', origem: 'casa_ms', destino: 'campanha',
-      afirmacao: 'Pessoa Fictícia desviou recursos do contrato.',
-      limite: 'Não há prova de participação individual; o texto acima é alegação contestada.',
-      fontes: ['B01'],
-    },
-    {
-      id: 'E151', origem: 'casa_ms', destino: 'campanha',
-      afirmacao: 'Contrato de 1936.',
-      estado: 'retrato_documental', confianca: 'alta',
-      limite: 'Não quantifica a parte.',
-      fontes: ['B01'],
-    },
+Deno.test('hotfix1f pergunta estrutural, grupo_b e prosa com em troca', async () => {
+  const ctx = campanhaCtx()
+  ctx.entidades.push({ id: 'grupo_b', nome: 'grupo_b', tipo: 'instituicao' })
+  const r = await rodarModelo({
+    ctx, agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [{
+        tipo: 'documentado',
+        texto: 'A doação ocorreu em troca de prestação de contas. O registro citou "pagamento em troca de apoio". O contrato está em https://example.com/oculto/arquivo e segue.',
+        entidades: ['casa_ms', 'grupo_b'], relacoes: ['E150'], fontes: ['B01'],
+      }],
+      sem_base: false,
+      em_aberto: 'Quem pagou o contrato de 1936?',
+    }), 0.0002)],
+  })
+  const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(visivel.includes('A doação ocorreu em troca de prestação de contas'), visivel)
+  assert(visivel.includes('"pagamento em troca de apoio"'), visivel)
+  assert(visivel.includes('https://example.com/oculto/arquivo'), visivel)
+  assert(!visivel.includes('grupo_b'), visivel)
+  assert(/Que documento do atlas detalharia a relação entre Casa Bancária Moreira Salles e Campanha de 1916\?/.test(visivel), visivel)
+  assert(!visivel.includes('Quem pagou o contrato de 1936?'), 'em_aberto do modelo não entra')
+})
+
+Deno.test('hotfix1f seleção só recusa tema claramente externo', async () => {
+  const mapa = { 'casa_ms|': campanhaCtx() }
+  const casos: Array<[string, string, number]> = [
+    ['futebol', 'Resultado de futebol.', 0],
+    ['jogo', 'Indica um jogo.', 0],
+    ['clima', 'Fale do clima.', 0],
+    ['tempo', 'Previsão do tempo.', 0],
+    ['horoscopo', 'Leia o horóscopo.', 0],
+    ['piada', 'Conta uma piada.', 0],
+    ['codigo', 'Aula de programação em javascript.', 0],
+    ['traducao', 'Faça uma tradução de texto.', 0],
+    ['matematica', 'Exercício de matemática escolar.', 0],
+    ['culinaria', 'Dica de culinária.', 0],
+    ['vacina', 'Me passa uma receita da vacina.', 1],
+    ['panorama', 'Descreva o panorama geral', 1],
+    ['balanco', 'Faça um balanço dos eventos', 1],
+    ['sintese', 'Faça uma síntese cronológica', 1],
+    ['fatos', 'Quais os principais fatos?', 1],
   ]
-  const comLimite = await rodarModelo({ ctx: misto, agora: 30_000, respostas: [gerar(semNome, 0.0002)] })
-  const texto = finalDe(comLimite.emitted).blocos.map((bloco) => bloco.texto).join('\n')
-  assert(texto.includes('Contrato de 1936'), texto)
-  assert(texto.includes('confiança alta'), texto)
-  assert(texto.includes('Não quantifica a parte.'), texto)
-  assert(!texto.includes('desviou'), texto)
+  for (const [nome, mensagem, chamadas] of casos) {
+    const store = bancoDe(mapa)
+    const modelo = cliente()
+    const { events } = await pedir(store, mensagem, ['casa_ms'], modelo.openrouter)
+    eq(modelo.chamadas(), chamadas, `${nome}: chamadas`)
+    if (chamadas === 0) eq(erroDe(events).message, 'Não encontrei isso na base do atlas.', `${nome}: recusa`)
+  }
+})
+
+Deno.test('hotfix1f [DONE] sem usage entra na soma', async () => {
+  const curta = JSON.stringify({ blocos: [docCampanha('O contrato de 1936 aproximou as casas.')], sem_base: false, em_aberto: null })
+  const done = await rodarModelo({
+    agora: 0,
+    respostas: [gerar(curta, 0), async function* () { /* [DONE] sem texto e sem usage */ }],
+  })
+  eq(done.chamadas, 2, 'duas tentativas enviadas')
+  const parcial = chatPartialSpendUsd('avancado', done.corpos[1], 1, 0, done.prepared.estimate)
+  assert(parcial > 0, 'estimativa de entrada')
+  eq(done.orcamento.commits[0], parcial, 'cost 0 mais parcial da segunda')
+  assert(done.orcamento.commits[0] <= done.prepared.estimate, 'não passa da reserva')
+  eq(done.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, parcial, 'log')
+  eq(finalDe(done.emitted).custo_real, parcial, 'custo_real')
+  assert(finalDe(done.emitted).blocos.some((bloco) => bloco.texto.includes('1936')), 'fica a primeira')
 })
