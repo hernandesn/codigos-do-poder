@@ -715,7 +715,11 @@ Deno.test('hotfix1c idioma: decades, nomes próprios e frase inglesa solta', () 
   eq(t('O grant pagou o contrato.'), 'A doação pagou o contrato.', 'grant minúsculo vira doação feminina')
   eq(t('Usaram quadratic voting no contrato.'), 'Usaram votação quadrática no contrato.', 'quadratic voting')
   eq(t('Usaram quadratic votação no contrato.'), 'Usaram votação quadrática no contrato.', 'quadratic votação')
-  eq(t('O método quadratic entrou no contrato.'), 'O método quadrática entrou no contrato.', 'quadratic')
+  eq(t('O método quadratic entrou no contrato.'), 'O método quadratic entrou no contrato.', 'quadratic solto não vira quadrática')
+  eq(t('Usaram votação quadratic no contrato.'), 'Usaram votação quadrática no contrato.', 'votação quadratic')
+  eq(t('A doação declarado ficou no contrato.'), 'A doação declarada ficou no contrato.', 'doação declarado')
+  eq(t('As doações registrados fecharam o contrato.'), 'As doações registradas fecharam o contrato.', 'doações registrados')
+  eq(t('A doação anunciado fechou o contrato.'), 'A doação anunciada fechou o contrato.', 'doação anunciado')
   eq(t('International Health Board e o board local.'), 'International Health Board e o conselho local.', 'board só fora do nome')
 })
 
@@ -1067,7 +1071,7 @@ Deno.test('hotfix1d pergunta final e fecho sem insinuação', async () => {
     assert(prompt.includes(regra), regra)
     assert(basico.includes(regra), `básico: ${regra}`)
   }
-  const fatos = 'O contrato de 1936 ficou registrado.\n\nA casa bancária pagou no mesmo ano.\n\nO que liga tudo: o contrato de 1936 reúne as casas.'
+  const fatos = 'O contrato de 1936 ficou registrado.\n\nA casa bancária pagou no mesmo ano.\n\nO que liga tudo: critérios ocultos de repasse entre as casas.'
   const perguntas = [
     'por que a família Marinho nunca abriu os arquivos internos da casa?',
     'quem dentro do grupo de controle da Americanas sabia do tamanho do buraco?',
@@ -1106,7 +1110,7 @@ Deno.test('hotfix1e insinuação no bloco, par sem aresta e nome inteiro', async
     }), 0.0002)],
   })
   const textoBloco = finalDe(bloco.emitted).blocos.map((item) => item.texto).join('\n')
-  assert(/nunca abriu/i.test(textoBloco), 'frase do bloco fica')
+  assert(!/nunca abriu/i.test(textoBloco), 'frase do bloco sai')
   assert(textoBloco.includes('contrato de 1936'), 'fato do bloco fica')
   assert(textoBloco.includes('A casa pagou'), 'frase seguinte fica')
 
@@ -1455,4 +1459,144 @@ Deno.test('hotfix1f [DONE] sem usage entra na soma', async () => {
   eq(done.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, parcial, 'log')
   eq(finalDe(done.emitted).custo_real, parcial, 'custo_real')
   assert(finalDe(done.emitted).blocos.some((bloco) => bloco.texto.includes('1936')), 'fica a primeira')
+})
+
+Deno.test('hotfix1g perguntas no corpo, citação, URL e fecho', () => {
+  const ctx = campanhaCtx()
+  const t = (texto: string) => sanitizeAnswer({
+    blocos: [docCampanha(texto)],
+  }, ctx).answer.blocos.map((bloco) => bloco.texto).join('\n')
+  const soltas = t('O contrato de 1936 ficou registrado. Por que nunca abriu os arquivos? Qual contrato secreto financiou a casa? A casa pagou no mesmo ano.')
+  assert(!/nunca abriu/i.test(soltas), soltas)
+  assert(!/contrato secreto/i.test(soltas), soltas)
+  assert(soltas.includes('contrato de 1936'), soltas)
+  assert(soltas.includes('A casa pagou'), soltas)
+  const citacao = t('O contrato de 1936 ficou. "Por que pagar?", perguntou o diretor. A casa pagou no mesmo ano.')
+  assert(citacao.includes('"Por que pagar?"'), citacao)
+  assert(citacao.includes('perguntou o diretor'), citacao)
+  const url = t('O contrato de 1936 está em https://example.com/busca?q=contrato e segue no arquivo.')
+  assert(url.includes('https://example.com/busca?q=contrato'), url)
+  const troca = t('A doação ocorreu em troca de prestação de contas. O contrato de 1936 ficou.')
+  assert(troca.includes('A doação ocorreu em troca de prestação de contas'), troca)
+  const fecho = t('O contrato de 1936 ficou registrado.\n\nO que liga tudo: critérios ocultos de repasse entre as casas.')
+  assert(!/critérios ocultos/i.test(fecho), fecho)
+  assert(fecho.includes('contrato de 1936'), fecho)
+  const anaf = t('O contrato de 1936 ficou registrado. Por que nunca abriu os arquivos? Essas duas instituições seguiram juntas. A casa pagou no mesmo ano.')
+  assert(!/nunca abriu|Essas duas/i.test(anaf), anaf)
+  assert(anaf.includes('A casa pagou'), anaf)
+})
+
+Deno.test('hotfix1g pergunta neutra sai no fluxo e a estrutural fica', async () => {
+  const r = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado. Onde está o papel? A casa pagou no mesmo ano.')],
+      sem_base: false,
+      em_aberto: 'Onde está o papel?',
+    }), 0.0002)],
+  })
+  const visivel = finalDe(r.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(!/Onde está o papel/i.test(visivel), visivel)
+  assert(visivel.includes('contrato de 1936'), visivel)
+  assert(visivel.includes('A casa pagou'), visivel)
+  assert(/Que documento do atlas detalharia /.test(visivel), visivel)
+})
+
+Deno.test('hotfix1g nome com snake_case na pergunta estrutural', async () => {
+  const misto = campanhaCtx()
+  misto.raizes = [{ id: 'casa_ms', nome: 'Casa Alfa grupo_b', tipo: 'instituicao' }]
+  misto.entidades = [
+    { id: 'casa_ms', nome: 'Casa Alfa grupo_b', tipo: 'instituicao' },
+    { id: 'campanha', nome: 'Campanha de 1916', tipo: 'instituicao' },
+  ]
+  const comNome = await rodarModelo({
+    ctx: misto, agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false, em_aberto: null,
+    }), 0.0002)],
+  })
+  const textoNome = finalDe(comNome.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(textoNome.includes('Casa Alfa'), textoNome)
+  assert(!textoNome.includes('grupo_b'), textoNome)
+  assert(/Que documento do atlas detalharia a relação entre Casa Alfa e Campanha de 1916\?/.test(textoNome), textoNome)
+
+  const soSlug = campanhaCtx()
+  soSlug.raizes = [{ id: 'grupo_b', nome: 'grupo_b', tipo: 'instituicao' }]
+  soSlug.entidades = [{ id: 'grupo_b', nome: 'grupo_b', tipo: 'instituicao' }]
+  soSlug.relacoes = []
+  const semNome = await rodarModelo({
+    ctx: soSlug, agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [{ tipo: 'documentado', texto: 'O contrato de 1936 ficou registrado no papel citado.', entidades: ['grupo_b'], relacoes: [], fontes: ['B01'] }],
+      sem_base: false, em_aberto: null,
+    }), 0.0002)],
+  })
+  const textoSlug = finalDe(semNome.emitted).blocos.map((bloco) => bloco.texto).join('\n')
+  assert(!textoSlug.includes('grupo_b'), textoSlug)
+  assert(textoSlug.includes('Que documento do atlas detalharia esta relação?'), textoSlug)
+})
+
+Deno.test('hotfix1g seleção: jogo, clima e código políticos vão ao modelo', async () => {
+  const mapa = { 'casa_ms|': campanhaCtx() }
+  const casos: Array<[string, string, number]> = [
+    ['jogo politico', 'Analise o jogo político', 1],
+    ['jogos de poder', 'Analise os jogos de poder', 1],
+    ['clima politico', 'Qual o clima político da época?', 1],
+    ['codigo de conduta', 'Qual o código de conduta citado?', 1],
+    ['s15', S15, 0],
+    ['preparo', 'Qual o modo de preparo?', 0],
+    ['tempo', 'Como está o tempo?', 0],
+    ['equacao', 'Resolva a equação.', 0],
+    ['escreva', 'Escreva um código.', 0],
+    ['programa', 'Faça um programa em python.', 0],
+    ['traduza', 'Traduza o texto.', 0],
+    ['conte', 'Conte uma piada.', 0],
+    ['campeonato', 'Qual o campeonato?', 0],
+    ['futebol', 'Qual o jogo de futebol?', 0],
+  ]
+  for (const [nome, mensagem, chamadas] of casos) {
+    const store = bancoDe(mapa)
+    const modelo = cliente()
+    const { events } = await pedir(store, mensagem, ['casa_ms'], modelo.openrouter)
+    eq(modelo.chamadas(), chamadas, `${nome}: chamadas`)
+    if (chamadas === 0) eq(erroDe(events).message, 'Não encontrei isso na base do atlas.', `${nome}: recusa`)
+  }
+})
+
+Deno.test('hotfix1g tentativa vazia sem usage entra na soma', async () => {
+  const tres = JSON.stringify({
+    blocos: [
+      docCampanha('O contrato de 1936 aproximou as casas no primeiro registro.'),
+      docCampanha('A casa bancária pagou no mesmo ano citado.'),
+      docCampanha('O segundo registro confirma o mesmo contrato de 1936.'),
+    ],
+    sem_base: false, em_aberto: null,
+  })
+  const comZero = await rodarModelo({
+    agora: 0,
+    respostas: [async function* () { /* vazia, sem usage */ }, gerar(tres, 0)],
+  })
+  eq(comZero.chamadas, 2, 'duas tentativas')
+  const parcial = chatPartialSpendUsd('avancado', comZero.corpos[0], 1, 0, comZero.prepared.estimate)
+  assert(parcial > 0, `parcial da primeira ${parcial}`)
+  eq(comZero.orcamento.commits[0], parcial, 'cost 0 da segunda mais a parcial da primeira')
+  eq(comZero.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, comZero.orcamento.commits[0], 'log igual')
+  eq(finalDe(comZero.emitted).custo_real, comZero.orcamento.commits[0], 'custo_real igual')
+  assert(finalDe(comZero.emitted).blocos.some((bloco) => bloco.texto.includes('1936')), 'fica a segunda')
+
+  const semCobranca = await rodarModelo({
+    agora: 0,
+    respostas: [
+      async function* () { /* vazia, sem usage */ },
+      async function* () { throw new OpenRouterError('rede', 'sem cobranca', true) },
+    ],
+  })
+  eq(semCobranca.chamadas, 2, 'a noCharge abre')
+  const parcialErro = chatPartialSpendUsd('avancado', semCobranca.corpos[0], 1, 0, semCobranca.prepared.estimate)
+  assert(parcialErro > 0, 'parcial da primeira')
+  eq(semCobranca.orcamento.commits.length, 1, 'não libera o hold')
+  eq(semCobranca.orcamento.commits[0], parcialErro, 'liquida a parcial, não zero')
+  eq(semCobranca.orcamento.solturas(), 0, 'não solta o orçamento')
+  eq(semCobranca.store.snapshot(USER, CLOCK()).logs[0]?.custo_usd, parcialErro, 'log da parcial')
 })

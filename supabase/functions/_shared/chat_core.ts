@@ -1952,8 +1952,11 @@ function concordarDoacao(t: string): string {
     concedido: ['concedida', 'concedidas'], concedidos: ['concedida', 'concedidas'],
     aprovado: ['aprovada', 'aprovadas'], aprovados: ['aprovada', 'aprovadas'],
     recebido: ['recebida', 'recebidas'], recebidos: ['recebida', 'recebidas'],
+    declarado: ['declarada', 'declaradas'], declarados: ['declarada', 'declaradas'],
+    registrado: ['registrada', 'registradas'], registrados: ['registrada', 'registradas'],
+    anunciado: ['anunciada', 'anunciadas'], anunciados: ['anunciada', 'anunciadas'],
   }
-  t = t.replace(/\bdoa(ção|ções)\s+(pago|pagos|concedido|concedidos|aprovado|aprovados|recebido|recebidos)\b/gi, (full: string, suf: string, adj: string) => {
+  t = t.replace(/\bdoa(ção|ções)\s+(pago|pagos|concedido|concedidos|aprovado|aprovados|recebido|recebidos|declarado|declarados|registrado|registrados|anunciado|anunciados)\b/gi, (full: string, suf: string, adj: string) => {
     const plural = /ções/i.test(suf)
     const par = mapa[adj.toLowerCase()]
     const novo = par ? (plural ? par[1] : par[0]) : adj
@@ -2001,6 +2004,7 @@ function deslizesDeIdioma(t: string, ctx?: ChatContextPayload): string {
   frase('financiamento loan', 'empréstimo')
   frase('quadratic voting', 'votação quadrática')
   frase('quadratic votação', 'votação quadrática')
+  frase('votação quadratic', 'votação quadrática')
   const troca = (de: string, para: string, soMinusculo = false) => {
     t = t.replace(new RegExp(`\\b${de}\\b`, soMinusculo ? 'g' : 'gi'), (w: string, offset: number, todo: string) => {
       if (entreDoisCapitais(todo, offset, w.length)) return w
@@ -2015,7 +2019,6 @@ function deslizesDeIdioma(t: string, ctx?: ChatContextPayload): string {
   troca('members', 'membros')
   troca('member', 'membro')
   troca('voting', 'votação')
-  troca('quadratic', 'quadrática')
   troca('sharply', 'fortemente')
   troca('however', 'porém')
   troca('although', 'embora')
@@ -2104,6 +2107,27 @@ function casaForaDeUrl(frase: string, re: RegExp): boolean {
 
 function fraseEco(frase: string): boolean {
   return ECO_PADROES.some((re) => casaForaDeUrl(frase, re))
+}
+
+/** Aspas e URL saem da checagem: o que está lá dentro não é frase do corpo. */
+function semAspasNemUrl(frase: string): string {
+  return frase
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/"[^"\n]*"|“[^”\n]*”|«[^»\n]*»/g, ' ')
+}
+
+/** O corpo é declarativo. «?» fora de aspas e de URL encerra uma pergunta e a frase sai. */
+function fraseInterrogativaSolta(frase: string): boolean {
+  return /\?\s*$/.test(semAspasNemUrl(frase))
+}
+
+/** Fecho e frase de bloco. Lista curta; «em troca» e o restante da lista antiga não entram. */
+function fraseInsinuacao(frase: string): boolean {
+  const fora = semAspasNemUrl(frase).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+  return /\b(?:ocult|escond|encobr|abafad)\w*/.test(fora)
+    || /\bsecret(?:o|a|os|as)?\b/.test(fora)
+    || /\bpor baixo dos panos\b/.test(fora)
+    || /\bnunca\s+(?:abriu|revelou|explicou|divulgou|prestou\s+contas)\b/.test(fora)
 }
 
 /** Texto exato de fraseAusentes (um nome ou «A e B» / «A, B e C»). Eco mais longo continua caindo. */
@@ -2211,7 +2235,7 @@ function frasesDe(t: string): string[] {
  * Por linha, para o gancho da pauta não colar no fato. `preservar` é a frase
  * exata de ausência (fraseAusentes): essa frase fica, o resto do eco sai.
  */
-function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPayload): string {
+function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPayload, manterPergunta = false): string {
   const alvo = preservar ? foldName(preservar) : ''
   const linhas = texto.split('\n').map((linha) => {
     const comIdioma = linha.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1 ? parte : deslizesDeIdioma(parte, ctx)).join('')
@@ -2220,7 +2244,9 @@ function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPay
     const kept = semAnaforaPendente(frases, (f) => {
       if (fraseAusenciaExata(f) || (alvo && foldName(f) === alvo)) return false
       if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
-      if (fraseInglesSolta(f) || fraseEco(f)) return true
+      if (fraseInglesSolta(f) || fraseEco(f) || fraseInsinuacao(f)) return true
+      // A pergunta final (pauta / em_aberto) é a única que pode terminar em «?».
+      if (!manterPergunta && fraseInterrogativaSolta(f)) return true
       return false
     })
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
@@ -2233,7 +2259,7 @@ function ultimaPerguntaValida(blocos: readonly { texto: string }[]): string {
   const frases = blocos.flatMap((bloco) => frasesDe(bloco.texto))
   for (let i = frases.length - 1; i >= 0; i--) {
     const f = frases[i].trim()
-    if (/\?\s*$/.test(f) && !fraseEco(f) && !fraseInglesSolta(f) && !CJK_VISIVEL.test(f)) return f
+    if (fraseInterrogativaSolta(f) && !fraseEco(f) && !fraseInglesSolta(f) && !CJK_VISIVEL.test(f) && !fraseInsinuacao(f)) return f
   }
   return ''
 }
@@ -2247,8 +2273,13 @@ function nomePublico(ctx: ChatContextPayload, id: string): string | null {
       break
     }
   }
-  const curto = bruto.replace(/<[^>]*>/g, '').split('·')[0].trim()
-  if (!curto || curto === id) return null
+  let curto = bruto.replace(/<[^>]*>/g, '').split('·')[0]
+  curto = curto.replace(/\[[^\]]*\]/g, ' ')
+  curto = curto.replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/g, ' ')
+  curto = curto.replace(/\b[A-Z]{1,3}\d+\b/g, ' ')
+  curto = curto.replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim()
+  const util = curto.replace(/[^\p{L}\p{N}]+/gu, '')
+  if (util.length < 2 || curto === id) return null
   if (!/\s/.test(curto) && curto.includes('_')) return null
   return curto
 }
@@ -2298,7 +2329,7 @@ function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; re
 }
 
 function limparPergunta(texto: string, blocos: readonly { texto: string }[], ctx?: ChatContextPayload): string {
-  const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto, '', ctx)).trim()
+  const filtrada = tirarTrechosEco(filtrarProsaVisivel(texto, '', ctx, true)).trim()
   if (/\?\s*$/.test(filtrada)) return filtrada
   return ultimaPerguntaValida(blocos) || filtrada
 }
@@ -2401,6 +2432,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
         }
         if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
         if (fraseInglesSolta(f)) return true
+        if (!pergunta && fraseInsinuacao(f)) return true
         if (!pergunta && !fraseAusenciaExata(f) && fraseEco(f)) return true
         return false
       })
@@ -2730,12 +2762,41 @@ function temVocabularioAtlas(mensagem: string): boolean {
   return /\b(?:vinculo|ligacao|relacao|conexao|financi\w*|doac\w*|patrocin\w*|pagamento|contribu\w*|controle|controlad\w*|acionist\w*|socio|conselho|cargo|fundador|fundou|empresa|banco|governo|golpe|campanha|saude|vacina|familia|herdeiro|papel|influencia|origem|historico|data|ano|quando|quem|onde|como|porque|quanto)\b/.test(q)
 }
 
-/** Tema claramente fora do atlas. Com um termo do atlas na mesma mensagem, não recusa. */
-const TEMA_EXTERNO = /\b(?:receitas?|culinaria|bolos?|futebol|jogos?|clima|horoscopo|piadas?|programacao|programar|python|javascript|codigos?)\b|\bprevisao do tempo\b|\btraducao de texto\b|\bmatematica escolar\b/
+/**
+ * Tema externo por expressão. jogo/clima sozinhos continuam na lista porque
+ * testes já travam «Indica um jogo» e «Fale do clima»; «jogo político»,
+ * «jogos de poder» e «clima político» não casam. «código» sozinho não recusa.
+ */
+const TEMA_EXTERNO = new RegExp([
+  String.raw`\breceitas?\s+de\b`,
+  String.raw`\bmodo\s+de\s+preparo\b`,
+  String.raw`\bbolos?\b`,
+  String.raw`\bculinaria\b`,
+  String.raw`\bfutebol\b`,
+  String.raw`\bjogos?\b(?!\s+politico\b)(?!\s+de\s+poder\b)`,
+  String.raw`\bclima\b(?!\s+politico\b)`,
+  String.raw`\bprevisao\s+do\s+tempo\b`,
+  String.raw`\bcomo\s+esta\s+o\s+tempo\b`,
+  String.raw`\bresultado\s+do\s+jogo\b`,
+  String.raw`\bcampeonato\b`,
+  String.raw`\bhoroscopo\b`,
+  String.raw`\bpiadas?\b`,
+  String.raw`\bconte\s+uma\s+piada\b`,
+  String.raw`\b(?:programacao|programar|python|javascript)\b`,
+  String.raw`\bprograma\s+em\s+(?:python|javascript|java)\b`,
+  String.raw`\bescreva\s+(?:um\s+)?codigo\b`,
+  String.raw`\btraducao\s+de\s+texto\b`,
+  String.raw`\btraduza\s+(?:este|o)\s+texto\b`,
+  String.raw`\bmatematica\s+escolar\b`,
+  String.raw`\bresolva\s+a\s+equacao\b`,
+].join('|'))
 
 function selecaoForaDaPergunta(mensagem: string, ctx: ChatContextPayload, textoVazio: boolean, entityIds: readonly string[]): boolean {
   if (entityIds.length === 0 || !textoVazio) return false
-  if (!TEMA_EXTERNO.test(normalizeQuery(mensagem))) return false
+  const q = normalizeQuery(mensagem)
+  // «como» é vocabulário do atlas; a expressão do tempo recusa mesmo assim.
+  if (/\bcomo esta o tempo\b/.test(q)) return true
+  if (!TEMA_EXTERNO.test(q)) return false
   if (temVocabularioAtlas(mensagem)) return false
   const termos = contextSearchTokens(mensagem)
   if (termos.some((termo) => termoNoRecorte(radicalSimples(termo), ctx))) return false
@@ -3347,8 +3408,9 @@ async function streamPreparedInner(input: {
   }
   const fecharTentativa = () => {
     const atual = custoAtual()
+    // Tentativa encerrada entra sempre: cost conhecido (inclusive 0) ou parcial, mesmo vazia.
     if (atual !== null) gastos.push({ conhecido: true, valor: atual })
-    else if (charsTentativa > 0) gastos.push({ conhecido: false, valor: parcialDe(charsTentativa) })
+    else gastos.push({ conhecido: false, valor: parcialDe(charsTentativa) })
     usage = undefined
     text = ''
     charsTentativa = 0
@@ -3648,6 +3710,11 @@ async function streamPreparedInner(input: {
   }
   // CJK, idioma, eco e código de ficha, depois da pauta e antes da frase de ausência.
   const avisoPrevisto = fraseAusentes(prepared.ausentes)
+  // Eco no em_aberto não é pergunta: a última pergunta válida do corpo substitui esse eco.
+  const emAbertoModelo = typeof answer.em_aberto === 'string' ? answer.em_aberto.trim() : ''
+  const substituiEco = !prepared.pauta && !prepared.pressure && emAbertoModelo && !/\?\s*$/.test(emAbertoModelo)
+    ? ultimaPerguntaValida(answer.blocos)
+    : ''
   answer = {
     ...answer,
     blocos: answer.blocos.map((bloco) => {
@@ -3657,7 +3724,7 @@ async function streamPreparedInner(input: {
     }).filter((bloco) => bloco.texto.trim()),
   }
   if (!prepared.pauta && !prepared.pressure && answer.blocos.length) {
-    answer.em_aberto = perguntaEstrutural(answer.blocos, prepared.context)
+    answer.em_aberto = substituiEco || perguntaEstrutural(answer.blocos, prepared.context)
   } else if (answer.em_aberto !== undefined) {
     const pergunta = limparPergunta(answer.em_aberto, answer.blocos, prepared.context)
     if (pergunta.trim()) answer.em_aberto = pergunta

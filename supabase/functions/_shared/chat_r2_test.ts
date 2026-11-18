@@ -90,7 +90,7 @@ const json = (blocos: unknown[], em_aberto: string | null = 'Quem mais sentou ne
 const PROIBIDO: Array<[string, RegExp]> = [
   ['rótulo após « · »', / · /],
   ['recorte', /\brecorte\b/i],
-  ['atlas', /\batlas\b/i],
+  ['atlas', /\batlas\b(?!\s+detalharia\b)/i],
   ['apelido [n]', /\[\d+\]/],
   ['id de relação/fonte', /\b(?:E1[0-9]{2}|B0[0-9])\b/],
   ['slug interno', /\b[a-z]+_[a-z0-9_]+\b/],
@@ -106,7 +106,7 @@ function visivel(final: ChatFinal): string {
   return [...final.blocos.map((b) => b.texto), ...final.avisos.map((a) => a.texto)].join('\n')
 }
 function semVazamento(final: ChatFinal, onde: string) {
-  const texto = visivel(final).replace(/Que documento do atlas detalharia[^?\n]*\?/g, '')
+  const texto = visivel(final)
   for (const [nome, re] of PROIBIDO) assert(!re.test(texto), `${onde}: vazou ${nome}: ${texto.match(re)?.[0]}`)
   eq(final.avisos.length, 0, `${onde}: nenhum aviso de sistema na tela`)
 }

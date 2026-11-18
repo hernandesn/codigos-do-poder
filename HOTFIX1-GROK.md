@@ -485,3 +485,56 @@ Só os do fallback documental:
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **166 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os cinco testes novos são os `hotfix1f` desta seção; o teste do fallback saiu.
+
+## Hotfix1g
+
+Sobre `c8e167e`. A revisão Codex desse commit deu REPROVADO. Na função só muda `chat_core.ts`. Auth, CORS, SQL e limites não mudam. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda.
+
+### Restaurações (como em `18b3c59`)
+
+- `chat_hotfix1_test.ts:1074`, teste «hotfix1d pergunta final e fecho sem insinuação»: a fixture `fatos` volta a terminar em «O que liga tudo: critérios ocultos de repasse entre as casas.». A asserção que proíbe «critérios ocultos» no visível permanece. O fecho sai pelo código.
+- `chat_hotfix1_test.ts:1113`, teste «hotfix1e insinuação no bloco…»: volta `assert(!/nunca abriu/i.test(textoBloco), 'frase do bloco sai')`.
+- `chat_r2_test.ts:109`, `semVazamento`: volta `const texto = visivel(final)`. A pergunta estrutural entra na checagem. O formato «Que documento do atlas detalharia…» permanece.
+
+Acompanham essas restaurações, e não são o passo 0:
+
+- `chat_hotfix1_test.ts:718`. O `c8e167e` travava «O método quadratic entrou» → «O método quadrática». O item 5 pede o contrário. A asserção passou a esperar a frase sem tradução. Quatro `eq` novos no mesmo teste cobrem «votação quadratic» e a concordância de doação.
+- `chat_r2_test.ts:93`. `/\batlas\b/i` não convive com o modelo obrigatório «do atlas detalharia» quando a pergunta volta à checagem. O padrão ficou `/\batlas\b(?!\s+detalharia\b)/i`: «atlas» no corpo, em «base do atlas» e em qualquer outra posição continua proibido. Slug, id, recorte e o restante de `PROIBIDO` seguem valendo sobre a pergunta inteira. Não é de novo o `replace` que tirava a pergunta da checagem.
+
+### 1. Perguntas no corpo
+
+Achado: «Por que nunca abriu os arquivos?» e «Qual contrato secreto financiou a casa?» continuavam no texto do bloco. `fraseInsinuacao` (`chat_core.ts:2125`) derruba a frase, fora de aspas e de URL, se contiver `ocult`, `escond`, `encobr`, `abafad`, `secret`, «por baixo dos panos» ou «nunca (abriu|revelou|explicou|divulgou|prestou contas)». «em troca» não entra. A anáfora existente (`semAnaforaPendente`) vale. O mesmo filtro roda em `semForaDaBase` (`2419`, chamada em `2435`) e em `filtrarProsaVisivel` (`2238`).
+
+No fluxo visível, `fraseInterrogativaSolta` (`2120`) tira do corpo a frase que termina em «?» fora de aspas e de URL. A pergunta da pauta e o `em_aberto` passam com `manterPergunta` (`limparPergunta`, `2331`). Se o `em_aberto` do modelo não termina em «?», a última pergunta válida do corpo substitui esse eco (`3714`) — é o que mantém «Quem pagou o contrato de 1936?» no teste antigo. Nos outros casos a única pergunta acrescentada é `perguntaEstrutural`.
+
+Testes: `chat_hotfix1_test.ts:1464` (as duas frases saem; «"Por que pagar?"» fica; URL com `?q=` fica; «em troca» fica; «critérios ocultos» sai; anáfora cai). `chat_hotfix1_test.ts:1489` («Onde está o papel?» sai do corpo; a pergunta do código fica). O fecho restaurado cai em `chat_hotfix1_test.ts:1059`. «nunca abriu» cai em `chat_hotfix1_test.ts:1103`.
+
+### 2. Custo
+
+`fecharTentativa` (`chat_core.ts:3409`) registra toda tentativa encerrada: `usage.cost` conhecido, inclusive 0, ou, sem custo conhecido, `parcialDe` da entrada do body mais a saída gerada (0 caracteres continua parcial de entrada).
+
+Teste: `chat_hotfix1_test.ts:1567`. Primeira vazia sem usage e segunda com `cost: 0`: liquidação, log e `custo_real` iguais à parcial da primeira, maior que 0. Primeira vazia e segunda `noCharge`: a mesma parcial, um commit, nenhuma soltura.
+
+### 3. Seleção
+
+`TEMA_EXTERNO` (`chat_core.ts:2770`) recusa por expressão: «receita de», «modo de preparo», «bolo de» (e o «bolo» que o teste antigo trava), «previsão do tempo», «como está o tempo», «jogo de futebol», «resultado do jogo», «campeonato», «horóscopo», «escreva (um )?código», «programa em (python|javascript|java)», «conte uma piada», «traduza (este|o) texto», «resolva a equação». «jogo político», «jogos de poder» e «clima político» não casam. «código» sozinho não recusa. «Indica um jogo.» e «Fale do clima.» continuam recusados: o teste já existente trava essas duas frases.
+
+Teste: `chat_hotfix1_test.ts:1540`. Com seleção, as quatro frases políticas chamam o modelo. S-15 continua recusada.
+
+### 4. Nomes na pergunta estrutural
+
+`nomePublico` (`chat_core.ts:2268`) tira tokens snake_case (`/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/`), códigos `[A-Z]{1,3}\d+` e colchetes, e normaliza espaços. Menos de 2 letras ou dígitos úteis, igual ao id, ou o que sobra sem espaço e com «_»: a entidade não entra. «Casa Alfa grupo_b» vira «Casa Alfa». «grupo_b» sozinho não entra.
+
+Teste: `chat_hotfix1_test.ts:1505`. A pergunta passa por `semVazamento` (`chat_r2_test.ts:108`).
+
+### 5. Idioma
+
+`quadratic` só na expressão (`chat_core.ts:2005–2007`): «quadratic voting», «quadratic votação» e «votação quadratic» viram «votação quadrática». A troca solta `quadratic` → «quadrática» saiu. `concordarDoacao` (`1948`) também acerta declarado, registrado e anunciado.
+
+Teste: `chat_hotfix1_test.ts:716–722`. «O método quadratic entrou» permanece. «votação quadratic» vira «votação quadrática». «doação declarado» vira «doação declarada».
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**171 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1g` desta seção.
