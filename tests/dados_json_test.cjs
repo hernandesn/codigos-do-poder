@@ -207,7 +207,7 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
     if (server) await new Promise(resolve => server.close(resolve));
   });
 
-  async function open(routes = {}, width = 1440) {
+  async function open(routes = {}, width = 1440, antes) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
     const errors = [], nucleoAttempts = [], extAttempts = [];
     await context.route('**/*', async route => {
@@ -225,6 +225,7 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
       return route.continue();
     });
     const page = await context.newPage();
+    if (antes) await antes(page);
     page.on('pageerror', error => errors.push(error.message));
     // UX6: a visita nova abre nos temas; o carregamento do mapa inteiro é medido no #all.
     await page.goto(origin + '/#all');
@@ -235,12 +236,33 @@ describe('carregamento de núcleo e extensão no Chromium', { timeout: 180000 },
   const statusOf = page => page.evaluate(() => { const s = document.getElementById('data-status'); return { hidden: s.hidden, state: s.dataset.state, text: s.innerText, retry: !document.getElementById('data-retry').hidden }; });
 
   test('sucesso: núcleo monta o mapa, a extensão chega em idle e o inspetor mostra afirmação com limite', async () => {
-    const { page, context, errors, nucleoAttempts, extAttempts } = await open();
+    // A asserção antiga comparava dois evaluate seguidos. O primeiro devolvia o
+    // status se ele não fosse 'ready', ou o sentinela 'ready-or-pending' se fosse.
+    // Passava só com as duas leituras iguais e diferentes de 'ready': o mapa no ar
+    // sem a extensão ser obrigatória. Entre uma leitura e outra o idle de 200 ms
+    // concluía o fetch e a igualdade quebrava. O observador grava o status uma vez,
+    // no primeiro quadro em que já há cartão, e o teste confere esse valor.
+    const { page, context, errors, nucleoAttempts, extAttempts } = await open({}, 1440, p => p.addInitScript(() => {
+      const visto = {};
+      window.__extAoMontar = visto;
+      const olhar = () => {
+        const nos = document.querySelectorAll('#node-layer .network-node').length;
+        if (!visto.status && window.mural && window.mural.getState && nos > 0) visto.status = window.mural.getState().extensionStatus;
+        if (!visto.status) requestAnimationFrame(olhar);
+      };
+      requestAnimationFrame(olhar);
+    }));
     await mapReady(page);
+    const statusAoMontar = await page.waitForFunction(() => {
+      const s = window.__extAoMontar && window.__extAoMontar.status;
+      return s === 'pending' || s === 'loading' || s === 'ready' || s === 'error' ? s : false;
+    }, null, { timeout: 30000 });
+    const statusNoMontar = await statusAoMontar.jsonValue();
+    assert.ok(statusNoMontar === 'pending' || statusNoMontar === 'loading', 'mapa montou com extensão em ' + statusNoMontar);
     assert.deepEqual(nucleoAttempts, ['?v=' + ref.sha256.slice(0, 12)]);
     assert.equal((await statusOf(page)).hidden, true);
-    assert.equal(await page.evaluate(() => window.mural.getState().extensionStatus !== 'ready' ? window.mural.getState().extensionStatus : 'ready-or-pending'), await page.evaluate(() => window.mural.getState().extensionStatus));
     await extReady(page);
+    assert.equal(await page.evaluate(() => window.mural.getState().extensionStatus), 'ready');
     assert.ok(extAttempts.length >= 1);
     assert.match(extAttempts[0], /^\?v=/);
     await page.evaluate(() => { location.hash = 'e=maua'; });
