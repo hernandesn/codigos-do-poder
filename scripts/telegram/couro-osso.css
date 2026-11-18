@@ -1,0 +1,104 @@
+/* Fontes self-hosted (EB Garamond, Courier Prime · SIL OFL 1.1), latin + latin-ext, font-display:swap */
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:italic;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400i.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:600;font-display:swap;src:url("fonts/eb-garamond-600.woff2") format("woff2")}
+@font-face{font-family:"Courier Prime";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/courier-prime-400.woff2") format("woff2")}
+/* ═══════════════════════════════════════════════════════════════════════════
+   Códigos do Poder · tema D1 "Couro e Osso" · tokens finais (UX5d, PROPOSTA)
+   Uso: <html data-theme="couro-osso">. Todo o CSS/JS/template deve ler SÓ estes tokens.
+   Regras do tema:
+   · Vermelho-sangue (#5a0000–#8b0000) é SUPERFÍCIE (faixa, lombada, lacre, seleção,
+     cabeçalho da ficha, botão primário) com texto osso por cima. Como texto ou fio fino
+     sobre o escuro usa-se --blood-text / --blood-thread.
+   · Nenhum tipo de nó, aresta, evidência ou erro é vermelho. Erro/aviso = âmbar + ⚠.
+   · FATO / INFERÊNCIA / HIPÓTESE: borda sólida / tracejada / pontilhada.
+   · Sem filter/blur em nós e arestas. Textura, vela e vinheta são camadas estáticas.
+   Contraste conferido por contraste.cjs (texto ≥ 4,5:1; UI, bordas, fios ≥ 3:1).
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="couro-osso"]{
+  color-scheme:dark;
+
+  /* ── Superfícies (couro, do mais fundo ao mais alto) ── */
+  --bg:#0a0706;            /* fundo da página, cabeçalho do quadro, legenda */
+  --map-bg:#0d0907;        /* a mesa do mural (atrás das fichas) */
+  --surface-1:#140f0c;     /* barra do topo, índice lateral */
+  --surface-2:#1b1410;     /* pasta (ficha lateral) e painel do chat */
+  --surface-3:#241b15;     /* aba da pasta, abas inativas, campos elevados */
+  --line:#2f241c;          /* divisória decorativa (sem mínimo de contraste) */
+  --border:#8b7660;        /* borda de campo e controles (≥ 3:1) */
+
+  /* ── Texto sobre couro ── */
+  --ink:#ede3cd;           /* texto principal */
+  --ink-2:#cdbfa4;         /* texto secundário, rascunho em streaming */
+  --ink-3:#ab9b82;         /* notas, contadores, placeholders */
+
+  /* ── Papel: fichas de nó (osso) e folha da pasta ── */
+  --card:#e2d6bc;          /* cartão de nó / bilhete / pergunta do chat */
+  --card-ink:#23170f;      /* título no cartão */
+  --card-ink-2:#5b4634;    /* tipo e metadados no cartão */
+  --card-edge:#e2d6bc;     /* silhueta do cartão contra a mesa */
+  --card-back:#b9aa8c;     /* papel de baixo (pilhas, verso da folha) */
+  --sheet:#e9dfc8;         /* folha dentro da pasta */
+  --sheet-ink:#24170f;
+  --sheet-ink-2:#5a4533;
+  --stamp-ink:#7d0a0a;     /* carimbo CONFIDENCIAL em tinta, só sobre papel */
+
+  /* ── Sangue (marca) ── */
+  --blood:#7a0a0a;         /* superfície: faixa, lombada, lacre, seleção, primário */
+  --blood-deep:#2b0303;    /* sombra do sangue (gradiente, borda do lacre) */
+  --on-blood:#f2e7d2;      /* texto/filete osso sobre sangue */
+  --blood-text:#d47a6e;    /* vermelho claro: links, nº de fonte, carimbo sobre couro */
+  --blood-thread:#c43a30;  /* fio e contorno de seleção sobre a mesa */
+
+  /* ── Tipos de nó (aba/tachinha; também ícone + rótulo) ── */
+  --tab-ink:#1c120c;       /* ícone escuro sobre a aba colorida */
+  --n-pessoa:#d4c6a6; --n-familia:#c99a48; --n-instituicao:#8f9ba3; --n-empresa:#a8845e;
+  --n-governo:#b3ad6c; --n-operacao:#b86c3f; --n-fonte:#6f9a7a; --n-generico:#958e84;
+
+  /* ── Fios por tipo de aresta (cor + traço; ver componentes.md) ── */
+  --e-parentesco:#d4c6a6; --e-casamento:#c99a48; --e-financiamento:#8fa06a; --e-fundacao:#a8845e;
+  --e-controle:#8f9ba3; --e-subscricao:#7e8a7a; --e-cargo:#b86c3f; --e-indice:#958e84; --e-outro:#77716a;
+  --edge-label:#d8cbb0;    /* rótulo de fio/grupo sobre a mesa */
+
+  /* ── Evidência (nunca vermelha) ── */
+  --ev-fato:#a9b884; --ev-fato-bg:#1a1e12;   /* borda sólida  + ■ */
+  --ev-inf:#c49660;  --ev-inf-bg:#271d0e;    /* borda tracejada + ◆ */
+  --ev-hip:#b5afc4;  --ev-hip-bg:#1e1c25;    /* borda pontilhada + ○ */
+
+  /* ── Estados de sistema ── */
+  --danger:#f2d35c; --danger-bg:#2a2008;     /* erro/aviso: âmbar + ⚠, nunca o sangue */
+  --nosrc:#a3abb0; --nosrc-bg:#15181a;       /* "não há fonte na base": ardósia sóbria */
+
+  /* ── Botões em relevo ── */
+  --btn:#3b2c22; --btn-hi:#54402f; --btn-ink:#ede3cd; --btn-edge:#8b7660;
+  --btn-off:#221a15; --btn-off-ink:#8f806b; --btn-off-edge:#4a3c31;   /* desabilitado */
+
+  /* ── Foco visível: anel osso + halo preto (lê em couro e em papel) ── */
+  --focus-ring:#f2e7d2; --focus-halo:#000000;
+
+  /* ── Esmaecido, sombra, véu ── */
+  --dim:#2e2520; --dim-opacity:.22;
+  --shadow:#000000; --shadow-soft:#000000a6; --scrim:#000000b3;
+
+  /* ── Tipografia ── (Cormorant foi descartada: acentos mal posicionados no teste) */
+
+  /* Aliases temporários do tema anterior (UX4), para var(--gold/--panel/…) ainda no CSS/JS */
+  --panel:var(--surface-2);
+  --panel-deep:var(--surface-1);
+  --muted:var(--ink-3);
+  --gold:var(--blood-text);
+  --family:var(--n-familia);
+  --person:var(--n-pessoa);
+  --organization:var(--n-instituicao);
+  --event:var(--n-operacao);
+  --generic:var(--n-generico);
+  --draft:var(--ev-hip);
+  --font-display:"EB Garamond",Georgia,serif;   /* títulos, seminegrito 600 */
+  --font-body:"EB Garamond",Georgia,serif;      /* texto, 15–17 px; itálico para notas */
+  --font-mono:"Courier Prime","Courier New",monospace; /* só nº de registro (ENT-0412) */
+
+  /* ── Atmosfera (camadas estáticas, sem animação) ── */
+  --grain-opacity:.11;
+  --candle:radial-gradient(60% 55% at 46% 44%,#4a2a1255 0%,#2a160a33 40%,transparent 75%);
+  --vignette:radial-gradient(95% 85% at 48% 45%,transparent 38%,#000000b3 82%,#000000e6 100%);
+}

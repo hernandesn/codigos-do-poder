@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="couro-osso">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="__CSP__">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:,">
+  <title>Vincular Telegram · Códigos do Poder</title>
+  <style>__CSS__</style>
+</head>
+<body>
+  <header><a class="brand" href="index.html">Códigos do Poder<small>mural investigativo</small></a><a href="index.html">Voltar ao atlas</a></header>
+  <main>
+    <span class="eyebrow">Aion · Vínculo seguro</span>
+    <h1>Sua conta, também<br>no Telegram.</h1>
+    <p class="intro">Conecte sua conta existente ao @aion_codigosdopoder_bot. O bot compartilha sua cota do atlas e não cria uma nova conta.</p>
+    <p id="status" class="status" role="status" aria-live="polite">Entre na sua conta para gerar o código.</p>
+    <form id="login-form" class="panel">
+      <h2>Entrar no atlas</h2>
+      <div class="field"><label for="email">E-mail</label><input id="email" type="email" autocomplete="username" required></div>
+      <div class="field"><label for="password">Senha</label><input id="password" type="password" autocomplete="current-password" required></div>
+      <div id="auth-turnstile"></div>
+      <div class="actions"><button id="login" type="submit">Entrar</button></div>
+      <p class="note">Use o mesmo login do site. Se ainda não tem conta, abra o atlas para se cadastrar.</p>
+    </form>
+    <section id="link-section" class="panel" hidden aria-labelledby="code-title">
+      <h2 id="code-title">Gerar código de vínculo</h2>
+      <p>O código vale por 10 minutos e só pode ser usado uma vez. Um novo vínculo substitui o anterior.</p>
+      <div class="actions"><button id="generate" type="button">Gerar código</button><button id="logout" class="quiet" type="button">Sair da conta</button></div>
+      <section id="code-panel" hidden aria-label="Seu código temporário">
+        <output id="code" class="code" aria-live="polite"></output>
+        <p id="expires" class="note"></p>
+        <p>Envie ao bot: <strong id="command"></strong></p>
+        <div class="actions"><button id="copy" class="quiet" type="button">Copiar comando</button><a href="https://t.me/aion_codigosdopoder_bot" target="_blank" rel="noopener noreferrer">Abrir @aion_codigosdopoder_bot</a></div>
+        <p class="note">Trate este código como acesso à sua conta. Não compartilhe. Depois de enviar o comando, reabra o mini app pelo bot.</p>
+      </section>
+    </section>
+    <p class="footer">Para remover o vínculo, envie /desvincular no chat privado do bot.</p>
+  </main>
+  <script src="config.js"></script>
+  <script>__AUTH_JS__</script>
+  <script>__JS__</script>
+</body>
+</html>
