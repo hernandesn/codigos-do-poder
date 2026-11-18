@@ -678,3 +678,49 @@ Teste: `chat_hotfix1_test.ts:2084`. Título `O grupo praticou cri"AP_E777"me.` v
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **191 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1k` de URL e o de termo jurídico. `git diff d531bbf -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
+
+## Hotfix1l
+
+Sobre `57fc995`. A revisão Codex desse commit deu REPROVADO (dois médios novos contra `e981dc6`, mais um baixo). Na função só muda `chat_core.ts`. `pauta.ts` não muda. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda: o evento final continua com `avisos: []` (`chat_core.ts:4244`). O prompt do sistema não muda.
+
+### 1. Id do recorte sai de dentro da URL no texto
+
+Achado: `ocultarIdsVisiveis` (`1656` em `57fc995`) protegia o `http(s)` inteiro, e o id da relação publicado no corpo sobrevivia. O código genérico (`RS2021`, `VOL1`, `EST024`, `CIK0001038583`, `BR101`) continua fora do corte. `tirarIdsNaUrl` (`1680`) tira, dentro do endereço, só o id de entidade, relação e fonte do recorte e o apelido `[n]`/`#n`, como a v17. `ocultarIdsVisiveis` (`1703`) e o fim de `sanearRestaurado` (`2639`) usam isso. `https://example.com/acervo/AP_E777` com a relação `AP_E777` no contexto sai `https://example.com/acervo/`.
+
+Teste: `chat_hotfix1_test.ts:2141`. O evento final não tem `AP_E777`. As quatro URLs reais e `BR101` saem iguais no texto.
+
+### 2. Campo url igual ao da v17
+
+Achado: `aplicarMetadadosFinais` (`2723` em `57fc995`) apagava `fontes_detalhe.url` quando o endereço tinha `OP`/`AP_E`. A v17 copia o campo em `fonteDetalhe` (`1639`) e não mexe depois. O bloco que apagava o campo saiu (`2732`). `https://example.com/acervo/OP2021.pdf` sem id `OP2021` no contexto fica byte a byte. Localizador que é `http(s)` também: `sanearRotulo` não reescreve quando o vazamento está só dentro da URL. Localizador que não é URL continua no saneador (`p. AP_E777` não publica o código).
+
+Teste: `chat_hotfix1_test.ts:2170`. A url com `OP2021.pdf` e as quatro URLs reais mais `BR101` saem idênticas no campo `url`.
+
+Ajuste autorizado da asserção do Hotfix1j, só no campo url. `chat_hotfix1_test.ts:2040` (antes, em `57fc995`, linhas 2040–2041):
+
+```
+assert(!cru.includes('AP_E777'), cru)
+assert(!/OP901|AP_E\d+/.test(cru), cru)
+```
+
+Depois (`chat_hotfix1_test.ts:2040–2043`):
+
+```
+eq(final.fontes_detalhe.B01?.url, 'https://example.com/AP_E777/OP901', 'url idêntica à v17')
+const semUrl = cru.split('https://example.com/AP_E777/OP901').join('')
+assert(!semUrl.includes('AP_E777'), semUrl)
+assert(!/OP901|AP_E\d+/.test(semUrl), semUrl)
+```
+
+O endereço fica o da v17. Fora essa url, o JSON continua sem `AP_E777` e sem `OP901`: texto, justificativa, avisos, nomes, títulos, localizador e `em_aberto`. «Casa Alfa» e «1936» seguem exigidos.
+
+### 3. Aspas balanceadas depois do corte
+
+Achado: `protegerUrls` usava `\S+` e engolia a aspa de fecho de `Ele escreveu "AP_E777 O contrato está em https://example.com/acervo/BR101.pdf".` `fecharAspas` (`2587` em `57fc995`) via uma aspa só e tirava a de abertura. O token agora para na aspa (`URL_HTTP_SRC`, `1674`; `protegerUrls`, `2216`). `sanearRestaurado` (`2639`) fecha as aspas de novo no texto já com a URL de volta: o par fica, ou os dois saem.
+
+Teste: `chat_hotfix1_test.ts:2201`. Aspas balanceadas, sem `AP_E777`, URL `https://example.com/acervo/BR101.pdf` intacta.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**194 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os três `hotfix1l` desta seção. `git diff 57fc995 -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts` e só as duas linhas da exceção acima (`assert(!cru.includes('AP_E777')` e `assert(!/OP901|AP_E\d+/)`. Nenhuma outra asserção ou fixture foi removida.

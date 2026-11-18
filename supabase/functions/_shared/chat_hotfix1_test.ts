@@ -2037,8 +2037,10 @@ Deno.test('hotfix1j nome e título do evento final não vazam código', async ()
   })
   const final = finalDe(r.emitted)
   const cru = JSON.stringify(final)
-  assert(!cru.includes('AP_E777'), cru)
-  assert(!/OP901|AP_E\d+/.test(cru), cru)
+  eq(final.fontes_detalhe.B01?.url, 'https://example.com/AP_E777/OP901', 'url idêntica à v17')
+  const semUrl = cru.split('https://example.com/AP_E777/OP901').join('')
+  assert(!semUrl.includes('AP_E777'), semUrl)
+  assert(!/OP901|AP_E\d+/.test(semUrl), semUrl)
   assert(cru.includes('Casa Alfa'), cru)
   assert(cru.includes('1936'), cru)
   const detalhe = final.fontes_detalhe.B01
@@ -2134,4 +2136,90 @@ Deno.test('hotfix1k termo jurídico criado pelo saneamento sai; o que já era pa
   })
   const finalBom = finalDe(rBom.emitted)
   eq(finalBom.fontes_detalhe.B01.titulo, tituloBom, JSON.stringify(finalBom.fontes_detalhe))
+})
+
+Deno.test('hotfix1l id do recorte sai da URL no texto; URL real fica', async () => {
+  const ctx = campanhaCtx()
+  ctx.relacoes = [
+    ...ctx.relacoes,
+    {
+      id: 'AP_E777', origem: 'casa_ms', destino: 'campanha', tipo: 'contrato',
+      afirmacao: 'Contrato de 1936.', periodo: '1936', estado: 'retrato_documental', fontes: ['B01'],
+    },
+  ]
+  const vazada = 'https://example.com/acervo/AP_E777'
+  const corpo = `O contrato de 1936 cita ${vazada} no arquivo. Os papéis seguem em ${URLS_PRODUCAO.join(' e ')} no acervo.`
+  const r = await rodarModelo({
+    ctx,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha(corpo)],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  const cru = JSON.stringify(final)
+  const texto = final.blocos.map((bloco) => bloco.texto).join('\n')
+  assert(!texto.includes('AP_E777'), texto)
+  assert(texto.includes('https://example.com/acervo/'), texto)
+  assert(!cru.includes('AP_E777'), cru)
+  for (const url of URLS_PRODUCAO) assert(texto.includes(url), url)
+})
+
+Deno.test('hotfix1l campo url da fonte fica idêntico à v17', async () => {
+  const url = 'https://example.com/acervo/OP2021.pdf'
+  const ctx = campanhaCtx()
+  ctx.fontes = ctx.fontes.map((fonte) => fonte.id === 'B01' ? { ...fonte, url } : fonte)
+  const r = await rodarModelo({
+    ctx,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  eq(final.fontes_detalhe.B01?.url, url, JSON.stringify(final.fontes_detalhe))
+  for (const real of URLS_PRODUCAO) {
+    const ctxReal = campanhaCtx()
+    ctxReal.fontes = ctxReal.fontes.map((fonte) => fonte.id === 'B01' ? { ...fonte, url: real } : fonte)
+    const rodada = await rodarModelo({
+      ctx: ctxReal,
+      agora: 30_000,
+      respostas: [gerar(JSON.stringify({
+        blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+        sem_base: false,
+        em_aberto: null,
+      }), 0.0002)],
+    })
+    eq(finalDe(rodada.emitted).fontes_detalhe.B01?.url, real, real)
+  }
+})
+
+Deno.test('hotfix1l aspas ficam balanceadas quando o código sai da citação', async () => {
+  const ctx = campanhaCtx()
+  ctx.relacoes = [
+    ...ctx.relacoes,
+    {
+      id: 'AP_E777', origem: 'casa_ms', destino: 'campanha', tipo: 'contrato',
+      afirmacao: 'Contrato de 1936.', periodo: '1936', estado: 'retrato_documental', fontes: ['B01'],
+    },
+  ]
+  const frase = 'Ele escreveu "AP_E777 O contrato está em https://example.com/acervo/BR101.pdf".'
+  const r = await rodarModelo({
+    ctx,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha(frase)],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  const texto = final.blocos.map((bloco) => bloco.texto).join('\n')
+  assert(aspasBalanceadas(texto), texto)
+  assert(!texto.includes('AP_E777'), texto)
+  assert(texto.includes('https://example.com/acervo/BR101.pdf'), texto)
 })

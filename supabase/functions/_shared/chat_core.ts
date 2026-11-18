@@ -1650,10 +1650,8 @@ function idPareceCodigo(id: string): boolean {
   return /[_\d-]/.test(id) || /^[A-Z]{2,}$/.test(id)
 }
 
-/** Tira id cru e apelido "[n]" do texto visível. Entidade vira o nome antes de "·". Uma passada só. */
-export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): string {
-  // [n] e id cru não cortam http(s). A segunda chamada já recebe o texto sem URL.
-  if (/https?:\/\/\S/.test(texto)) return protegerUrls(texto, (sem) => ocultarIdsVisiveis(sem, ctx))
+/** Entidade vira o nome curto. Relação e fonte viram vazio. Só id que parece código. */
+function trocaDeIds(ctx: ChatContextPayload): Map<string, string> {
   const nomes = new Map<string, string>()
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
     if (!item?.id || !idPareceCodigo(item.id)) continue
@@ -1669,6 +1667,43 @@ export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): stri
     if (!id || troca.has(id) || !idPareceCodigo(id)) continue
     troca.set(id, '')
   }
+  return troca
+}
+
+/** http(s) até o espaço ou a aspa. A citação fica fora do endereço. */
+const URL_HTTP_SRC = String.raw`https?:\/\/[^\s"'“”«»‘’]+`
+
+/**
+ * Dentro da URL, como na v17: sai o id do recorte e o apelido [n]/#n.
+ * RS2021, VOL1, EST024, CIK… e BR101 não são id do recorte e ficam.
+ */
+function tirarIdsNaUrl(url: string, ctx?: ChatContextPayload): string {
+  let out = url
+  if (ctx) {
+    const troca = trocaDeIds(ctx)
+    const ids = [...troca.keys()].sort((a, b) => b.length - a.length)
+    if (ids.length) {
+      out = out.replace(new RegExp(`\\b(?:${ids.map(escapeReg).join('|')})\\b`, 'g'), (id) => troca.get(id) ?? '')
+    }
+  }
+  out = out.replace(/\[(?:[1-9]\d{0,2})\s*[-–—]\s*(?:[1-9]\d{0,2})\]/g, '')
+  out = out.replace(/\[(?:[1-9]\d{0,2})(?:\s*,\s*(?:[1-9]\d{0,2}))+\]/g, '')
+  out = out.replace(/\[(?:[1-9]\d{0,2})\]/g, '')
+  out = out.replace(/#(?:[1-9]\d{0,2})\b/g, '')
+  return out
+}
+
+function partirUrls(texto: string, fnUrl: (url: string) => string, fnResto: (resto: string) => string): string {
+  return texto.split(new RegExp(`(${URL_HTTP_SRC})`, 'g')).map((parte, i) => i % 2 === 1 ? fnUrl(parte) : fnResto(parte)).join('')
+}
+
+/** Tira id cru e apelido "[n]" do texto visível. Entidade vira o nome antes de "·". Uma passada só. */
+export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): string {
+  // Código genérico não entra em http(s). Id do recorte e [n] saem também lá dentro.
+  if (new RegExp(URL_HTTP_SRC).test(texto)) {
+    return partirUrls(texto, (url) => tirarIdsNaUrl(url, ctx), (resto) => ocultarIdsVisiveis(resto, ctx))
+  }
+  const troca = trocaDeIds(ctx)
   let out = texto
   const ids = [...troca.keys()].sort((a, b) => b.length - a.length)
   if (ids.length) {
@@ -2175,10 +2210,10 @@ function termoJuridicoCriado(original: string, saneado: string): boolean {
   return termosJuridicos(saneado).some((termo) => !antes.has(termo.toLowerCase()))
 }
 
-/** http(s) sai e volta inteira. Índice que esta chamada não guardou fica (há proteção aninhada). */
+/** http(s) sai e volta inteira. A aspa de fecho não entra no token. Índice que esta chamada não guardou fica. */
 function protegerUrls(texto: string, fn: (semUrl: string) => string): string {
   const urls: string[] = []
-  const sem = texto.replace(/https?:\/\/\S+/g, (url) => {
+  const sem = texto.replace(new RegExp(URL_HTTP_SRC, 'g'), (url) => {
     const token = `\u0006${urls.length}\u0006`
     urls.push(url)
     return token
@@ -2583,8 +2618,8 @@ function fecharAspas(t: string): string {
 }
 
 function sanearRestaurado(texto: string, ctx?: ChatContextPayload): string {
-  // A URL sai antes de qualquer corte (genérico e fixo) e volta depois, byte a byte.
-  return protegerUrls(texto, (semUrl) => {
+  // Código genérico não entra na URL. Id do recorte sai depois que ela volta. A aspa fecha no texto já restaurado.
+  const saida = protegerUrls(texto, (semUrl) => {
     // Esconde o código inteiro para o passo de id (F14, [n], E99) não partir PR13-E006 no meio.
     // A ficha só reescreve «a ficha do X registra» quando ainda vê o código, então o corte é depois.
     const mascaras: string[] = []
@@ -2601,6 +2636,7 @@ function sanearRestaurado(texto: string, ctx?: ChatContextPayload): string {
     t = semCodigosInternos(t, ctx)
     return fecharAspas(t)
   })
+  return fecharAspas(partirUrls(saida, (url) => tirarIdsNaUrl(url, ctx), (resto) => resto))
 }
 
 /** Depois da citação restaurada: o código sai. Se ainda casar, a frase cai. Sem declarativa, o trecho cai. */
@@ -2691,7 +2727,7 @@ function sanearRotulo(valor: string, ctx?: ChatContextPayload): string {
 /**
  * Nomes, títulos e descrições passam pelo saneador dos códigos.
  * Se o corte inventa termo jurídico que não era palavra inteira no original, o nome sai e o título vira «Documento».
- * url e localizador http(s) não são reescritos.
+ * O campo url sai byte a byte, como na v17. Localizador http(s) também. O que não é URL continua no saneador.
  */
 function aplicarMetadadosFinais(answer: SanitizedAnswer, ctx: ChatContextPayload): void {
   for (const bloco of answer.blocos) {
@@ -2717,11 +2753,6 @@ function aplicarMetadadosFinais(answer: SanitizedAnswer, ctx: ChatContextPayload
       const loc = sanearRotulo(original, ctx)
       if (loc && !termoJuridicoCriado(original, loc)) detalhe.localizador = loc
       else delete detalhe.localizador
-    }
-    if (detalhe.url) {
-      // Código fixo de ficha dentro do endereço não é cortado no meio: o campo sai, o resto fica byte a byte.
-      if (/^https?:\/\//.test(detalhe.url) && !new RegExp(CODIGO_FIXO_SRC, 'i').test(detalhe.url)) detalhe.url = detalhe.url
-      else delete detalhe.url
     }
   }
 }
