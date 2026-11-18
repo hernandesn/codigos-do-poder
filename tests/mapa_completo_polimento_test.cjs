@@ -517,3 +517,96 @@ test('roda e pinça sobre o cartão mantêm a escala do mural e do grafo', { tim
   } finally { await context.close(); }
 });
 
+test('toque no fundo, arrasto e cancelamento não expandem o duplo toque', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrir(1440, 900);
+  try {
+    await mapaAberto(page);
+    const esperar = () => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 650)));
+    const cenario = (modo) => page.evaluate(modoAtual => {
+      const palco = document.getElementById('grafo-palco');
+      const no = window.mapaCompleto.pontoNaTela('kochpac');
+      if (!no || no.x < 8 || no.y < 8 || no.x > innerWidth - 8 || no.y > innerHeight - 8) return { erro: 'kochpac fora', no };
+      const ids = window.mural.getState().visibleNodes;
+      const pts = [];
+      for (let i = 0; i < ids.length; i++) {
+        const p = window.mapaCompleto.pontoNaTela(ids[i]);
+        if (p) pts.push(p.x, p.y);
+      }
+      const canvas = document.getElementById('grafo-canvas').getBoundingClientRect();
+      let fundo = null;
+      const margem = 40;
+      for (let y = canvas.top + 4; y < canvas.bottom - 4 && !fundo; y += 20) {
+        for (let x = canvas.left + 4; x < canvas.right - 4; x += 20) {
+          let livre = true;
+          for (let i = 0; i < pts.length; i += 2) {
+            const dx = pts[i] - x, dy = pts[i + 1] - y;
+            if (dx * dx + dy * dy < margem * margem) { livre = false; break; }
+          }
+          if (!livre) continue;
+          const hit = document.elementFromPoint(x, y);
+          if (hit === document.getElementById('grafo-canvas') || hit === palco) { fundo = { x, y }; break; }
+        }
+      }
+      if (!fundo) return { erro: 'sem fundo', no };
+      const disparar = (tipo, x, y) => {
+        const pressionado = tipo === 'pointerdown' || tipo === 'pointermove';
+        palco.dispatchEvent(new PointerEvent(tipo, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          pointerId: 1,
+          pointerType: 'mouse',
+          clientX: x,
+          clientY: y,
+          button: tipo === 'pointermove' ? -1 : 0,
+          buttons: pressionado ? 1 : 0,
+          isPrimary: true,
+        }));
+      };
+      const toque = (x, y) => { disparar('pointerdown', x, y); disparar('pointerup', x, y); };
+      // Os três toques ficam no mesmo turno: o hashchange do mural só seleciona depois.
+      toque(no.x, no.y);
+      if (modoAtual === 'fundo') toque(fundo.x, fundo.y);
+      else if (modoAtual === 'arrasto') {
+        disparar('pointerdown', no.x, no.y);
+        disparar('pointermove', no.x + 28, no.y);
+        disparar('pointerup', no.x + 28, no.y);
+      } else if (modoAtual === 'cancel') {
+        disparar('pointerdown', no.x, no.y);
+        disparar('pointercancel', no.x, no.y);
+      }
+      toque(no.x, no.y);
+      return { ok: true };
+    }, modo);
+    const ler = () => page.evaluate(() => {
+      const s = window.mural.getState();
+      return { view: s.view, n: s.visibleNodes.length, id: s.selected && s.selected.id };
+    });
+
+    for (const modo of ['fundo', 'arrasto', 'cancel']) {
+      const prep = await cenario(modo);
+      assert.ok(prep && prep.ok, modo + ' ' + JSON.stringify(prep));
+      await page.waitForFunction(() => {
+        const s = window.mural.getState();
+        return !!(s.selected && s.selected.id === 'kochpac');
+      }, null, { timeout: 4000 });
+      // expandir entra num setTimeout depois do hashchange; dá tempo de um falso positivo aparecer.
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
+      const estado = await ler();
+      assert.equal(estado.view, 'all', modo + ' ' + JSON.stringify(estado));
+      assert.ok(estado.n > 1000, modo + ' ' + JSON.stringify(estado));
+      assert.equal(estado.id, 'kochpac', modo + ' ' + JSON.stringify(estado));
+      await esperar();
+      const depois = await page.evaluate(() => window.mural.getState().view);
+      assert.equal(depois, 'all', modo + ' atrasado ' + depois);
+    }
+    const prepDuplo = await cenario('duplo');
+    assert.ok(prepDuplo && prepDuplo.ok, JSON.stringify(prepDuplo));
+    await page.waitForFunction(() => window.mural.getState().view === 'custom', null, { timeout: 4000 });
+    const duplo = await ler();
+    assert.equal(duplo.view, 'custom', JSON.stringify(duplo));
+    assert.equal(duplo.id, 'kochpac', JSON.stringify(duplo));
+    assert.ok(duplo.n > 1 && duplo.n < 1644, JSON.stringify(duplo));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});

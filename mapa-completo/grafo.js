@@ -1090,6 +1090,11 @@
     finally { encaminhando = false; }
   }
 
+  function limparToqueDuplo() {
+    vivo.ultimoNo = null;
+    vivo.ultimoQuando = 0;
+  }
+
   function ajustarFocoCartoes() {
     const camada = document.getElementById('node-layer');
     if (!camada) return;
@@ -1255,17 +1260,27 @@
       const g = vivo.arraste;
       if (!g || g.id !== ev.pointerId) return;
       const dx = p.x - g.x, dy = p.y - g.y;
-      if (dx * dx + dy * dy > 16) { g.moved = true; palco.classList.add('arrastando'); }
+      if (dx * dx + dy * dy > 16) {
+        g.moved = true;
+        palco.classList.add('arrastando');
+        limparToqueDuplo();
+      }
     });
     const fim = ev => {
+      const cancelou = ev.type === 'pointercancel';
       vivo.ponteiros.delete(ev.pointerId);
       if (vivo.ponteiros.size < 2) vivo.pinca = null;
       encaminharRede(ev);
+      if (cancelou) limparToqueDuplo();
       const g = vivo.arraste;
       if (!g || g.id !== ev.pointerId) return;
       vivo.arraste = null;
       palco.classList.remove('arrastando');
-      if (!g.moved && g.no && ev.type !== 'pointercancel') toqueNo(g.no.id);
+      if (cancelou || g.moved || !g.no) {
+        limparToqueDuplo();
+        return;
+      }
+      toqueNo(g.no.id);
     };
     palco.addEventListener('pointerup', fim);
     palco.addEventListener('pointercancel', fim);
