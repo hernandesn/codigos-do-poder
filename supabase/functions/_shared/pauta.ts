@@ -555,30 +555,46 @@ function mergeContext(a: ChatContextPayload, b: ChatContextPayload): ChatContext
 }
 export interface PautaPlan { avisos: string[]; query?: string }
 export interface PautaHooks { titulos: string[]; pergunta: string }
-export async function expandPautaContext(db: ChatDb, initial: ChatContextPayload, query: string): Promise<{ context: ChatContextPayload; plan: PautaPlan }> {
+export async function expandPautaContext(db: ChatDb, initial: ChatContextPayload, query: string, restantes = Number.POSITIVE_INFINITY): Promise<{ context: ChatContextPayload; plan: PautaPlan }> {
   let context = initial
   const plan: PautaPlan = { avisos: [], query }
+  let usadas = 0
   const enough = () => pautaRelations(context, query).length >= 3
   // (a) O chamador já consultou nome/aliases na mesma RPC de produção.
+  // `restantes` é o saldo do teto da requisição. Sem saldo, não consulta.
   if (!enough()) {
     const related = context.entidades.filter(e => /familia|fundacao|instituicao|associacao/.test(e.tipo || '')).slice(0, 3).map(e => e.id)
-    if (related.length) { context = mergeContext(context, await db.chatContext(related, null)); plan.avisos.push('Ampliei para a família e instituições ligadas.'); }
+    if (related.length && usadas < restantes) {
+      usadas += 1
+      context = mergeContext(context, await db.chatContext(related, null))
+      plan.avisos.push('Ampliei para a família e instituições ligadas.')
+    }
   }
   if (!enough()) {
     const roots = new Set(context.raizes.map(e => e.id))
     const neighbors = [...new Set(context.relacoes.filter(r => roots.has(r.origem || '') || roots.has(r.destino || '')).flatMap(r => [r.origem, r.destino]))].filter((id): id is string => !!id && !roots.has(id)).slice(0, 3)
-    if (neighbors.length) { context = mergeContext(context, await db.chatContext(neighbors, null)); plan.avisos.push('Ampliei para vizinhos a um salto.'); }
+    if (neighbors.length && usadas < restantes) {
+      usadas += 1
+      context = mergeContext(context, await db.chatContext(neighbors, null))
+      plan.avisos.push('Ampliei para vizinhos a um salto.')
+    }
   }
   if (!enough()) {
     const axis = fold(query).match(/\b(petroleo|educacao|saude|financiamento|bancos?|museu|divida|fundacao)\b/)?.[0] || ''
     const families = ['rockefeller', 'rothschild', 'morgan'].filter(name => !fold(query).includes(name))
     // Uma consulta por família; o número de fontes/relações e o envelope do prompt continuam limitados.
+    let buscouFamilia = false
     for (const name of families) {
+      if (usadas >= restantes) break
+      usadas += 1
+      buscouFamilia = true
       const other = await db.chatContext([], `${name} ${axis}`.trim())
       context = mergeContext(context, other)
       if (enough()) break
     }
-    plan.avisos.push(initial.raizes.length ? 'Saí do recorte pedido e ampliei o mesmo eixo para outras famílias da base.' : 'A base não tem material nesse recorte. Ofereço alternativas documentadas de outras famílias da base.')
+    if (buscouFamilia || families.length === 0) {
+      plan.avisos.push(initial.raizes.length ? 'Saí do recorte pedido e ampliei o mesmo eixo para outras famílias da base.' : 'A base não tem material nesse recorte. Ofereço alternativas documentadas de outras famílias da base.')
+    }
   }
   const relacoes = selectPautaRelations(context, query)
   const entityIds = new Set([...context.raizes.map(e => e.id), ...relacoes.flatMap(r => [r.origem, r.destino])])

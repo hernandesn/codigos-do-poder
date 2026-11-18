@@ -37,3 +37,19 @@ Deno.test('adaptador recebe final do modelo fake, cobra cota e mantém fontes em
   const r=await collectChatFinal({userId:USER,body:body(),db,openrouter:model,budgetUsd:3,loadInferenceKey:accepted})
   assert(r.final);equal(db.commitCalls,1);assert(finalPlainText(r).includes('DOCUMENTADO'));assert(finalPlainText(r).includes('FONTES'));equal(r.final.gratis_restantes,19)
 })
+Deno.test('adaptador do Telegram responde Fale sobre soros com entidades vazias',async()=>{
+  const db=createMemoryDb()
+  const soros={
+    raizes:[{id:'soros',nome:'Soros · índice familiar',tipo:'familia'}],
+    entidades:[{id:'soros',nome:'Soros · índice familiar',tipo:'familia',grau:0}],
+    relacoes:[{id:'SOE01',origem:'soros',destino:'george_soros',tipo:'indice',afirmacao:'O índice familiar aponta a pessoa.',estado:'retrato_documental',fontes:['SO05'],grau:1}],
+    fontes:[{id:'SO05',titulo:'George Soros',tipo:'documento'}],
+    casos:[],limites:{relacoes:1,fontes:1,truncado:false},
+  }
+  const vazio={raizes:[],entidades:[],relacoes:[],fontes:[],casos:[],limites:{relacoes:0,fontes:0,truncado:false}}
+  db.chatContext=async(ids,query)=>ids.includes('soros')||(query??'').includes('soros')?structuredClone(soros):vazio
+  let modelo=0
+  const model:OpenRouterClient={async *stream(){modelo+=1;yield {delta:JSON.stringify({blocos:[{tipo:'documentado',texto:'Soros aparece no recorte documental.',entidades:['soros'],relacoes:['SOE01'],fontes:['SO05']}],entidades:['soros'],fontes:['SO05'],avisos:[],sem_base:false})};yield {usage:{prompt_tokens:20,completion_tokens:20,cost:0.0001}}}}
+  const r=await collectChatFinal({userId:USER,body:{mensagem:'Fale sobre a relação de soros com o Brasil',modelo:'basico',contexto:{entidades:[]}},db,openrouter:model,budgetUsd:3,loadInferenceKey:accepted})
+  assert(modelo>=1);assert(r.final);assert(!finalPlainText(r).includes('Fale não está'));assert(!String(r.message??'').includes('Fale não está'))
+})

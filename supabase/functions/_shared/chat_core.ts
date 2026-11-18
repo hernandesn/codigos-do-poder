@@ -784,10 +784,114 @@ const PRIMEIRA_PALAVRA_COMUM = new Set([
 const NOME_GENERICO = new Set(['brasil', 'eua', 'estados unidos', 'imperio', 'governo', 'seculo'])
 const CABECA_GENERICA = new Set(['operacao', 'familia', 'casa', 'caso', 'jornal', 'o', 'a'])
 const ROMANO = /^(?:i{1,3}|iv|vi{0,3}|ix|xi{0,3}|xiv|xv|xvi{0,3}|xix|xx)$/
+// Abertura de pedido. Não é nome próprio no início da frase nem depois de vírgula/ponto.
+const LOCUCAO_COMANDO = [
+  'me diga', 'me conte', 'me fala', 'me fale',
+  'quem e', 'quem foi', 'quem era',
+  'o que foi', 'o que e', 'o que',
+  'fale', 'fala', 'diga', 'explique', 'conte', 'liste', 'mostre', 'resuma', 'descreva', 'compare',
+  'qual', 'quais', 'como',
+]
+// Minúsculas comuns que não são nome. Um token fora desta lista só entra se a raiz confirmar.
+const NAO_CONFIRMA = new Set([
+  'fale', 'fala', 'falar', 'diga', 'dizer', 'explique', 'explicar', 'conte', 'contar',
+  'liste', 'listar', 'mostre', 'mostrar', 'resuma', 'resumir', 'descreva', 'descrever',
+  'compare', 'comparar', 'apresente', 'apresentar', 'passe', 'passa', 'passar', 'sugira',
+  'receita', 'receitas', 'bolo', 'bolos', 'cenoura', 'cobertura', 'chocolate',
+  'tempo', 'clima', 'jogo', 'jogos', 'futebol', 'piada', 'piadas', 'culinaria',
+  'previsao', 'amanha', 'hoje', 'ontem', 'horoscopo', 'programacao', 'matematica', 'traducao',
+  'familia', 'fundacao', 'foundation', 'empresa', 'empresas', 'grupo', 'nacional',
+  'golpe', 'liga', 'ligam', 'papel', 'antes', 'depois', 'fez', 'teve', 'fundou',
+  'brasil', 'brasileiro', 'brasileira', 'brasileiros', 'brasileiras',
+  'casa', 'caso', 'jornal', 'operacao', 'dois', 'duas', 'tres', 'quatro',
+  'isso', 'esse', 'essa', 'este', 'esta', 'estes', 'estas',
+  'direto', 'direta', 'principal', 'principais', 'geral',
+  'acoes', 'acao', 'fatos', 'fato', 'contrato', 'contratos', 'eventos', 'evento',
+  'panorama', 'balanco', 'sintese', 'contexto', 'registro', 'registros', 'paraense',
+  'documentada', 'documentado', 'recente', 'recentes',
+])
+const SUFIXO_COMUM = /(?:coes|caes|cao|mentos|mento|mente|adas|ados|ada|ado|idas|idos|ida|ido|eiras|eiros|eira|eiro|iveis|avel|ando|endo|indo|entes|ente|acoes|acao)$/
+// Em frase toda em maiúsculas estes continuam nome: "Fundação Rockefeller" vira "rockefeller foundation".
+const NOME_EM_MAIUSCULA = new Set(['fundacao', 'foundation'])
+const COMANDO_TOKEN = new Set(LOCUCAO_COMANDO.flatMap((frase) => frase.split(' ')))
+// Palavra comum que a stoplist não cobre e que, em maiúsculas, não é nome.
+const PALAVRA_COMUM_MAIUSCULA = new Set(['saude'])
+// Palavra curta que a stoplist não cobre. Em maiúsculas fica minúscula e não vira nome.
+const PALAVRA_CURTA = new Set([
+  'mas', 'mar', 'mal', 'paz', 'sol', 'fim', 'bem', 'bom', 'voz', 'luz', 'flor', 'trem', 'cruz',
+  'sem', 'sob', 'pos', 'pre', 'pro', 'cem', 'mil', 'dom', 'rei', 'rua', 'pe', 'po', 'no', 'na',
+])
 
 interface NomeProprio {
   original: string
   norm: string
+  /** Verdadeiro só quando toda frase de origem está em maiúsculas. Caixa mista pode ser ausente. */
+  deFraseMaiuscula: boolean
+}
+
+function terminaClausula(raw: string): boolean {
+  return /[,:;][^\p{L}\p{N}&]*$/u.test(raw)
+}
+
+/** Frase inteira em maiúsculas: a inicial não separa nome de palavra comum. */
+function fraseTodaMaiuscula(sentence: string): boolean {
+  const letras = sentence.match(/\p{L}/gu)
+  if (!letras || letras.length < 2) return false
+  return letras.every((letra) => letra === letra.toLocaleUpperCase('pt-BR') && letra !== letra.toLocaleLowerCase('pt-BR'))
+}
+
+function tokenComumNaMaiuscula(norm: string): boolean {
+  if (!norm) return true
+  if (NOME_EM_MAIUSCULA.has(norm)) return false
+  if (CONTEXT_QUERY_STOPWORDS.has(norm) || PRIMEIRA_PALAVRA_COMUM.has(norm) || NOME_GENERICO.has(norm)) return true
+  if (GENERIC_CONTEXT_TOKENS.has(norm) || CABECA_GENERICA.has(norm) || NAO_CONFIRMA.has(norm) || COMANDO_TOKEN.has(norm)) return true
+  if (PALAVRA_COMUM_MAIUSCULA.has(norm) || PALAVRA_CURTA.has(norm) || ROMANO.test(norm)) return true
+  return false
+}
+
+/** Maiúsculas viram frase: comum em minúscula, o resto com inicial maiúscula. Aí vale a mesma heurística. */
+function normalizarMaiusculas(sentence: string): string {
+  return sentence.replace(/\p{L}+/gu, (token) => {
+    if (tokenComumNaMaiuscula(foldName(token))) return token.toLocaleLowerCase('pt-BR')
+    const chars = [...token.toLocaleLowerCase('pt-BR')]
+    return (chars[0] ?? '').toLocaleUpperCase('pt-BR') + chars.slice(1).join('')
+  })
+}
+
+function pularLocucao(tokens: readonly string[], index: number): number {
+  for (const n of [3, 2, 1]) {
+    if (index + n > tokens.length) continue
+    const frase = tokens.slice(index, index + n).map((token) => foldName(token)).join(' ')
+    if (LOCUCAO_COMANDO.includes(frase)) return index + n
+  }
+  return index
+}
+
+function pularAbertura(tokens: readonly string[], index: number): number {
+  let cursor = index
+  if (cursor < tokens.length && PRIMEIRA_PALAVRA_COMUM.has(foldName(tokens[cursor])) && pularLocucao(tokens, cursor) === cursor) {
+    cursor += 1
+  }
+  while (cursor < tokens.length) {
+    const next = pularLocucao(tokens, cursor)
+    if (next === cursor) break
+    cursor = next
+  }
+  return cursor
+}
+
+function tokenConfirmavel(norm: string): boolean {
+  if (!norm || norm.length < 4 || /^\d+$/.test(norm)) return false
+  if (NAO_CONFIRMA.has(norm) || NOME_GENERICO.has(norm) || GENERIC_CONTEXT_TOKENS.has(norm)) return false
+  if (CONTEXT_QUERY_STOPWORDS.has(norm) || PRIMEIRA_PALAVRA_COMUM.has(norm) || CABECA_GENERICA.has(norm)) return false
+  if (ROMANO.test(norm)) return false
+  if (norm.length > 5 && SUFIXO_COMUM.test(norm)) return false
+  return true
+}
+
+function baseConfirma(raiz: { nome?: string }, norm: string): boolean {
+  if (raizNomeadaPor(raiz, norm)) return true
+  return containsWhole(foldName(raiz.nome || ''), norm)
 }
 
 function palavraCapital(word: string): boolean {
@@ -803,14 +907,29 @@ export function nomesProprios(mensagem: string): string[] {
   return detalhesNomes(mensagem).map((nome) => nome.norm)
 }
 
+function pedacosDaFrase(sentence: string): Array<{ raw: string; token: string }> {
+  return sentence.split(/\s+/).filter(Boolean).map((raw) => ({
+    raw,
+    token: raw.replace(/^[^\p{L}\p{N}&]+|[^\p{L}\p{N}&]+$/gu, ''),
+  })).filter((piece) => piece.token)
+}
+
 function detalhesNomes(mensagem: string): NomeProprio[] {
   const out: NomeProprio[] = []
   const seen = new Set<string>()
   for (const sentence of mensagem.split(/(?<=[.!?])\s+|\n+/)) {
-    const tokens = sentence.split(/\s+/).map((token) => token.replace(/^[^\p{L}\p{N}&]+|[^\p{L}\p{N}&]+$/gu, '')).filter(Boolean)
+    const maiuscula = fraseTodaMaiuscula(sentence)
+    // Tudo em maiúsculas: baixa o que é comum e deixa o nome na forma de frase.
+    const texto = maiuscula ? normalizarMaiusculas(sentence) : sentence
+    const pieces = pedacosDaFrase(texto)
+    const tokens = pieces.map((piece) => piece.token)
     let index = 0
-    if (tokens.length && PRIMEIRA_PALAVRA_COMUM.has(foldName(tokens[0]))) index = 1
     while (index < tokens.length) {
+      const boundary = index === 0 || terminaClausula(pieces[index - 1].raw)
+      if (boundary) {
+        const next = pularAbertura(tokens, index)
+        if (next !== index) { index = next; continue }
+      }
       if (!palavraCapital(tokens[index])) {
         index += 1
         continue
@@ -818,7 +937,8 @@ function detalhesNomes(mensagem: string): NomeProprio[] {
       const parts = [tokens[index]]
       let cursor = index + 1
       while (cursor < tokens.length) {
-        if (conectorNome(tokens[cursor]) && cursor + 1 < tokens.length && palavraCapital(tokens[cursor + 1])) {
+        if (terminaClausula(pieces[cursor - 1].raw)) break
+        if (conectorNome(tokens[cursor]) && cursor + 1 < tokens.length && palavraCapital(tokens[cursor + 1]) && !terminaClausula(pieces[cursor].raw)) {
           parts.push(tokens[cursor], tokens[cursor + 1])
           cursor += 2
           continue
@@ -843,12 +963,67 @@ function detalhesNomes(mensagem: string): NomeProprio[] {
       let norm = foldName(surface)
       const fund = norm.match(/^fundacao (?:d[aeo]s? )?(.+)$/)
       if (fund?.[1]) norm = `${fund[1]} foundation`
-      if (!norm || norm.length < 2 || NOME_GENERICO.has(norm) || ROMANO.test(norm) || seen.has(norm)) continue
+      if (!norm || norm.length < 2 || NOME_GENERICO.has(norm) || ROMANO.test(norm)) continue
+      if (seen.has(norm)) {
+        if (!maiuscula) {
+          const ja = out.find((nome) => nome.norm === norm)
+          if (ja) ja.deFraseMaiuscula = false
+        }
+        continue
+      }
       seen.add(norm)
-      out.push({ original: surface, norm })
+      out.push({ original: surface, norm, deFraseMaiuscula: maiuscula })
     }
   }
   return out
+}
+
+function cobertosPorNomes(nomes: readonly NomeProprio[]): Set<string> {
+  const set = new Set<string>()
+  for (const nome of nomes) {
+    set.add(nome.norm)
+    for (const parte of nome.norm.split(' ')) if (parte.length >= 3) set.add(parte)
+    for (const parte of foldName(nome.original).split(' ')) if (parte.length >= 3) set.add(parte)
+  }
+  return set
+}
+
+/** Minúsculas e frase toda em maiúsculas. Só seguem se uma raiz confirmar; nunca viram ausentes. */
+function candidatosConfirmaveis(mensagem: string, cobertos: ReadonlySet<string>): string[] {
+  const frases: string[] = []
+  const soltos: string[] = []
+  const guardar = (partes: string[]) => {
+    if (partes.length >= 2 && partes.length <= 4) {
+      const frase = partes.join(' ')
+      if (!cobertos.has(frase) && !frases.includes(frase)) frases.push(frase)
+    }
+    for (const parte of partes) {
+      if (!cobertos.has(parte) && !soltos.includes(parte)) soltos.push(parte)
+    }
+  }
+  for (const sentence of mensagem.split(/(?<=[.!?])\s+|\n+/)) {
+    const pieces = pedacosDaFrase(sentence)
+    const tokens = pieces.map((piece) => piece.token)
+    let index = 0
+    const run: string[] = []
+    const flush = () => {
+      if (run.length) guardar(run)
+      run.length = 0
+    }
+    while (index < tokens.length) {
+      const boundary = index === 0 || terminaClausula(pieces[index - 1].raw)
+      if (boundary) {
+        const next = pularAbertura(tokens, index)
+        if (next !== index) { flush(); index = next; continue }
+      }
+      const norm = foldName(tokens[index])
+      if (tokenConfirmavel(norm) && !cobertos.has(norm)) run.push(norm)
+      else flush()
+      index += 1
+    }
+    flush()
+  }
+  return [...frases, ...soltos].slice(0, 6)
 }
 
 export interface ApelidoRecorte {
@@ -1113,6 +1288,8 @@ export async function recuperarContexto(
     buscasNome += 1
     const achado = await call([], nome.norm)
     if (contextIsEmpty(achado)) {
+      // Nome só de frase toda em maiúsculas nunca gera ausente. Só a raiz confirmada fica nomeada.
+      if (nome.deFraseMaiuscula) continue
       if (!ausentes.includes(nome.original)) ausentes.push(nome.original)
       continue
     }
@@ -1124,12 +1301,37 @@ export async function recuperarContexto(
     }
   }
 
+  // Minúsculas e MAIÚSCULAS: o mesmo casamento de raiz, sem transformar erro de busca em ausente.
+  const candidatos = candidatosConfirmaveis(mensagem, cobertosPorNomes(nomes))
+  let buscasConfirma = 0
+  for (const norm of candidatos) {
+    const raiz = raizesDe(context).find((item) => baseConfirma(item, norm))
+    if (raiz?.id && !idPorNome.has(norm)) idPorNome.set(norm, raiz.id)
+  }
+  for (const norm of candidatos) {
+    if (idPorNome.has(norm) || buscasConfirma >= 3) continue
+    // Recorte já achado: casa na raiz sem chamada nova. Busca só o vazio, no teto de 8.
+    if (!contextIsEmpty(context)) continue
+    if (norm.split(' ').length === 1 && candidatos.some((outro) => outro !== norm && outro.split(' ').includes(norm) && idPorNome.has(outro))) continue
+    if (!cabe(reservaSelecao + 1)) break
+    buscasConfirma += 1
+    const achado = await call([], norm)
+    if (contextIsEmpty(achado)) continue
+    for (const raiz of achado.raizes ?? []) {
+      if (!raiz?.id || !baseConfirma(raiz, norm)) continue
+      if (!idPorNome.has(norm)) idPorNome.set(norm, raiz.id)
+      if (raizesDe(context).some((item) => item.id === raiz.id)) continue
+      if (!acertosNovos.includes(raiz.id)) acertosNovos.push(raiz.id)
+    }
+  }
+
   if (acertosNovos.length && cabe(reservaSelecao)) {
     const porNome: string[] = []
     const porAno: string[] = []
+    const confirmados = new Set(idPorNome.values())
     for (const raiz of raizesDe(context)) {
       if (!raiz.id) continue
-      if (nomes.some((nome) => raizNomeadaPor(raiz, nome.norm))) {
+      if (confirmados.has(raiz.id) || nomes.some((nome) => raizNomeadaPor(raiz, nome.norm))) {
         if (!porNome.includes(raiz.id)) porNome.push(raiz.id)
       } else if (raizNomeadaPorAno(raiz.nome || '', mensagem)) {
         if (!porAno.includes(raiz.id)) porAno.push(raiz.id)
@@ -1162,6 +1364,9 @@ export async function recuperarContexto(
   const nomeados: string[] = []
   for (const nome of nomes) {
     const id = idPorNome.get(nome.norm)
+    if (id && !nomeados.includes(id)) nomeados.push(id)
+  }
+  for (const id of idPorNome.values()) {
     if (id && !nomeados.includes(id)) nomeados.push(id)
   }
   const pares: Array<[string, string]> = []
@@ -3242,6 +3447,18 @@ function soLigacaoComAusente(mensagem: string, ausentes: readonly string[]): boo
   })
 }
 
+/** Imperativo que só cita ausente e não achou raiz. Recusa antes do crédito, como a ligação. */
+function imperativoSoComAusente(mensagem: string, ausentes: readonly string[], ctx: ChatContextPayload): boolean {
+  if (!ausentes.length || !contextIsEmpty(ctx)) return false
+  const pedidos = pedidosDaMensagem(mensagem)
+  if (!pedidos.length) return false
+  return pedidos.every((pedido) => {
+    if (!temImperativo(pedido)) return false
+    const hay = foldName(pedido)
+    return ausentes.some((nome) => containsWhole(hay, foldName(nome)))
+  })
+}
+
 function termoNoRecorte(termo: string, ctx: ChatContextPayload): boolean {
   const partes: string[] = []
   for (const ent of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
@@ -3710,7 +3927,9 @@ export async function prepareChat(input: {
     context = recovered.context
     // LAT-FORA continua anterior à ampliação, inclusive quando há pedido de pauta.
     if (pauta && !onlyGenericRootMatch(context, entityIds, recovered.query)) {
-      const expanded = await expandPautaContext(input.db, context, pautaSearchQuery(request.mensagem))
+      // O teto de 8 é da requisição: a expansão só gasta o que a recuperação não usou.
+      const saldoContexto = Math.max(0, MAX_CHAMADAS_CONTEXTO - recovered.chamadas)
+      const expanded = await expandPautaContext(input.db, context, pautaSearchQuery(request.mensagem), saldoContexto)
       context = expanded.context
       pautaPlan = expanded.plan
     }
@@ -3723,6 +3942,9 @@ export async function prepareChat(input: {
   if (entityIds.length === 0 && soLigacaoComAusente(request.mensagem, recovered.ausentes)) {
     return fail('fora_da_base', mensagemForaDaBase(recovered.ausentes))
   }
+  if (entityIds.length === 0 && imperativoSoComAusente(request.mensagem, recovered.ausentes, context)) {
+    return fail('fora_da_base', mensagemForaDaBase(recovered.ausentes))
+  }
   if (selecaoForaDaPergunta(request.mensagem, context, recovered.textoVazio, entityIds)) {
     return fail('fora_da_base')
   }
@@ -3730,12 +3952,11 @@ export async function prepareChat(input: {
   let reserved: Reservation | ReserveDenied
   try {
     reserved = await input.db.reserveCredits(input.userId, request.modelo, pedidoId, now)
-  } catch (err) {
-    await runIsolated([
-      { run: async () => {}, label: 'chat_release_failed' },
-      { run: () => input.db.releaseBudget(pedidoId), label: 'chat_budget_release_failed' },
-    ])
-    throw err
+  } catch {
+    // A função pode ter gravado a reserva e caído antes de devolver. A liberação
+    // por pedidoId é noop se a linha não existe e não alcança outra reserva.
+    await releasePair(input.db, reservaPorPedido(input.userId, request.modelo, pedidoId, now), pedidoId)
+    return fail('rede', 'Falha ao consultar a base.')
   }
   if (!reserved.ok) {
     await runIsolated([
@@ -3744,63 +3965,63 @@ export async function prepareChat(input: {
     ])
     return fail('sem_creditos')
   }
-  // LAT-FORA: raiz única casada só por palavra genérica não vale uma chamada ao modelo.
-  if (contextIsEmpty(context) || onlyGenericRootMatch(context, entityIds, recovered.query)) {
-    await releasePair(input.db, reserved, pedidoId)
-    return fail('fora_da_base')
-  }
-
-  const msgOrdem = recovered.ausentes.length ? `${request.mensagem}\nbrasil` : request.mensagem
-  context = ordenarRecortePorPergunta(context, msgOrdem, recovered.nomeados)
-  if (!pautaPlan && perguntaDeLigacao(request.mensagem) && (context.raizes ?? []).length >= 2) context = await pontePrototipo(input.db, context, MAX_CHAMADAS_CONTEXTO - recovered.chamadas)
-  const apelidos = apelidarRecorte(context).idPorNumero
-  const system = buildSystemPrompt(request.modelo, context, !!pautaPlan, recovered.ausentes)
-  const requestBody = modelRequestBody(request.modelo, system, request.mensagem)
-  const estimate = chatSpendCeilingUsd(request.modelo, requestBody)
-  if (key.remainingUsd < estimate) {
-    await releasePair(input.db, reserved, pedidoId)
-    return fail('limite_chave', KEY_EXHAUSTED_MESSAGE)
-  }
+  // Qualquer falha daqui até o stream devolve crédito e orçamento. Sem isso a ponte prende a reserva.
   try {
+    // LAT-FORA: raiz única casada só por palavra genérica não vale uma chamada ao modelo.
+    if (contextIsEmpty(context) || onlyGenericRootMatch(context, entityIds, recovered.query)) {
+      await releasePair(input.db, reserved, pedidoId)
+      return fail('fora_da_base')
+    }
+
+    const msgOrdem = recovered.ausentes.length ? `${request.mensagem}\nbrasil` : request.mensagem
+    context = ordenarRecortePorPergunta(context, msgOrdem, recovered.nomeados)
+    if (!pautaPlan && perguntaDeLigacao(request.mensagem) && (context.raizes ?? []).length >= 2) context = await pontePrototipo(input.db, context, MAX_CHAMADAS_CONTEXTO - recovered.chamadas)
+    const apelidos = apelidarRecorte(context).idPorNumero
+    const system = buildSystemPrompt(request.modelo, context, !!pautaPlan, recovered.ausentes)
+    const requestBody = modelRequestBody(request.modelo, system, request.mensagem)
+    const estimate = chatSpendCeilingUsd(request.modelo, requestBody)
+    if (key.remainingUsd < estimate) {
+      await releasePair(input.db, reserved, pedidoId)
+      return fail('limite_chave', KEY_EXHAUSTED_MESSAGE)
+    }
     const budgetHeld = await input.db.reserveBudget(pedidoId, estimate, budget, now)
     if (!budgetHeld.ok) {
       await releasePair(input.db, reserved, pedidoId)
       return fail('orcamento_esgotado')
     }
-  } catch (err) {
-    await releasePair(input.db, reserved, pedidoId)
-    throw err
-  }
+    let acquired = false
+    try {
+      acquired = await input.db.acquirePaidLease(pedidoId, CHAT_LEASE_HOLD_MS, now)
+    } catch {
+      await releasePair(input.db, reserved, pedidoId)
+      return fail('rede', 'Serviço indisponível.')
+    }
+    if (!acquired) {
+      await releasePair(input.db, reserved, pedidoId)
+      return fail('ocupado')
+    }
 
-  let acquired = false
-  try {
-    acquired = await input.db.acquirePaidLease(pedidoId, CHAT_LEASE_HOLD_MS, now)
+    return {
+      ok: true,
+      userId: input.userId,
+      modelo: request.modelo,
+      conversaId,
+      reservation: reserved,
+      context,
+      requestBody,
+      mensagem: request.mensagem,
+      ...(pautaPlan ? { pauta: pautaPlan } : {}),
+      pressure: isIllegalPressure(request.mensagem),
+      origem: recovered.origem,
+      ausentes: recovered.ausentes,
+      apelidos,
+      estimate,
+      entityIds,
+      meta: metaBeforeDebit(conversaId, request.modelo, estimate, context, reserved),
+    }
   } catch {
     await releasePair(input.db, reserved, pedidoId)
-    return fail('rede', 'Serviço indisponível.')
-  }
-  if (!acquired) {
-    await releasePair(input.db, reserved, pedidoId)
-    return fail('ocupado')
-  }
-
-  return {
-    ok: true,
-    userId: input.userId,
-    modelo: request.modelo,
-    conversaId,
-    reservation: reserved,
-    context,
-    requestBody,
-    mensagem: request.mensagem,
-    ...(pautaPlan ? { pauta: pautaPlan } : {}),
-    pressure: isIllegalPressure(request.mensagem),
-    origem: recovered.origem,
-    ausentes: recovered.ausentes,
-    apelidos,
-    estimate,
-    entityIds,
-    meta: metaBeforeDebit(conversaId, request.modelo, estimate, context, reserved),
+    return fail('rede', 'Falha ao consultar a base.')
   }
 }
 
@@ -4326,6 +4547,21 @@ async function runIsolated(steps: {
     }
   }
   await next()
+}
+
+/** Reserva sintética. O banco lê a linha pelo pedidoId; kind e cost daqui não mandam. */
+function reservaPorPedido(userId: string, modelo: Modelo, pedidoId: string, now: Date): Reservation {
+  return {
+    ok: true,
+    userId,
+    kind: 'free',
+    cost: 0,
+    day: saoPauloDay(now),
+    pedidoId,
+    modelo,
+    gratis_restantes: 0,
+    pago: 0,
+  }
 }
 
 async function releasePair(db: ChatDb, reservation: Reservation, pedidoId: string): Promise<void> {
