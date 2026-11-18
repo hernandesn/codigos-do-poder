@@ -12,7 +12,7 @@ const { arquivoDoSite } = require('./site_files.cjs');
 
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
-const SHA_MAPA = 'a6ddfce60fae793a43b4673d43234356e0ccc3207c72321990c42e5074a6b078';
+const SHA_MAPA = '68681b197983985b0291877bfeb8aacca1c5d5b894be4867c8a0c9b5a67fc3f9';
 
 test('raiz serve a landing e /mapa/index.html é o arquivo gerado', () => {
   const landing = read('index.html');
