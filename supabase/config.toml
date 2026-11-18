@@ -5,3 +5,18 @@ verify_jwt = false
 
 [functions.telegram-link]
 verify_jwt = true
+
+# Checkout e cancelamento exigem JWT. O preço não vem do cliente.
+[functions.asaas-checkout]
+verify_jwt = true
+
+[functions.asaas-cancel]
+verify_jwt = true
+
+# Produção ainda responde 503. O token próprio seria exigido antes do corpo e do DB.
+[functions.asaas-webhook]
+verify_jwt = false
+
+# Único webhook no ar nesta etapa. Token próprio (asaas-access-token) antes do corpo e do DB.
+[functions.sandbox_asaas_webhook]
+verify_jwt = false
