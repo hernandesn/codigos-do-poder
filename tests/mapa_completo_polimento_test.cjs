@@ -6,6 +6,7 @@ const http = require('node:http');
 const path = require('node:path');
 const { test, before, after } = require('node:test');
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const { arquivoDoSite } = require('./site_files.cjs');
 
 const root = path.resolve(__dirname, '..');
 let browser, server, origin;
@@ -24,9 +25,8 @@ before(async () => {
   server = http.createServer(async (req, res) => {
     try {
       const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-      const rel = pathname === '/' ? '/index.html' : pathname;
-      const file = path.resolve(root, '.' + rel);
-      if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
+      const file = arquivoDoSite(root, pathname);
+      if (!file) { res.writeHead(403); res.end(); return; }
       const body = await fs.promises.readFile(file);
       res.writeHead(200, { 'content-type': tipo(file) });
       res.end(body);
@@ -34,7 +34,7 @@ before(async () => {
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, channel: 'chrome' });
 });
 
 after(async () => {
@@ -73,7 +73,7 @@ async function abrir(width, height, extra) {
 }
 
 async function mapaAberto(page) {
-  await page.goto(origin + '/#all', { waitUntil: 'domcontentloaded' });
+  await page.goto(origin + '/mapa/#all', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.mural && window.mural.getState().view === 'all' && window.mapaCompleto && window.mapaCompleto.ativo, null, { timeout: 25000 });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => {
