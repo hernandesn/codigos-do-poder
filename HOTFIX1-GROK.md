@@ -747,3 +747,29 @@ Teste: `chat_hotfix1_test.ts:2227`.
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **195 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. O teste novo é o `hotfix1m` desta seção. `git diff cc3d0f5 -- 'supabase/functions/_shared/*_test.ts' | grep '^-'` devolve só o cabeçalho `--- a/supabase/functions/_shared/chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
+
+## Hotfix1n
+
+Sobre `fe708ba`. A revisão Codex desse commit deu REPROVADO (dois médios novos contra `e981dc6`). Em `chat_core.ts` só mudam o nome da pergunta estrutural e o token de URL. `pauta.ts` não muda. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda: o evento final continua com `avisos: []` (`chat_core.ts:4276`). O prompt do sistema não muda.
+
+### 1. Nome na pergunta de fecho
+
+Achado: `nomePublico` (`2470`) tirava a tag antes da guarda. `Casa cri<AP_E777>me` já era `Casa crime`, e `termoJuridicoCriado` comparava duas strings em que «crime» já era palavra inteira. A pergunta saía «Que documento detalharia a relação entre Casa crime e Campanha de 1916?».
+
+`nomeJuridicoRejeitado` (`2462`) aplica `termoJuridicoCriado(original, saneado)` com contagem fora de URL, e também recusa se o nome saneado tem termo jurídico que não era palavra inteira no original. O original é a parte antes de « · », com a tag (`2479`). O candidato continua sendo o nome depois da tag e de `limparCodigosDoNome`. Se a checagem falha, `nomePublico` devolve nulo (`2487`): a entidade não entra. `perguntaEstrutural` (`2539`) usa a próxima entidade válida ou «Que documento detalharia esta relação?».
+
+Teste: `chat_hotfix1_test.ts:2264`. Entidade `Casa cri<AP_E777>me` e bloco neutro. `JSON.stringify` do evento final não tem «crime». O fecho não traz essa entidade.
+
+### 2. Proteção de URL
+
+Achado: `URL_HTTP_SRC` (`1677` em `fe708ba`) parava no apóstrofo. Em `https://example.com/acervo/d'Oliveira/BR101/1936.pdf` o token acabava em `d` e o saneador apagava `BR101`.
+
+O token (`1677`; `protegerUrls`, `2233`) agora termina só em espaço, fim do texto ou aspa/delimitador de fecho (`" ” » ) ] >`). Apóstrofo (`' ’`) faz parte da URL. Pontuação final (`. , ; :`) imediatamente antes de espaço ou fim fica fora do token.
+
+Teste: `chat_hotfix1_test.ts:2288`. A frase `O contrato AP_E777 está em https://example.com/acervo/d'Oliveira/BR101/1936.pdf no arquivo.` publica a URL idêntica. Fora dela, o evento final não tem `AP_E777`. As quatro URLs reais e o teste de aspas balanceadas continuam passando.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**197 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os dois `hotfix1n` desta seção. `git diff fe708ba -- 'supabase/functions/_shared/*_test.ts' | grep '^-'` devolve só o cabeçalho `--- a/supabase/functions/_shared/chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.

@@ -2260,3 +2260,46 @@ Deno.test('hotfix1m ocorrência de termo jurídico fora de URL: a URL não autor
   const finalDobro = finalDe((await pedido(tituloDe('Relatório sobre crime e cri"AP_E777"me'))).emitted)
   eq(finalDobro.fontes_detalhe.B01.titulo, 'Documento', JSON.stringify(finalDobro.fontes_detalhe))
 })
+
+Deno.test('hotfix1n tag no nome não leva termo jurídico ao fecho', async () => {
+  const ctx = campanhaCtx()
+  ctx.entidades = ctx.entidades.map((item) => item.id === 'casa_ms'
+    ? { ...item, nome: 'Casa cri<AP_E777>me' }
+    : item)
+  const r = await rodarModelo({
+    ctx,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  const cru = JSON.stringify(final)
+  assert(!/crime/i.test(cru), cru)
+  const texto = final.blocos.map((bloco) => bloco.texto).join('\n')
+  const fecho = texto.trimEnd().split('\n\n').pop() ?? ''
+  assert(fecho.startsWith('Que documento detalharia '), fecho)
+  assert(!/casa_ms|Casa cri|<AP_E777>|crime/i.test(fecho), fecho)
+  assert(texto.includes('O contrato de 1936 ficou registrado no papel citado.'), texto)
+})
+
+Deno.test('hotfix1n apóstrofo não corta a URL', async () => {
+  const url = "https://example.com/acervo/d'Oliveira/BR101/1936.pdf"
+  const r = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha(`O contrato AP_E777 está em ${url} no arquivo.`)],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  const cru = JSON.stringify(final)
+  assert(cru.includes(url), cru)
+  const fora = cru.split(url).join('')
+  assert(!fora.includes('AP_E777'), fora)
+  const texto = final.blocos.map((bloco) => bloco.texto).join('\n')
+  assert(texto.includes(url), texto)
+})

@@ -1670,8 +1670,11 @@ function trocaDeIds(ctx: ChatContextPayload): Map<string, string> {
   return troca
 }
 
-/** http(s) até o espaço ou a aspa. A citação fica fora do endereço. */
-const URL_HTTP_SRC = String.raw`https?:\/\/[^\s"'“”«»‘’]+`
+/**
+ * http(s) até espaço, fim ou aspa/delimitador de fecho (" ” » ) ] >).
+ * Apóstrofo (' ’) fica na URL. Pontuação final (. , ; :) antes de espaço ou fim fica de fora.
+ */
+const URL_HTTP_SRC = String.raw`https?:\/\/(?:[^\s"”»)\]>.,;:]+|[.,;:](?=[^\s"”»)\]>.,;:]))+`
 
 /**
  * Dentro da URL, como na v17: sai o id do recorte e o apelido [n]/#n.
@@ -2226,7 +2229,7 @@ function termoJuridicoCriado(original: string, saneado: string): boolean {
   return false
 }
 
-/** http(s) sai e volta inteira. A aspa de fecho não entra no token. Índice que esta chamada não guardou fica. */
+/** http(s) sai e volta inteira. Aspa de fecho e pontuação final não entram. Apóstrofo entra. Índice que esta chamada não guardou fica. */
 function protegerUrls(texto: string, fn: (semUrl: string) => string): string {
   const urls: string[] = []
   const sem = texto.replace(new RegExp(URL_HTTP_SRC, 'g'), (url) => {
@@ -2452,6 +2455,17 @@ function ultimaPerguntaValida(blocos: readonly { texto: string }[]): string {
   return ''
 }
 
+/**
+ * Fora de URL, o nome saneado tem termo jurídico que o original não tinha como palavra inteira,
+ * ou tem mais ocorrências do que o original. A tag ainda está no original: tirá-la antes junta «crime».
+ */
+function nomeJuridicoRejeitado(original: string, saneado: string): boolean {
+  if (termoJuridicoCriado(original, saneado)) return true
+  const fora = (texto: string) => texto.replace(new RegExp(URL_HTTP_SRC, 'g'), ' ')
+  const tinha = new Set(termosJuridicos(fora(original)).map((termo) => termo.toLowerCase()))
+  return termosJuridicos(fora(saneado)).some((termo) => !tinha.has(termo.toLowerCase()))
+}
+
 /** Nome público: campo nome, parte antes de « · ». Snake, código interno ou menos de 2 letras não servem. */
 function nomePublico(ctx: ChatContextPayload, id: string): string | null {
   let bruto = ''
@@ -2461,6 +2475,8 @@ function nomePublico(ctx: ChatContextPayload, id: string): string | null {
       break
     }
   }
+  // O original da checagem jurídica guarda a tag. `parte` é só o candidato que iria à pergunta.
+  const original = bruto.split('·')[0]
   const parte = bruto.replace(/<[^>]*>/g, '').split('·')[0]
   const curto = limparCodigosDoNome(parte, ctx)
   const util = curto.replace(/[^\p{L}\p{N}]+/gu, '')
@@ -2468,7 +2484,7 @@ function nomePublico(ctx: ChatContextPayload, id: string): string | null {
   if (!/\s/.test(curto) && curto.includes('_')) return null
   // Limpar o código não pode inventar «crime» e pôr esse nome na pergunta.
   const exibido = sanearRotulo(parte, ctx)
-  if (!exibido || termoJuridicoCriado(parte, exibido)) return null
+  if (!exibido || nomeJuridicoRejeitado(original, exibido) || nomeJuridicoRejeitado(original, curto)) return null
   return curto
 }
 
