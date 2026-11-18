@@ -1,0 +1,7 @@
+# Somente o webhook Telegram dispensa JWT: exige secret próprio antes do corpo/DB.
+# A função chat mantém verify_jwt ligado pelo padrão do gateway.
+[functions.telegram]
+verify_jwt = false
+
+[functions.telegram-link]
+verify_jwt = true

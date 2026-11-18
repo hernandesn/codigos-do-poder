@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="couro-osso">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org/js/telegram-web-app.js 'sha256-ozgd1w/EL4wtu0+1SWaNwijB4IXbmqj9zvvYR4Tjz3k='; style-src 'self' 'sha256-mu21KV6aAZCxuyuzwnUC2XuVjPHFaVhnA6Mp+Yue8mo='; style-src-attr 'none'; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'none';">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:,">
+  <title>Perguntar · Códigos do Poder no Telegram</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>/* Fontes self-hosted (EB Garamond, Courier Prime · SIL OFL 1.1), latin + latin-ext, font-display:swap */
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:italic;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400i.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:600;font-display:swap;src:url("fonts/eb-garamond-600.woff2") format("woff2")}
+@font-face{font-family:"Courier Prime";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/courier-prime-400.woff2") format("woff2")}
+/* ═══════════════════════════════════════════════════════════════════════════
+   Códigos do Poder · tema D1 "Couro e Osso" · tokens finais (UX5d, PROPOSTA)
+   Uso: <html data-theme="couro-osso">. Todo o CSS/JS/template deve ler SÓ estes tokens.
+   Regras do tema:
+   · Vermelho-sangue (#5a0000–#8b0000) é SUPERFÍCIE (faixa, lombada, lacre, seleção,
+     cabeçalho da ficha, botão primário) com texto osso por cima. Como texto ou fio fino
+     sobre o escuro usa-se --blood-text / --blood-thread.
+   · Nenhum tipo de nó, aresta, evidência ou erro é vermelho. Erro/aviso = âmbar + ⚠.
+   · FATO / INFERÊNCIA / HIPÓTESE: borda sólida / tracejada / pontilhada.
+   · Sem filter/blur em nós e arestas. Textura, vela e vinheta são camadas estáticas.
+   Contraste conferido por contraste.cjs (texto ≥ 4,5:1; UI, bordas, fios ≥ 3:1).
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="couro-osso"]{
+  color-scheme:dark;
+
+  /* ── Superfícies (couro, do mais fundo ao mais alto) ── */
+  --bg:#0a0706;            /* fundo da página, cabeçalho do quadro, legenda */
+  --map-bg:#0d0907;        /* a mesa do mural (atrás das fichas) */
+  --surface-1:#140f0c;     /* barra do topo, índice lateral */
+  --surface-2:#1b1410;     /* pasta (ficha lateral) e painel do chat */
+  --surface-3:#241b15;     /* aba da pasta, abas inativas, campos elevados */
+  --line:#2f241c;          /* divisória decorativa (sem mínimo de contraste) */
+  --border:#8b7660;        /* borda de campo e controles (≥ 3:1) */
+
+  /* ── Texto sobre couro ── */
+  --ink:#ede3cd;           /* texto principal */
+  --ink-2:#cdbfa4;         /* texto secundário, rascunho em streaming */
+  --ink-3:#ab9b82;         /* notas, contadores, placeholders */
+
+  /* ── Papel: fichas de nó (osso) e folha da pasta ── */
+  --card:#e2d6bc;          /* cartão de nó / bilhete / pergunta do chat */
+  --card-ink:#23170f;      /* título no cartão */
+  --card-ink-2:#5b4634;    /* tipo e metadados no cartão */
+  --card-edge:#e2d6bc;     /* silhueta do cartão contra a mesa */
+  --card-back:#b9aa8c;     /* papel de baixo (pilhas, verso da folha) */
+  --sheet:#e9dfc8;         /* folha dentro da pasta */
+  --sheet-ink:#24170f;
+  --sheet-ink-2:#5a4533;
+  --stamp-ink:#7d0a0a;     /* carimbo CONFIDENCIAL em tinta, só sobre papel */
+
+  /* ── Sangue (marca) ── */
+  --blood:#7a0a0a;         /* superfície: faixa, lombada, lacre, seleção, primário */
+  --blood-deep:#2b0303;    /* sombra do sangue (gradiente, borda do lacre) */
+  --on-blood:#f2e7d2;      /* texto/filete osso sobre sangue */
+  --blood-text:#d47a6e;    /* vermelho claro: links, nº de fonte, carimbo sobre couro */
+  --blood-thread:#c43a30;  /* fio e contorno de seleção sobre a mesa */
+
+  /* ── Tipos de nó (aba/tachinha; também ícone + rótulo) ── */
+  --tab-ink:#1c120c;       /* ícone escuro sobre a aba colorida */
+  --n-pessoa:#d4c6a6; --n-familia:#c99a48; --n-instituicao:#8f9ba3; --n-empresa:#a8845e;
+  --n-governo:#b3ad6c; --n-operacao:#b86c3f; --n-fonte:#6f9a7a; --n-generico:#958e84;
+
+  /* ── Fios por tipo de aresta (cor + traço; ver componentes.md) ── */
+  --e-parentesco:#d4c6a6; --e-casamento:#c99a48; --e-financiamento:#8fa06a; --e-fundacao:#a8845e;
+  --e-controle:#8f9ba3; --e-subscricao:#7e8a7a; --e-cargo:#b86c3f; --e-indice:#958e84; --e-outro:#77716a;
+  --edge-label:#d8cbb0;    /* rótulo de fio/grupo sobre a mesa */
+
+  /* ── Evidência (nunca vermelha) ── */
+  --ev-fato:#a9b884; --ev-fato-bg:#1a1e12;   /* borda sólida  + ■ */
+  --ev-inf:#c49660;  --ev-inf-bg:#271d0e;    /* borda tracejada + ◆ */
+  --ev-hip:#b5afc4;  --ev-hip-bg:#1e1c25;    /* borda pontilhada + ○ */
+
+  /* ── Estados de sistema ── */
+  --danger:#f2d35c; --danger-bg:#2a2008;     /* erro/aviso: âmbar + ⚠, nunca o sangue */
+  --nosrc:#a3abb0; --nosrc-bg:#15181a;       /* "não há fonte na base": ardósia sóbria */
+
+  /* ── Botões em relevo ── */
+  --btn:#3b2c22; --btn-hi:#54402f; --btn-ink:#ede3cd; --btn-edge:#8b7660;
+  --btn-off:#221a15; --btn-off-ink:#8f806b; --btn-off-edge:#4a3c31;   /* desabilitado */
+
+  /* ── Foco visível: anel osso + halo preto (lê em couro e em papel) ── */
+  --focus-ring:#f2e7d2; --focus-halo:#000000;
+
+  /* ── Esmaecido, sombra, véu ── */
+  --dim:#2e2520; --dim-opacity:.22;
+  --shadow:#000000; --shadow-soft:#000000a6; --scrim:#000000b3;
+
+  /* ── Tipografia ── (Cormorant foi descartada: acentos mal posicionados no teste) */
+
+  /* Aliases temporários do tema anterior (UX4), para var(--gold/--panel/…) ainda no CSS/JS */
+  --panel:var(--surface-2);
+  --panel-deep:var(--surface-1);
+  --muted:var(--ink-3);
+  --gold:var(--blood-text);
+  --family:var(--n-familia);
+  --person:var(--n-pessoa);
+  --organization:var(--n-instituicao);
+  --event:var(--n-operacao);
+  --generic:var(--n-generico);
+  --draft:var(--ev-hip);
+  --font-display:"EB Garamond",Georgia,serif;   /* títulos, seminegrito 600 */
+  --font-body:"EB Garamond",Georgia,serif;      /* texto, 15–17 px; itálico para notas */
+  --font-mono:"Courier Prime","Courier New",monospace; /* só nº de registro (ENT-0412) */
+
+  /* ── Atmosfera (camadas estáticas, sem animação) ── */
+  --grain-opacity:.11;
+  --candle:radial-gradient(60% 55% at 46% 44%,#4a2a1255 0%,#2a160a33 40%,transparent 75%);
+  --vignette:radial-gradient(95% 85% at 48% 45%,transparent 38%,#000000b3 82%,#000000e6 100%);
+}
+
+*{box-sizing:border-box} [hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:19px;line-height:1.45;min-height:100vh;background-image:var(--candle)}
+a{color:var(--blood-text);text-underline-offset:4px}button,input,textarea,select{font:inherit}
+header{border-bottom:1px solid var(--border);background:var(--surface-1);padding:18px 28px;display:flex;justify-content:space-between;gap:16px;align-items:center}
+.brand{font-weight:600;font-size:24px;color:var(--ink);text-decoration:none}.brand small{display:block;font-size:14px;color:var(--ink-3);font-weight:400}
+main{max-width:850px;margin:40px auto;padding:0 24px 40px}.eyebrow{font-family:var(--font-mono);font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+h1{font-weight:600;line-height:1.12;font-size:42px;margin:10px 0 16px}h2{font-size:26px;line-height:1.2;margin:0 0 12px}p{margin:0 0 16px}.intro{color:var(--ink-2);max-width:650px}
+.panel{background:var(--surface-2);border:1px solid var(--border);border-top:4px solid var(--blood);border-radius:6px;padding:24px;margin:24px 0;box-shadow:0 12px 36px var(--shadow-soft)}
+label{display:block;margin-bottom:6px}input,textarea,select{border:1px solid var(--border);border-radius:4px;background:var(--surface-3);color:var(--ink);padding:12px;width:100%}input,select{min-height:48px}textarea{min-height:108px;resize:vertical}input::placeholder,textarea::placeholder{color:var(--ink-3)}
+button,.button{display:inline-block;min-height:46px;padding:10px 18px;border-radius:4px;border:1px solid var(--border);background:var(--blood);color:var(--on-blood);font-weight:600;text-decoration:none;cursor:pointer}
+button:disabled{background:var(--btn-off);color:var(--btn-off-ink);cursor:wait}.quiet{background:var(--btn);color:var(--btn-ink)}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:4px}.actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:16px}.note{font-size:16px;color:var(--ink-3)}
+.status{min-height:28px;color:var(--ink-2);margin:14px 0;overflow-wrap:anywhere}.status.warning{color:var(--danger)}
+.field{margin:18px 0}.history{display:grid;gap:18px;margin:24px 0}.bubble{padding:20px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;overflow-wrap:anywhere;white-space:pre-wrap}.bubble.question{background:var(--card);color:var(--card-ink)}
+.bubble h2{font-family:var(--font-mono);font-weight:400;font-size:13px;letter-spacing:.04em}.answer-block{border-left:3px solid var(--ev-fato);padding-left:14px;margin:16px 0}.answer-block.inference{border-left:3px dashed var(--ev-inf)}.answer-block small{color:var(--ink-3);font-family:var(--font-mono);font-size:12px}.sources{font-size:16px;color:var(--ink-2)}
+.code{display:block;font-family:var(--font-mono);font-size:24px;letter-spacing:.04em;color:var(--ink);overflow-wrap:anywhere;margin:18px 0}.instructions{padding-left:24px}.instructions li{margin-bottom:12px}.footer{padding-top:12px;border-top:1px solid var(--line);font-size:16px;color:var(--ink-3)}
+@media(max-width:500px){header{padding:14px 18px}.brand{font-size:21px}header>a:last-child{font-size:16px}main{margin-top:26px;padding:0 18px 24px}h1{font-size:34px}.panel{padding:18px}.actions button,.actions .button{width:100%;text-align:center}.code{font-size:20px}.bubble{padding:16px}}
+
+#auth-turnstile:empty{display:none}
+</style>
+</head>
+<body>
+  <header><a class="brand" href="index.html">Códigos do Poder<small>mural investigativo</small></a><a href="vincular.html" target="_blank" rel="noopener noreferrer">Vincular conta</a></header>
+  <main>
+    <span class="eyebrow">Aion · Telegram</span>
+    <h1>Uma pergunta.<br>O que a base sustenta?</h1>
+    <p class="intro">Explore documentos, conexões e seus limites. Fatos e inferências aparecem separados, com as fontes do recorte.</p>
+    <p id="status" class="status" role="status" aria-live="polite">Verificando seu acesso…</p>
+    <section id="link-panel" class="panel" hidden aria-labelledby="link-title">
+      <h2 id="link-title">Conecte sua conta do atlas</h2>
+      <ol class="instructions"><li>Abra a página de vínculo e entre na sua conta existente.</li><li>Gere um código e envie <strong>/start &lt;código&gt;</strong> ao @aion_codigosdopoder_bot.</li><li>Feche e reabra este mini app pelo bot para perguntar.</li></ol>
+      <div class="actions"><a class="button" href="https://aion.hernandesnogueira.com.br/vincular.html" target="_blank" rel="noopener noreferrer">Gerar código de vínculo</a><a href="https://t.me/aion_codigosdopoder_bot" target="_blank" rel="noopener noreferrer">Abrir @aion_codigosdopoder_bot</a></div>
+    </section>
+    <section id="chat-section" hidden aria-label="Conversa com a base">
+      <div id="history" class="history" aria-live="polite" aria-relevant="additions"></div>
+      <form id="question-form" class="panel">
+        <label for="question">Sua pergunta para a base</label>
+        <textarea id="question" maxlength="2000" required placeholder="Que relações a base documenta sobre Mauá?"></textarea>
+        <div class="actions"><button id="send" type="submit">Perguntar</button><label for="model">Modelo</label><select id="model"><option value="basico">Básico · 1 crédito</option><option value="avancado">Avançado · 8 créditos</option></select></div>
+        <p class="note">Até 2000 caracteres. Você usa a mesma cota e o mesmo saldo do site.</p>
+      </form>
+      <p id="quota" class="note" role="status"></p>
+    </section>
+    <p class="footer">A resposta se limita à base do atlas. Ausência de documento é um limite da pesquisa.</p>
+  </main>
+  <script src="config.js"></script>
+  <script>/* Somente esta página carrega o SDK Telegram; nenhuma identidade vem do body. */
+(async function () {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const status = (message, warning = false) => { $('status').textContent = message; $('status').classList.toggle('warning', warning); };
+  const webapp = window.Telegram && window.Telegram.WebApp;
+  const initData = webapp && webapp.initData;
+  if (!initData) {
+    status('Abra este mini app pelo @aion_codigosdopoder_bot no Telegram.');
+    $('link-panel').hidden = false;
+    return;
+  }
+  const config = window.ATLAS_PUBLIC_CONFIG;
+  if (!config || config.supabaseUrl !== 'https://ozeiyqpbtggvuyhplisa.supabase.co') {
+    status('A configuração do serviço está indisponível.', true);
+    return;
+  }
+  webapp.ready();
+  webapp.expand();
+  let proof = '';
+  async function request(route, body) {
+    const response = await fetch(config.supabaseUrl + '/functions/v1/telegram/app/' + route, {
+      method: 'POST',
+      headers: { authorization: 'tma ' + initData, 'content-type': 'application/json', ...(proof ? { 'x-telegram-app-session': proof } : {}) },
+      body: JSON.stringify(body || {}),
+      signal: AbortSignal.timeout(75000),
+      credentials: 'omit',
+      redirect: 'error',
+    });
+    const result = await response.json();
+    return { response, result };
+  }
+  function failed(response, result) {
+    const messages = { sem_creditos: 'Seus créditos acabaram.', orcamento_esgotado: 'Chat temporariamente indisponível.', fora_da_base: 'Não encontrei isso na base do atlas.', rate_limit: 'Muitas perguntas seguidas. Aguarde um minuto.', sem_vinculo: 'Vincule sua conta e reabra o mini app pelo bot.', replay: 'Esta abertura já foi usada. Feche e abra novamente pelo bot.', sem_login: 'Sua sessão expirou. Feche e abra novamente pelo bot.' };
+    status(messages[result.code] || result.message || 'Não foi possível concluir a pergunta.', true);
+    if (result.code === 'sem_vinculo') { $('link-panel').hidden = false; $('chat-section').hidden = true; }
+    if (response.status === 401) { proof = ''; $('send').disabled = true; }
+  }
+  function bubble(label, text, type) {
+    const node = document.createElement('article');
+    node.className = 'bubble ' + type;
+    const title = document.createElement('h2'); title.textContent = label; node.append(title);
+    if (text) { const p = document.createElement('p'); p.textContent = text; node.append(p); }
+    $('history').append(node);
+    return node;
+  }
+  function renderFinal(final) {
+    const node = bubble('Resposta da base', '', 'answer');
+    for (const block of final.blocos || []) {
+      const section = document.createElement('section');
+      section.className = 'answer-block' + (block.tipo === 'inferencia' ? ' inference' : '');
+      const label = document.createElement('small'); label.textContent = block.tipo === 'inferencia' ? 'INFERÊNCIA' : 'DOCUMENTADO';
+      const p = document.createElement('p'); p.textContent = block.texto;
+      section.append(label, p); node.append(section);
+    }
+    for (const notice of final.avisos || []) { const p = document.createElement('p'); p.textContent = notice.texto; node.append(p); }
+    for (const source of final.fontes || []) {
+      const p = document.createElement('p'), detail = (final.fontes_detalhe || {})[source];
+      p.className = 'sources'; p.textContent = '[' + source + '] ' + (detail ? detail.titulo + (detail.localizador ? ' · ' + detail.localizador : '') : source); node.append(p);
+    }
+    $('quota').textContent = 'Cota grátis restante: ' + final.gratis_restantes + '. Saldo pago: ' + final.saldo_pago + '.';
+  }
+  try {
+    const { response, result } = await request('session');
+    if (!response.ok) { failed(response, result); return; }
+    proof = result.session;
+    if (!result.linked) { status('Sua conta do Telegram ainda não está vinculada.'); $('link-panel').hidden = false; return; }
+    $('chat-section').hidden = false;
+    status('Conta vinculada. Faça sua pergunta à base.');
+  } catch { status('Não foi possível conectar. Feche e abra novamente pelo bot.', true); return; }
+  $('question-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const message = $('question').value.trim();
+    if (!message || !proof || $('send').disabled) return;
+    $('send').disabled = true; $('question').disabled = true; $('model').disabled = true;
+    $('question-form').setAttribute('aria-busy', 'true');
+    bubble('Sua pergunta', message, 'question');
+    status('Consultando a base…');
+    try {
+      const { response, result } = await request('chat', { mensagem: message, modelo: $('model').value });
+      if (!response.ok || !result.final) { failed(response, result); return; }
+      renderFinal(result.final); $('question').value = ''; status('Resposta concluída.');
+    } catch { status('Não foi possível conectar. Tente novamente em instantes.', true); }
+    finally {
+      $('send').disabled = !proof; $('question').disabled = !proof; $('model').disabled = !proof;
+      $('question-form').setAttribute('aria-busy', 'false');
+    }
+  });
+})();
+</script>
+</body>
+</html>
