@@ -31,6 +31,11 @@ test('raiz serve a landing e /mapa/index.html é o arquivo gerado', () => {
   assert.equal(/<script\b/i.test(redirect), false);
   const js = read('inicio/redirecionar-app.js');
   assert.match(js, /location\.replace\('\/mapa\/' \+ search \+ hash\)/);
+  assert.equal((js.match(/location\.replace\(/g) || []).length, 1);
+  assert.doesNotMatch(js, /location\.(href|assign)\s*=/);
+  assert.doesNotMatch(js, /window\.open\s*\(/);
+  assert.match(js, /addEventListener\('hashchange', decidir\)/);
+  assert.match(js, /addEventListener\('popstate', decidir\)/);
   assert.match(js, /classList\.add\('redir-app'\)/);
 });
 
@@ -50,6 +55,7 @@ test('redirect preserva query e hash do app e deixa âncora da landing na raiz',
       document: { documentElement: { classList: { add(name) { added.push(name); } } } },
       URLSearchParams,
       decodeURIComponent,
+      addEventListener() {},
     });
     return { replaced, added };
   };
@@ -72,6 +78,63 @@ test('redirect preserva query e hash do app e deixa âncora da landing na raiz',
   assert.deepEqual(run('#mapa-mundi', '?editor=1'), { replaced: '/mapa/?editor=1#mapa-mundi', added: ['redir-app'] });
   assert.deepEqual(run('', '?debug=1'), { replaced: '/mapa/?debug=1', added: ['redir-app'] });
   assert.deepEqual(run('', '?access_token=abc'), { replaced: '/mapa/?access_token=abc', added: ['redir-app'] });
+});
+
+test('hashchange e popstate repetem a decisão e não trocam de página duas vezes', () => {
+  const js = read('inicio/redirecionar-app.js');
+  const subir = (hash, search) => {
+    const state = { hash, search, replaced: null, replaces: 0, added: [] };
+    const listeners = {};
+    vm.runInNewContext(js, {
+      location: {
+        get hash() { return state.hash; },
+        set hash(value) { state.hash = value; },
+        get search() { return state.search; },
+        set search(value) { state.search = value; },
+        replace(url) { state.replaces += 1; state.replaced = url; },
+      },
+      document: { documentElement: { classList: { add(name) { state.added.push(name); } } } },
+      URLSearchParams,
+      decodeURIComponent,
+      addEventListener(type, fn) {
+        assert.equal(listeners[type], undefined, type);
+        listeners[type] = fn;
+      },
+    });
+    assert.equal(listeners.hashchange, listeners.popstate);
+    assert.equal(typeof listeners.hashchange, 'function');
+    return { state, listeners };
+  };
+  const paraAll = subir('', '');
+  assert.equal(paraAll.state.replaced, null);
+  paraAll.state.hash = '#all';
+  paraAll.listeners.hashchange();
+  paraAll.listeners.popstate();
+  assert.equal(paraAll.state.replaces, 1);
+  assert.equal(paraAll.state.replaced, '/mapa/#all');
+  assert.deepEqual(paraAll.state.added, ['redir-app']);
+
+  const fica = subir('', '');
+  fica.state.hash = '#planos';
+  fica.listeners.hashchange();
+  fica.listeners.popstate();
+  assert.equal(fica.state.replaces, 0);
+  assert.equal(fica.state.replaced, null);
+  assert.deepEqual(fica.state.added, []);
+
+  const entidade = subir('#faq', '');
+  assert.equal(entidade.state.replaced, null);
+  entidade.state.hash = '#e=ipes';
+  entidade.listeners.hashchange();
+  assert.equal(entidade.state.replaced, '/mapa/#e=ipes');
+
+  const query = subir('#planos', '');
+  assert.equal(query.state.replaced, null);
+  query.state.search = '?editor=1';
+  query.listeners.popstate();
+  query.listeners.hashchange();
+  assert.equal(query.state.replaces, 1);
+  assert.equal(query.state.replaced, '/mapa/?editor=1#planos');
 });
 
 test('a lista de âncoras é a dos ids do index.html e não colide com hash do app', async () => {
@@ -253,6 +316,107 @@ describe('rotas no Chromium', { timeout: 180000 }, () => {
       assert.ok(url.hash === '' || url.hash === '#', url.hash);
       assert.match(await page.title(), /o mapa que a manchete não monta/);
       assert.equal(await page.evaluate(() => location.pathname), '/');
+    } finally { await context.close(); }
+  });
+
+  async function esperarSecao(page, id) {
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForFunction(elId => {
+      const el = document.getElementById(elId);
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return scrollY > 0 && Math.abs(r.top) < 4 && r.bottom > 0;
+    }, id);
+    const pos = await page.evaluate(elId => {
+      const el = document.getElementById(elId);
+      const r = el.getBoundingClientRect();
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        inner: innerHeight,
+        scroll: scrollY,
+        path: location.pathname,
+        hash: location.hash,
+        escondida: document.documentElement.classList.contains('redir-app'),
+      };
+    }, id);
+    assert.equal(pos.path, '/', id);
+    assert.equal(pos.hash, '#' + id, id);
+    assert.equal(pos.escondida, false, id);
+    assert.ok(pos.scroll > 0, id + ' não rolou ' + JSON.stringify(pos));
+    assert.ok(pos.bottom > 0 && pos.top < pos.inner, id + ' fora do viewport ' + JSON.stringify(pos));
+    assert.ok(pos.top < pos.inner * 0.45, id + ' não ficou no alto da tela ' + JSON.stringify(pos));
+  }
+
+  test('mudar o hash para #all depois de abrir / vai para /mapa/#all', async () => {
+    const { context, page } = await open();
+    try {
+      await page.goto(origin + '/', { waitUntil: 'load' });
+      assert.equal(new URL(page.url()).pathname, '/');
+      const destino = page.waitForURL(url => url.pathname === '/mapa/' && url.hash === '#all');
+      await page.evaluate(() => { location.hash = '#all'; });
+      await destino;
+      await page.waitForFunction(() => window.mural && window.mural.getState().view === 'all');
+      const url = new URL(page.url());
+      assert.equal(url.pathname, '/mapa/');
+      assert.equal(url.hash, '#all');
+    } finally { await context.close(); }
+  });
+
+  test('mudar o hash para #e=ipes depois de abrir / vai para /mapa/#e=ipes', async () => {
+    const { context, page } = await open();
+    try {
+      await page.goto(origin + '/', { waitUntil: 'load' });
+      assert.equal(new URL(page.url()).pathname, '/');
+      const destino = page.waitForURL(url => url.pathname === '/mapa/' && url.hash === '#e=ipes');
+      await page.evaluate(() => { location.hash = '#e=ipes'; });
+      await destino;
+      await page.waitForFunction(() => window.mural?.getState().selected?.id === 'ipes');
+      const url = new URL(page.url());
+      assert.equal(url.pathname, '/mapa/');
+      assert.equal(url.hash, '#e=ipes');
+    } finally { await context.close(); }
+  });
+
+  test('mudar o hash para #planos depois de abrir / fica na landing e rola', async () => {
+    const { context, page } = await open();
+    try {
+      await page.goto(origin + '/', { waitUntil: 'load' });
+      assert.equal(new URL(page.url()).pathname, '/');
+      assert.equal(new URL(page.url()).hash, '');
+      await page.evaluate(() => { location.hash = '#planos'; });
+      await esperarSecao(page, 'planos');
+    } finally { await context.close(); }
+  });
+
+  test('clicar uma âncora interna da landing fica em /', async () => {
+    const { context, page } = await open();
+    try {
+      await page.goto(origin + '/', { waitUntil: 'load' });
+      const link = page.locator('nav.topo-nav a[href="#planos"]');
+      assert.equal(await link.count(), 1);
+      await link.click({ noWaitAfter: true });
+      await esperarSecao(page, 'planos');
+    } finally { await context.close(); }
+  });
+
+  test('popstate com ?editor=1 sai de / para /mapa/', async () => {
+    const { context, page } = await open();
+    try {
+      await page.goto(origin + '/', { waitUntil: 'load' });
+      await page.evaluate(() => {
+        history.pushState({ n: 1 }, '', '/?editor=1');
+        history.pushState({ n: 2 }, '', '/#planos');
+      });
+      assert.equal(new URL(page.url()).pathname, '/');
+      assert.equal(new URL(page.url()).hash, '#planos');
+      const destino = page.waitForURL(url => url.pathname === '/mapa/' && url.search === '?editor=1');
+      await page.evaluate(() => { history.back(); });
+      await destino;
+      const url = new URL(page.url());
+      assert.equal(url.pathname, '/mapa/');
+      assert.equal(url.search, '?editor=1');
+      assert.equal(url.hash, '');
     } finally { await context.close(); }
   });
 
