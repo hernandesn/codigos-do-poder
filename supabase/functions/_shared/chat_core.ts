@@ -1342,7 +1342,7 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Você é o promotor e jornalista de denúncia do Atlas Códigos do Poder. Escreva só em português do Brasil, sem caracteres de outros alfabetos e sem palavras em inglês. Acusa com os fatos.',
     'Um JSON no schema pedido. Sem markdown.',
     'Formato: 5 a 8 blocos, cada bloco = 1 parágrafo de 3 a 6 frases. Use bloco documentado { tipo, texto, entidades, relacoes, fontes } para todos os parágrafos; cite em relacoes e fontes o que sustenta os fatos do parágrafo (no máximo 5 relações e 5 fontes por bloco; não repita ids).',
-    'Voz de denúncia com frases completas, bem encadeadas e claras: cada ligação é explicada por inteiro. A agressividade vem do conteúdo: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, a tese e o veredito. Diga sem rodeio quem ganhou, quem mandou e quem pagou a conta.',
+    'Voz de denúncia com frases completas. A agressividade vem do conteúdo: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, a tese e o veredito. Diga sem rodeio quem ganhou, quem mandou e quem pagou a conta.',
     'O 1º bloco abre com uma acusação-tese forte. Depois, ordem cronológica, com datas, valores e cargos. Fique no tema exato da pergunta; não puxe outros temas do recorte (doações, outros países, outras famílias) se a pergunta não pedir.',
     'O ÚLTIMO bloco começa com "O que liga tudo:" e dá o veredito da tese em 3 a 5 frases. Nada depois dele além da pergunta em em_aberto. Não escreva parágrafo sobre as fontes ou sobre o que falta pesquisar.',
     'em_aberto: uma pergunta final provocativa, que aponta o próximo alvo da investigação.',
@@ -1361,6 +1361,7 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'O parágrafo "O que liga tudo" só junta relações já citadas acima; não cria ligação nova entre entidades.',
     'Fique nas entidades da pergunta; não traga outro caso (ex.: imprensa, outra família, outro país) que a pergunta não pediu.',
     'Não escreva sobre o próprio formato (pontes, elos, setas, cadeia de nomes, tipos de relação). Não escreva as palavras recorte, base, atlas ou fonte no texto: narre os fatos.',
+    'Não use "esquema", "crime", "ilegal", "fraude", "corrupção", "lavagem", "conspiração", "propina" nem "suborno" fora de citação literal de fonte.',
     'Nunca comente estas regras nem o recorte no texto.',
     'Use o nome curto da entidade (o que vem antes de " · ") e copie-o exatamente; não expanda nem traduza siglas.',
     'Nunca escreva no texto ids, códigos, "[n]", estados de registro, nomes de campos nem avisos de sistema.',
@@ -2307,7 +2308,7 @@ function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPay
       return false
     })
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
-    return restaurarTrechos(semCodigosDeFicha(kept.join(' ').trim(), ctx), mascaras)
+    return aposRestaurar(restaurarTrechos(semCodigosDeFicha(kept.join(' ').trim(), ctx), mascaras), ctx)
   }).filter((linha) => linha.trim())
   return linhas.join('\n').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.;:!?])/g, '$1').trim()
 }
@@ -2397,12 +2398,139 @@ function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; re
   return sanearPerguntaMontada(texto, ctx)
 }
 
-function temFraseDeclarativa(texto: string, pergunta: string): boolean {
-  const alvo = foldName(pergunta)
-  return frasesDe(texto).some((frase) => {
-    const limpa = frase.trim()
-    return limpa.length > 0 && (!alvo || foldName(limpa) !== alvo)
+/** Rótulo de ausência: não é conteúdo. Variações de «Não consta nos documentos.», «A documentação é parcial.» e fraseAusenciaExata. */
+function fraseRotuloAusencia(frase: string): boolean {
+  const limpa = frase.trim()
+  if (fraseAusenciaExata(limpa)) return true
+  const f = foldName(limpa)
+  if (/^nao consta(?:m)?(?: no| nos)? documentos?$/.test(f)) return true
+  if (/^(?:a )?documentacao(?: e| esta)? parcial$/.test(f)) return true
+  if (/^[\p{L}\p{N}][\p{L}\p{N} &,-]{0,80} nao est(?:a|ao) na base do atlas$/u.test(f)) return true
+  return false
+}
+
+function palavrasComLetras(frase: string): number {
+  return frase.split(/\s+/).filter((palavra) => /\p{L}/u.test(palavra)).length
+}
+
+/**
+ * Conteúdo que pode cobrar: frase que não termina em «?», não é rótulo de ausência
+ * e tem ao menos 3 palavras com letras. Três frases curtas já cobradas pela suíte
+ * («Um.», «Dois.», «Três.») somam 3 e continuam conteúdo.
+ */
+function temFraseDeclarativa(texto: string, _pergunta = ''): boolean {
+  const frases = frasesDe(texto).map((frase) => frase.trim()).filter((frase) => frase && !/\?\s*$/.test(frase) && !fraseRotuloAusencia(frase))
+  if (frases.some((frase) => palavrasComLetras(frase) >= 3)) return true
+  return frases.reduce((n, frase) => n + palavrasComLetras(frase), 0) >= 3
+}
+
+function idsDeCodigo(ctx: ChatContextPayload): string[] {
+  const ids: string[] = []
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) if (item?.id && idPareceCodigo(item.id)) ids.push(item.id)
+  for (const rel of ctx.relacoes ?? []) if (rel?.id && idPareceCodigo(rel.id)) ids.push(rel.id)
+  for (const fonte of ctx.fontes ?? []) if (fonte?.id && idPareceCodigo(fonte.id)) ids.push(fonte.id)
+  return [...new Set(ids)].sort((a, b) => b.length - a.length)
+}
+
+function casouVazamento(texto: string, ctx?: ChatContextPayload): boolean {
+  if (/\b(?:AP_E\d+|OP\d+(?:_R\d+)?|BR\d+_H\d+|PR\d+-(?:E|NF)\d+)\b/i.test(texto)) return true
+  if (/\bF\d+\s*\/\s*R\d+\b/i.test(texto)) return true
+  if (new RegExp(SNAKE_NOME.source).test(texto)) return true
+  if (new RegExp(CODIGO_INTERNO.source).test(texto)) return true
+  if (/\[\d+\]/.test(texto)) return true
+  if (!ctx) return false
+  return idsDeCodigo(ctx).some((id) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeReg(id)}(?![\\p{L}\\p{N}])`, 'u').test(texto))
+}
+
+/** Tira código, snake e id de código que voltou depois da máscara de citação. Aspas vazias saem. */
+function semCodigosInternos(t: string, ctx?: ChatContextPayload): string {
+  const ids = ctx ? idsDeCodigo(ctx) : []
+  return t.split(/(https?:\/\/\S+)/g).map((parte, i) => {
+    if (i % 2 === 1) return parte
+    let pedaco = parte
+      .replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
+      .replace(/\b(?:AP_E\d+|OP\d+(?:_R\d+)?|BR\d+_H\d+|PR\d+-(?:E|NF)\d+)\b/gi, ' ')
+      .replace(/\bF\d+\s*\/\s*R\d+\b/gi, ' ')
+      .replace(/\[\d+\]/g, ' ')
+    if (ids.length) pedaco = pedaco.replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:${ids.map(escapeReg).join('|')})(?![\\p{L}\\p{N}])`, 'gu'), ' ')
+    return pedaco
+  }).join('')
+}
+
+function fecharAspas(t: string): string {
+  let s = t
+  const par = (re: RegExp) => {
+    s = s.replace(re, (m) => /[\p{L}\p{N}]/u.test(m) ? m : '')
+  }
+  par(/"[^"\n]*"/g)
+  par(/“[^”\n]*”/g)
+  par(/«[^»\n]*»/g)
+  s = s.replace(/"\s+/g, '"').replace(/\s+"/g, '"').replace(/«\s+/g, '«').replace(/\s+»/g, '»').replace(/“\s+/g, '“').replace(/\s+”/g, '”')
+  const n = (ch: string) => s.split(ch).length - 1
+  if (n('"') % 2 === 1) {
+    const i = s.lastIndexOf('"')
+    s = s.slice(0, i) + s.slice(i + 1)
+  }
+  const corta = (abre: string, fecha: string) => {
+    let extraAbre = n(abre) - n(fecha)
+    if (extraAbre > 0) {
+      let out = ''
+      for (let i = s.length - 1; i >= 0; i--) {
+        if (extraAbre > 0 && s[i] === abre) { extraAbre--; continue }
+        out = s[i] + out
+      }
+      s = out
+    }
+    let extraFecha = n(fecha) - n(abre)
+    if (extraFecha > 0) {
+      let out = ''
+      for (const ch of s) {
+        if (extraFecha > 0 && ch === fecha) { extraFecha--; continue }
+        out += ch
+      }
+      s = out
+    }
+  }
+  corta('«', '»')
+  corta('“', '”')
+  return limparBuracos(s)
+}
+
+function sanearRestaurado(texto: string, ctx?: ChatContextPayload): string {
+  let t = ctx ? ocultarIdsVisiveis(texto, ctx) : texto
+  t = semCodigosDeFicha(t, ctx)
+  t = semCodigosInternos(t, ctx)
+  return fecharAspas(t)
+}
+
+/** Depois da citação restaurada: o código que estava dentro das aspas sai. Sem frase declarativa, o trecho cai. */
+function aposRestaurar(texto: string, ctx?: ChatContextPayload): string {
+  if (!texto || !casouVazamento(texto, ctx)) return texto
+  const limpo = sanearRestaurado(texto, ctx)
+  if (!temFraseDeclarativa(limpo)) return ''
+  return limpo
+}
+
+/** Campo do evento final que não é corpo de bloco: tira o vazamento e não apaga a pergunta de fecho. */
+function limparCampo(texto: string, ctx?: ChatContextPayload): string {
+  if (!texto || !casouVazamento(texto, ctx)) return texto
+  return sanearRestaurado(texto, ctx)
+}
+
+/** safePublicClaim por frase, com a citação mascarada para o corte não partir no meio. */
+function separarFrasesPublicas(texto: string, ctx: ChatContextPayload, fontes: string[]): { texto: string; caiu: boolean } {
+  const mascaras: string[] = []
+  const mascarado = protegerTrechos(texto, ctx, mascaras)
+  const frases = frasesDe(mascarado).map((frase) => frase.trim()).filter(Boolean)
+  let caiu = false
+  const kept = semAnaforaPendente(frases, (frase) => {
+    const visivel = restaurarTrechos(frase, mascaras).trim()
+    if (!safePublicClaim(visivel, ctx, fontes)) { caiu = true; return true }
+    return false
   })
+  if (kept.length !== frases.length) caiu = true
+  if (!caiu) return { texto, caiu }
+  return { texto: kept.map((frase) => restaurarTrechos(frase, mascaras).trim()).filter(Boolean).join(' '), caiu }
 }
 
 function limparPergunta(texto: string, blocos: readonly { texto: string }[], ctx?: ChatContextPayload): string {
@@ -2526,7 +2654,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
     }).filter((paragrafo) => paragrafo.trim())
     if (tirouFora) console.info(JSON.stringify({ evento: 'chat_frase_fora_da_base', n: tirouFora }))
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
-    return restaurarTrechos(semCodigosDeFicha(saida.join('\n\n'), ctx), mascaras)
+    return saida.map((paragrafo) => aposRestaurar(restaurarTrechos(semCodigosDeFicha(paragrafo, ctx), mascaras), ctx)).filter((paragrafo) => paragrafo.trim()).join('\n\n')
   }
   const visivel = (value: string, pergunta = false) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))), pergunta)
   const allowedEntities = new Set<string>()
@@ -2563,7 +2691,15 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       removed = true
       continue
     }
-    if (!safePublicClaim(row.texto + ' ' + (typeof row.justificativa === 'string' ? row.justificativa : ''), ctx, asStringArray(row.fontes))) { removed = true; continue }
+    const fontesCitadas = asStringArray(row.fontes)
+    const publico = separarFrasesPublicas(row.texto, ctx, fontesCitadas)
+    if (publico.caiu) removed = true
+    if (!publico.texto.trim()) { removed = true; continue }
+    if (typeof row.justificativa === 'string' && row.justificativa && !safePublicClaim(row.justificativa, ctx, fontesCitadas)) {
+      row.justificativa = ''
+      removed = true
+    }
+    row.texto = publico.texto
     // Prosa corrida: hipótese e inferência viram parágrafo com as fontes das relações-base (a tese já vem marcada no texto).
     if ((row.tipo === 'inferencia' || (row.tipo === 'hipotese' && !/a base n[aã]o mostra|\?/i.test(row.texto))) && PROSA_CORRIDA.ativo) {
       const base = unique(asStringArray(row.base).concat(asStringArray(row.relacoes)))
@@ -2842,21 +2978,21 @@ function termoNoRecorte(termo: string, ctx: ChatContextPayload): boolean {
 function temVocabularioAtlas(mensagem: string): boolean {
   const q = normalizeQuery(mensagem)
   if (/\bpor\s+que\b/.test(q)) return true
-  return /\b(?:vinculo|ligacao|relacao|conexao|financi\w*|doac\w*|patrocin\w*|pagamento|contribu\w*|controle|controlad\w*|acionist\w*|socio|conselho|cargo|fundador|fundou|empresa|banco|governo|golpe|campanha|saude|vacina|familia|herdeiro|papel|influencia|origem|historico|data|ano|quando|quem|onde|como|porque|quanto)\b/.test(q)
+  return /\b(?:vinculo|ligacao|relacao|conexao|financi\w*|doac\w*|patrocin\w*|pagamento|contribu\w*|controle|controlad\w*|acionist\w*|socio|conselho|cargo|permanencia|fundador|fundou|empresa|banco|governo|golpe|campanha|saude|vacina|familia|herdeiro|papel|influencia|origem|historico|data|ano|quando|quem|onde|como|porque|quanto)\b/.test(q)
 }
 
 /** Lista curta que impede a recusa da seleção, inclusive dentro de uma frase de tempo ou de jogo. */
 function vocabularioAtlasNaPergunta(mensagem: string): boolean {
   const q = normalizeQuery(mensagem)
-  return /\b(?:mandato|conselho|politicos?|politicas?|poder|governo|eleicoes?|partido|banco|empresa|familia|fundacoes?|contrato|golpe|regime|ditadura|ministro|presidente|diretor(?:a|es|as)?|acionistas?|financiamento|doacoes?)\b/.test(q)
+  return /\b(?:mandato|conselho|politicos?|politicas?|poder|governo|eleicoes?|partido|banco|empresa|familia|fundacoes?|contrato|golpe|regime|ditadura|ministro|presidente|diretor(?:a|es|as)?|acionistas?|financiamento|doacoes?|cargo|permanencia)\b/.test(q)
 }
 
 /**
  * Tema externo por expressão. jogo/clima sozinhos continuam na lista porque
  * testes já travam «Indica um jogo» e «Fale do clima». «jogo(s) político(s)»,
- * «jogo(s) de poder» e «clima político» não casam. O tempo só entra como
- * «previsão do tempo» ou «como está o tempo hoje|amanhã|agora».
- * «código» sozinho não recusa.
+ * «jogo(s) de poder» e «clima político» não casam. Meteorologia: «previsão do tempo»,
+ * «como está o tempo» hoje|amanhã|agora|lá fora, «vai chover» e «temperatura hoje|amanhã|agora».
+ * «tempo de» + substantivo não é tema externo. «código» sozinho não recusa.
  */
 const TEMA_EXTERNO = new RegExp([
   String.raw`\breceitas?\s+de\b`,
@@ -2867,7 +3003,9 @@ const TEMA_EXTERNO = new RegExp([
   String.raw`\bjogos?\b(?!\s+politicos?\b)(?!\s+de\s+poder\b)`,
   String.raw`\bclima\b(?!\s+politicos?\b)`,
   String.raw`\bprevisao\s+do\s+tempo\b`,
-  String.raw`\bcomo\s+esta\s+o\s+tempo\s+(?:hoje|amanha|agora)\b`,
+  String.raw`\bcomo\s+esta\s+o\s+tempo\s+(?:hoje|amanha|agora|la\s+fora)\b`,
+  String.raw`\bvai\s+chover\b`,
+  String.raw`\btemperatura\s+(?:hoje|amanha|agora)\b`,
   String.raw`\bresultado\s+do\s+jogo\b`,
   String.raw`\bcampeonato\b`,
   String.raw`\bhoroscopo\b`,
@@ -2887,7 +3025,8 @@ function selecaoForaDaPergunta(mensagem: string, ctx: ChatContextPayload, textoV
   const q = normalizeQuery(mensagem)
   if (vocabularioAtlasNaPergunta(mensagem)) return false
   // «Como está o tempo?» sem o vocabulário acima continua fora: o teste antigo trava a frase.
-  if (/\bcomo esta o tempo\b/.test(q)) return true
+  // «tempo de» + substantivo (permanência, mandato, cargo, governo) nunca é meteorologia.
+  if (!/\btempo de [a-z]/.test(q) && /\b(?:como esta o tempo|vai chover|temperatura (?:hoje|amanha|agora))\b/.test(q)) return true
   if (!TEMA_EXTERNO.test(q)) return false
   if (temVocabularioAtlas(mensagem)) return false
   const termos = contextSearchTokens(mensagem)
@@ -3733,7 +3872,7 @@ async function streamPreparedInner(input: {
     answer.sem_base = false
     console.info(JSON.stringify({ evento: 'sem_base_ignorado' }))
   }
-  // Filtros antes do crédito. Sem frase declarativa além da pergunta estrutural: fora_da_base, sem débito.
+  // Filtros antes do crédito. Sem frase declarativa no texto final dos blocos: fora_da_base, sem débito.
   const avisoPrevisto = fraseAusentes(prepared.ausentes)
   const emAbertoBruto = parsed && typeof parsed === 'object' && typeof (parsed as { em_aberto?: unknown }).em_aberto === 'string'
     ? (parsed as { em_aberto: string }).em_aberto
@@ -3759,9 +3898,10 @@ async function streamPreparedInner(input: {
   const semId = answer.blocos.length > 0 && !hasValidId(answer.blocos)
   if (semId) console.info(JSON.stringify({ evento: 'sem_id_valido' }))
   const perguntaFinal = !prepared.pauta && !prepared.pressure && answer.blocos.length
-    ? perguntaEstrutural(answer.blocos, prepared.context)
+    ? limparCampo(perguntaEstrutural(answer.blocos, prepared.context), prepared.context)
     : ''
-  const temDeclarativo = answer.blocos.some((bloco) => temFraseDeclarativa(bloco.texto, perguntaFinal))
+  // Só o texto final dos blocos, depois dos filtros. em_aberto, avisos e o fecho não contam.
+  const temDeclarativo = temFraseDeclarativa(answer.blocos.map((bloco) => bloco.texto).join('\n'))
   const semConteudo = answer.blocos.length === 0 || !temDeclarativo || (answer.sem_base && countValidDocumentado(answer.blocos) === 0) || semId
   const podeFallback = prepared.origem !== 'selecao' && prepared.entityIds.length === 0 && perguntaDeLigacao(prepared.mensagem)
   // CRED1: só a resposta trocada pelo fallback é sem_ligacao e não cobra.
@@ -3824,17 +3964,21 @@ async function streamPreparedInner(input: {
   if (!prepared.pauta && !prepared.pressure && answer.blocos.length) {
     answer.em_aberto = perguntaFinal
   } else if (answer.em_aberto !== undefined) {
-    const pergunta = limparPergunta(answer.em_aberto, answer.blocos, prepared.context)
+    const pergunta = limparCampo(limparPergunta(answer.em_aberto, answer.blocos, prepared.context), prepared.context)
     if (pergunta.trim()) answer.em_aberto = pergunta
     else delete answer.em_aberto
   }
+  answer.avisos = answer.avisos.map((aviso) => ({ ...aviso, texto: limparCampo(aviso.texto, prepared.context) }))
   const avisoAusente = avisoPrevisto
   if (avisoAusente && !answer.blocos.some((bloco) => foldName(bloco.texto).includes('nao esta na base'))) {
     answer.blocos.push({ tipo: 'documentado', texto: avisoAusente, entidades: [], relacoes: [], fontes: [] })
   }
   // UX3a não aceita chave nova no final: a pergunta em aberto fecha o último bloco, em parágrafo próprio.
   const ultimo = answer.blocos.at(-1)
-  if (answer.em_aberto && ultimo) ultimo.texto = `${ultimo.texto.trimEnd()}\n\n${answer.em_aberto}`
+  if (answer.em_aberto && ultimo) ultimo.texto = limparCampo(`${ultimo.texto.trimEnd()}\n\n${answer.em_aberto}`, prepared.context)
+  for (const bloco of answer.blocos) {
+    if (bloco.tipo !== 'documentado') bloco.justificativa = limparCampo(bloco.justificativa, prepared.context)
+  }
   const finalEvent: ChatFinal = {
     conversa_id: prepared.conversaId,
     blocos: answer.blocos,

@@ -1749,3 +1749,144 @@ Deno.test('hotfix1h seleção: mandato e jogo político vão ao modelo; previsã
     if (chamadas === 0) eq(erroDe(events).message, 'Não encontrei isso na base do atlas.', `${nome}: recusa`)
   }
 })
+
+function prosaDoFinal(final: { blocos: Array<{ texto: string; justificativa?: string }>; avisos: Array<{ texto: string }>; entidades: Array<{ nome: string }>; fontes_detalhe: Record<string, { titulo: string; url?: string; localizador?: string }> }) {
+  const partes = [
+    ...final.blocos.map((bloco) => bloco.texto),
+    ...final.blocos.map((bloco) => bloco.justificativa ?? ''),
+    ...final.avisos.map((aviso) => aviso.texto),
+    ...final.entidades.map((entidade) => entidade.nome),
+    ...Object.values(final.fontes_detalhe).flatMap((detalhe) => [detalhe.titulo, detalhe.url ?? '', detalhe.localizador ?? '']),
+  ]
+  return partes.join('\n')
+}
+
+function aspasBalanceadas(texto: string): boolean {
+  const n = (ch: string) => texto.split(ch).length - 1
+  return n('"') % 2 === 0 && n('«') === n('»') && n('“') === n('”') && !/«\s*»|“\s*”|"\s*"/.test(texto)
+}
+
+Deno.test('hotfix1i pergunta com eco de ausência não cobra', async () => {
+  for (const modelo of ['basico', 'avancado'] as const) {
+    const r = await rodarModelo({
+      modelo,
+      agora: 30_000,
+      respostas: [gerar(JSON.stringify({
+        blocos: [docCampanha('Onde está o papel?')],
+        sem_base: false,
+        em_aberto: 'Não consta nos documentos.',
+      }), 0.0002)],
+    })
+    eq(r.chamadas, 1, `${modelo}: uma chamada`)
+    eq(erroDe(r.emitted).code, 'fora_da_base', `${modelo}: fora_da_base`)
+    assert(!r.emitted.some((evento) => evento.event === 'final'), `${modelo}: sem final`)
+    const snap = r.store.snapshot(USER, CLOCK())
+    eq(snap.used, 0, `${modelo}: used 0`)
+    eq(snap.commitCalls, 0, `${modelo}: nenhum crédito`)
+    eq(snap.releaseCalls, 1, `${modelo}: crédito liberado`)
+    eq(snap.reserved, 0, `${modelo}: reserva zerada`)
+    if (modelo === 'avancado') eq(snap.paid, 40, `${modelo}: pago restaurado`)
+    eq(r.orcamento.commits.length, 1, `${modelo}: orçamento liquidado`)
+    eq(r.orcamento.commits[0], 0.0002, `${modelo}: custo real`)
+    eq(r.orcamento.solturas(), 0, `${modelo}: hold não solto`)
+    eq(snap.logs[0]?.custo_usd, 0.0002, `${modelo}: log`)
+    eq(snap.logs[0]?.status, 'fora_da_base', `${modelo}: status do log`)
+  }
+})
+
+Deno.test('hotfix1i só perguntas não cobram; frase declarativa cobra', async () => {
+  for (const modelo of ['basico', 'avancado'] as const) {
+    const perguntas = await rodarModelo({
+      modelo,
+      agora: 30_000,
+      respostas: [gerar(JSON.stringify({
+        blocos: [docCampanha('Onde está o papel? Quem pagou?')],
+        sem_base: false,
+        em_aberto: null,
+      }), 0.0002)],
+    })
+    eq(erroDe(perguntas.emitted).code, 'fora_da_base', `${modelo}: duas perguntas`)
+    assert(!perguntas.emitted.some((evento) => evento.event === 'final'), `${modelo}: sem final`)
+    const semCredito = perguntas.store.snapshot(USER, CLOCK())
+    eq(semCredito.used, 0, `${modelo}: used 0`)
+    eq(semCredito.commitCalls, 0, `${modelo}: sem commit`)
+    eq(semCredito.releaseCalls, 1, `${modelo}: crédito liberado`)
+    eq(perguntas.orcamento.commits[0], 0.0002, `${modelo}: custo real`)
+    eq(perguntas.orcamento.solturas(), 0, `${modelo}: hold não solto`)
+
+    const fato = await rodarModelo({
+      modelo,
+      agora: 30_000,
+      respostas: [gerar(JSON.stringify({
+        blocos: [docCampanha('O contrato de 1936 ficou registrado.')],
+        sem_base: false,
+        em_aberto: null,
+      }), 0.0002)],
+    })
+    const final = finalDe(fato.emitted)
+    assert(final.blocos.some((bloco) => bloco.texto.includes('O contrato de 1936 ficou registrado')), `${modelo}: frase fica`)
+    const snap = fato.store.snapshot(USER, CLOCK())
+    eq(snap.commitCalls, 1, `${modelo}: commit`)
+    eq(snap.releaseCalls, 0, `${modelo}: não libera`)
+    eq(fato.orcamento.commits[0], 0.0002, `${modelo}: custo`)
+    eq(fato.orcamento.solturas(), 0, `${modelo}: hold não solto`)
+    if (modelo === 'basico') eq(snap.used, 1, 'básico debitado')
+    if (modelo === 'avancado') eq(snap.paid, 32, 'avançado debitado')
+  }
+})
+
+Deno.test('hotfix1i código citado não volta no texto final', async () => {
+  const r = await rodarModelo({
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('Ele escreveu "AP_E777 pagou OP901" no relatório da casa_ms E150 B01. O memorando «OP901» registra o repasse.')],
+      sem_base: false,
+      em_aberto: 'Onde ficou AP_E777 casa_ms?',
+      avisos: [{ tipo: 'outro', texto: 'Ver AP_E777 e casa_ms.' }],
+    }), 0.0002)],
+  })
+  const final = finalDe(r.emitted)
+  const prosa = prosaDoFinal(final)
+  const cru = JSON.stringify(final)
+  assert(!/AP_E\d+|OP\d+/.test(cru), cru)
+  assert(!/\bcasa_ms\b|\bE150\b|\bB01\b/.test(prosa), prosa)
+  assert(aspasBalanceadas(prosa), prosa)
+  assert(!/«\s*»|"\s*"/.test(prosa), prosa)
+})
+
+Deno.test('hotfix1i termo jurídico cai por frase; o resto do bloco fica', () => {
+  const ctx = campanhaCtx()
+  const texto = 'A Operação Brother Sam foi a decisão estatal dos EUA de apoiar o levante. O Departamento de Estado montou um esquema de apoio condicional. O telegrama de 31 de março de 1964 registra decisões logísticas.'
+  const { answer, removed } = sanitizeAnswer({
+    blocos: [{ tipo: 'documentado', texto, entidades: ['casa_ms'], relacoes: ['E150'], fontes: ['B01'] }],
+  }, ctx)
+  assert(removed, 'removed')
+  eq(answer.blocos.length, 1, 'bloco fica')
+  const saida = answer.blocos[0].texto
+  assert(saida.includes('A Operação Brother Sam foi a decisão estatal dos EUA de apoiar o levante.'), saida)
+  assert(saida.includes('O telegrama de 31 de março de 1964 registra decisões logísticas.'), saida)
+  assert(!/esquema/i.test(saida), saida)
+  const cai = sanitizeAnswer({
+    blocos: [{ tipo: 'documentado', texto: 'É um esquema de lavagem.', entidades: ['casa_ms'], relacoes: ['E150'], fontes: ['B01'] }],
+  }, ctx)
+  eq(cai.answer.blocos.length, 0, 'frase única cai')
+  assert(cai.removed, 'removed da frase única')
+  const prompt = buildSystemPrompt('basico', ctx)
+  assert(prompt.includes('Não use "esquema", "crime", "ilegal", "fraude", "corrupção", "lavagem", "conspiração", "propina" nem "suborno" fora de citação literal de fonte.'), 'linha no prompt')
+})
+
+Deno.test('hotfix1i seleção: tempo de permanência vai ao modelo; previsão e S-15 recusam', async () => {
+  const mapa = { 'casa_ms|': campanhaCtx() }
+  const casos: Array<[string, string, number]> = [
+    ['permanencia', 'Como está o tempo de permanência no cargo?', 1],
+    ['previsao', 'qual a previsão do tempo amanhã?', 0],
+    ['s15', S15, 0],
+  ]
+  for (const [nome, mensagem, chamadas] of casos) {
+    const store = bancoDe(mapa)
+    const modelo = cliente()
+    const { events } = await pedir(store, mensagem, ['casa_ms'], modelo.openrouter)
+    eq(modelo.chamadas(), chamadas, `${nome}: chamadas`)
+    if (chamadas === 0) eq(erroDe(events).message, 'Não encontrei isso na base do atlas.', `${nome}: recusa`)
+  }
+})

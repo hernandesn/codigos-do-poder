@@ -580,3 +580,37 @@ Teste: `chat_hotfix1_test.ts:1735`. Com seleção, «Como está o tempo de manda
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **176 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1h` desta seção. `git diff 67ad746 -- 'supabase/functions/_shared/*_test.ts' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
+
+## Hotfix1i
+
+Sobre `426e2b3`. A revisão Codex desse commit deu REPROVADO. Na função só muda `chat_core.ts`. `pauta.ts` não muda. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda: o evento final continua com `avisos: []` (`chat_core.ts:3988`). A maiúscula escondida pelo placeholder e a citação em várias linhas ficam no backlog.
+
+### 1. Frase declarativa antes do crédito
+
+Achado: `temFraseDeclarativa` aceitava qualquer frase diferente do fecho. O eco «Não consta nos documentos.» em `em_aberto` preservava «Onde está o papel?» no corpo e cobrava. A checagem olha só o texto final dos blocos, depois dos filtros e antes do fecho (`chat_core.ts:3903–3905`). `temFraseDeclarativa` (`2421`) exige frase que não termina em «?», não é rótulo de ausência (`fraseRotuloAusencia`, `2402`: «Não consta nos documentos.», «A documentação é parcial.» e `fraseAusenciaExata`) e tem ao menos 3 palavras com letras. Três frases curtas já cobradas pela suíte («Um.», «Dois.», «Três.») somam 3 no texto juntado e continuam conteúdo. Sem isso: `fora_da_base`, crédito liberado (`used` 0) e orçamento liquidado com o custo real. Vale para Básico e Avançado.
+
+Testes: `chat_hotfix1_test.ts:1769` (o caso do Codex) e `:1797` (só perguntas não cobram; «O contrato de 1936 ficou registrado.» cobra).
+
+### 2. Código que volta dentro da citação
+
+Achado: `restaurarTrechos` devolvia `AP_E777` e `OP901` que `semCodigosDeFicha` não tinha visto, porque a citação estava mascarada. Depois de restaurar, `aposRestaurar` (`2507`) roda de novo `ocultarIdsVisiveis`, `semCodigosDeFicha` e `semCodigosInternos` quando o texto ainda casa id ou código (`casouVazamento`, `2435`). A chamada está em `filtrarProsaVisivel` (`2311`) e em `semForaDaBase` (`2657`). Se o trecho ficar sem frase declarativa, ele cai. `limparCampo` (`2515`) faz a mesma limpeza, sem apagar o fecho, em `em_aberto`, avisos, justificativa que não é documentada e no último bloco depois do fecho (`3964–3980`). Os arrays de id de citação continuam com os ids do recorte: sem eles `hasValidId` manda a resposta para `fora_da_base`.
+
+Teste: `chat_hotfix1_test.ts:1838`. «Ele escreveu "AP_E777 pagou OP901" no relatório.» e «O memorando «OP901» registra o repasse.» não deixam `AP_E` nem `OP` no JSON do evento final. `casa_ms`, `E150` e `B01` não aparecem na prosa. As aspas ficam balanceadas e sem par vazio.
+
+### 3. Termo jurídico por frase
+
+Achado: `safePublicClaim` no bloco inteiro derrubava o 1º parágrafo da Q5 por «esquema de apoio condicional». `separarFrasesPublicas` (`2520`) aplica `safePublicClaim` por frase, com a citação protegida e restaurada antes da guarda. A frase que falha cai; a justificativa que falha vira `''`; `removed` fica true sempre que algo cai (`sanitizeAnswer`, `2694–2702`). Sem frase restante, o bloco cai como antes. `semAnaforaPendente` corre no corte. `pauta.ts` e a lista de termos não mudam. O prompt do sistema, fora do ramo de pauta, ganha a linha de não usar «esquema», «crime», «ilegal», «fraude», «corrupção», «lavagem», «conspiração», «propina» nem «suborno» fora de citação literal (`1364`). A frase de voz «bem encadeadas e claras: cada ligação é explicada por inteiro» saiu (`1345`) para a linha nova caber no teto já travado de 5810 caracteres do prompt fixo. Nenhuma asserção de texto do prompt foi alterada.
+
+Teste: `chat_hotfix1_test.ts:1857`. Ficam a 1ª e a 3ª frase do bloco Brother Sam, «esquema» não aparece, `removed` true. «É um esquema de lavagem.» derruba o bloco. O teste de `pauta_test.ts` segue como estava.
+
+### 4. «tempo» só na meteorologia
+
+A regra coube em poucas linhas. `selecaoForaDaPergunta` (`3029`) recusa «como está o tempo», «vai chover» e «temperatura hoje|amanhã|agora» só quando a frase não tem «tempo de» + substantivo. «Como está o tempo?» sem vocabulário do atlas continua fora. `TEMA_EXTERNO` (`3005–3008`) traz «previsão do tempo», «como está o tempo hoje|amanhã|agora|lá fora», «vai chover» e «temperatura hoje|amanhã|agora». «cargo» e «permanência» entram em `temVocabularioAtlas` (`2981`) e em `vocabularioAtlasNaPergunta` (`2987`).
+
+Teste: `chat_hotfix1_test.ts:1878`. «Como está o tempo de permanência no cargo?» chama o modelo. «qual a previsão do tempo amanhã?» e S-15 recusam.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**181 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1i` desta seção. `git diff 426e2b3 -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
