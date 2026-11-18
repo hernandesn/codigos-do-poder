@@ -48,6 +48,7 @@ def render(page, origin=None):
     slots = {'__CSS__': css, '__JS__': js}
     if page == 'vincular':
         slots['__AUTH_JS__'] = (SCRIPTS / 'site-chat.js').read_text()
+        slots['__COPY_JS__'] = (SCRIPTS / 'copy-toast.js').read_text()
     html = (SCRIPTS / (page + '.template')).read_text()
     for slot in slots:
         if html.count(slot) != 1:

@@ -41,6 +41,7 @@
   </main>
   <script src="config.js"></script>
   <script>__AUTH_JS__</script>
+  <script>__COPY_JS__</script>
   <script>__JS__</script>
 </body>
 </html>
