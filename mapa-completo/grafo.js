@@ -1243,9 +1243,11 @@
     }, true);
 
     document.addEventListener('keydown', ev => {
-      if (!vivo.ativo || ev.key !== 'Home') return;
+      if (!vivo.ativo || ev.key !== 'Home' || ev.altKey || ev.ctrlKey || ev.metaKey) return;
       const alvo = ev.target;
-      if (alvo && alvo.matches && alvo.matches('input, textarea, select')) return;
+      if (!alvo || !alvo.closest) return;
+      if (alvo.closest('#inspector')) return;
+      if (alvo.matches && alvo.matches('input, textarea, select')) return;
       ev.preventDefault();
       ev.stopPropagation();
       enquadrar(true);

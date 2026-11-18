@@ -390,3 +390,33 @@ test('Shift+Enter no rótulo de RF expande Rockefeller e não Mauá', { timeout:
   } finally { await context.close(); }
 });
 
+test('Home na alça recolhe o painel e Home num rótulo enquadra o grafo', { timeout: 120000 }, async () => {
+  const { context, page, errors } = await abrir(393, 852);
+  try {
+    await mapaAberto(page);
+    await page.evaluate(() => { location.hash = 'e=ipes'; });
+    await page.waitForFunction(() => window.mural.getState().selected && window.mural.getState().selected.id === 'ipes');
+    await page.waitForFunction(() => {
+      const h = document.getElementById('sheet-handle');
+      const s = getComputedStyle(h);
+      return s.display !== 'none' && s.visibility !== 'hidden' && document.getElementById('inspector').dataset.sheet === 'half';
+    });
+    await page.locator('#sheet-handle').focus();
+    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'sheet-handle');
+    await page.keyboard.press('Home');
+    await page.waitForFunction(() => document.getElementById('inspector').dataset.sheet === 'collapsed', null, { timeout: 4000 });
+    assert.equal(await page.evaluate(() => document.getElementById('sheet-handle').getAttribute('aria-valuenow')), '0');
+    await page.waitForFunction(() => document.querySelector('#grafo-rotulos text[data-grafo-no]'));
+    await page.evaluate(() => document.getElementById('zoom-in').click());
+    await page.waitForFunction(() => window.__grafo.zoom() > 1.1);
+    await page.locator('#grafo-rotulos text[data-grafo-no]').first().focus();
+    const foco = await page.evaluate(() => {
+      const el = document.activeElement;
+      return el && el.getAttribute && el.getAttribute('data-grafo-no');
+    });
+    assert.ok(foco, 'foco deveria estar num rótulo do grafo');
+    await page.keyboard.press('Home');
+    await page.waitForFunction(() => Math.abs(window.__grafo.zoom() - 1) < 0.04, null, { timeout: 4000 });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
