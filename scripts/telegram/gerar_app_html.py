@@ -7,8 +7,8 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 SITE = SCRIPTS.parent.parent
-# index.html mudou pelo grafo do mapa completo (#24).
-INDEX_SHA = 'a2181a1a4fbb342084e50037fa071838ff2141d618bf0b061f4b471e18dece60'
+# index.html da raiz é a landing (#23); o app do atlas foi para mapa/index.html.
+INDEX_SHA = '8e1182b0a26398143be78e2776e59133f045a3ad8d4a7f9feb4e1b979168b168'
 TURNSTILE_STYLE_ATTR = "style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='"
 
 
