@@ -610,3 +610,211 @@ test('toque no fundo, arrasto e cancelamento não expandem o duplo toque', { tim
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+function abrirAnimado(width, height, extra) {
+  return abrir(width, height, Object.assign({ reducedMotion: 'no-preference', hasTouch: true }, extra || {}));
+}
+
+test('gesto no meio da animação de 280 ms não volta ao alvo', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrirAnimado(1440, 900);
+  try {
+    await mapaAberto(page);
+    await page.evaluate(() => {
+      document.getElementById('zoom-in').click();
+      document.getElementById('zoom-in').click();
+    });
+    await page.waitForFunction(() => window.__grafo.zoom() > 1.4, null, { timeout: 4000 });
+    await page.evaluate(() => document.getElementById('fit').click());
+    await page.waitForTimeout(100);
+    const meio = await page.evaluate(() => ({
+      p: window.mapaCompleto.pontoNaTela('kochpac'),
+      z: window.__grafo.zoom(),
+    }));
+    assert.ok(meio.z > 1.08, 'animação deveria estar no meio, zoom ' + meio.z);
+    await page.evaluate(() => {
+      const palco = document.getElementById('grafo-palco');
+      const r = palco.getBoundingClientRect();
+      const x = r.left + 48, y = r.top + 72;
+      const disparar = (tipo, px, py) => {
+        palco.dispatchEvent(new PointerEvent(tipo, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          pointerId: 1,
+          pointerType: 'mouse',
+          clientX: px,
+          clientY: py,
+          button: tipo === 'pointermove' ? -1 : 0,
+          buttons: tipo === 'pointerup' ? 0 : 1,
+          isPrimary: true,
+        }));
+      };
+      disparar('pointerdown', x, y);
+      disparar('pointermove', x + 90, y);
+      disparar('pointerup', x + 90, y);
+    });
+    await assentar(page);
+    const gesto = await page.evaluate(() => ({
+      p: window.mapaCompleto.pontoNaTela('kochpac'),
+      z: window.__grafo.zoom(),
+      k: window.mural.getState().camera.k,
+    }));
+    assert.ok(Math.abs(gesto.p.x - meio.p.x) > 50, JSON.stringify({ meio: meio.p, gesto: gesto.p }));
+    await page.waitForTimeout(450);
+    const tarde = await page.evaluate(() => ({
+      p: window.mapaCompleto.pontoNaTela('kochpac'),
+      z: window.__grafo.zoom(),
+      k: window.mural.getState().camera.k,
+    }));
+    assert.ok(Math.abs(tarde.z - gesto.z) < 0.04, JSON.stringify({ gesto: gesto.z, tarde: tarde.z, meio: meio.z }));
+    assert.ok(Math.abs(tarde.p.x - gesto.p.x) <= 1.5 && Math.abs(tarde.p.y - gesto.p.y) <= 1.5, JSON.stringify({ gesto: gesto.p, tarde: tarde.p }));
+    assert.ok(Math.abs(tarde.k - gesto.k) / gesto.k < 0.02, JSON.stringify({ gesto: gesto.k, tarde: tarde.k }));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('no limite de zoom o mural e o grafo usam o mesmo fator', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrirAnimado(1440, 900);
+  try {
+    await mapaAberto(page);
+    await page.evaluate(() => { location.hash = 'e=ipes'; });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('#network .network-node.selected .node-card');
+      return !!(window.mural.getState().selected && window.mural.getState().selected.id === 'ipes' && card);
+    }, null, { timeout: 8000 });
+    await page.waitForFunction(() => {
+      const z = window.__grafo.zoom();
+      if (!window.__zoomQuieto) window.__zoomQuieto = { z, n: 0 };
+      if (Math.abs(z - window.__zoomQuieto.z) < 0.002) window.__zoomQuieto.n += 1;
+      else window.__zoomQuieto = { z, n: 0 };
+      return window.__zoomQuieto.n >= 4;
+    }, null, { timeout: 4000 });
+    const medir = () => page.evaluate(() => {
+      const card = document.querySelector('#network .network-node.selected .node-card').getBoundingClientRect();
+      return {
+        z: window.__grafo.zoom(),
+        k: window.mural.getState().camera.k,
+        w: card.width,
+        h: card.height,
+      };
+    });
+    const rodar = dy => page.evaluate(delta => {
+      const palco = document.getElementById('grafo-palco');
+      const r = palco.getBoundingClientRect();
+      palco.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: r.left + 36,
+        clientY: r.top + 48,
+        deltaY: delta,
+        deltaMode: 0,
+      }));
+    }, dy);
+    const esperarRoda = async () => { await assentar(page); await assentar(page); };
+    let anterior = await medir();
+    for (let i = 0; i < 16 && anterior.z > 0.56; i++) {
+      await rodar(120);
+      await esperarRoda();
+      const agora = await medir();
+      if (agora.z > anterior.z - 0.001) break;
+      anterior = agora;
+    }
+    const noMinimo = await medir();
+    assert.ok(noMinimo.z < 0.57, 'não chegou no mínimo ' + noMinimo.z);
+    await rodar(120);
+    await esperarRoda();
+    const aposMin = await medir();
+    const fatorZm = aposMin.z / noMinimo.z;
+    const fatorKm = aposMin.k / noMinimo.k;
+    assert.ok(Math.abs(fatorZm - 1) < 0.02 && Math.abs(fatorKm - 1) < 0.02, JSON.stringify({ fatorZm, fatorKm, noMinimo, aposMin }));
+    assert.ok(Math.abs(fatorZm - fatorKm) < 0.02, JSON.stringify({ fatorZm, fatorKm }));
+    assert.ok(Math.abs(aposMin.w - noMinimo.w) <= 1 && Math.abs(aposMin.h - noMinimo.h) <= 1, JSON.stringify({ noMinimo, aposMin }));
+
+    anterior = aposMin;
+    for (let i = 0; i < 24 && anterior.z < 13.9; i++) {
+      await rodar(-120);
+      await esperarRoda();
+      const agora = await medir();
+      if (agora.z < anterior.z + 0.001) break;
+      anterior = agora;
+    }
+    const noMaximo = await medir();
+    assert.ok(noMaximo.z > 13.5, 'não chegou no máximo ' + noMaximo.z);
+    await rodar(-120);
+    await esperarRoda();
+    const aposMax = await medir();
+    const fatorZx = aposMax.z / noMaximo.z;
+    const fatorKx = aposMax.k / noMaximo.k;
+    assert.ok(Math.abs(fatorZx - 1) < 0.02 && Math.abs(fatorKx - 1) < 0.02, JSON.stringify({ fatorZx, fatorKx, noMaximo, aposMax }));
+    assert.ok(Math.abs(fatorZx - fatorKx) < 0.02, JSON.stringify({ fatorZx, fatorKx }));
+    assert.ok(Math.abs(aposMax.w - noMaximo.w) <= 1.5 && Math.abs(aposMax.h - noMaximo.h) <= 1.5, JSON.stringify({ noMaximo, aposMax }));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('pinça não dispara o expandir do duplo toque', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrirAnimado(1440, 900);
+  try {
+    await mapaAberto(page);
+    const ler = () => page.evaluate(() => {
+      const s = window.mural.getState();
+      return { view: s.view, n: s.visibleNodes.length, id: s.selected && s.selected.id };
+    });
+    const sequencia = modo => page.evaluate(modoAtual => {
+      const palco = document.getElementById('grafo-palco');
+      const no = window.mapaCompleto.pontoNaTela('kochpac');
+      if (!no || no.x < 8 || no.y < 8 || no.x > innerWidth - 8 || no.y > innerHeight - 8) return { erro: 'kochpac fora', no };
+      const disparar = (tipo, x, y, id) => {
+        const pressionado = tipo === 'pointerdown' || tipo === 'pointermove';
+        palco.dispatchEvent(new PointerEvent(tipo, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          pointerId: id,
+          pointerType: 'touch',
+          clientX: x,
+          clientY: y,
+          button: tipo === 'pointermove' ? -1 : 0,
+          buttons: pressionado ? 1 : 0,
+          isPrimary: id === 1,
+        }));
+      };
+      const toque = () => { disparar('pointerdown', no.x, no.y, 1); disparar('pointerup', no.x, no.y, 1); };
+      toque();
+      if (modoAtual === 'pinca') {
+        disparar('pointerdown', no.x - 28, no.y, 1);
+        disparar('pointerdown', no.x + 28, no.y, 2);
+        disparar('pointermove', no.x - 70, no.y, 1);
+        disparar('pointermove', no.x + 70, no.y, 2);
+        disparar('pointerup', no.x - 70, no.y, 1);
+        disparar('pointerup', no.x + 70, no.y, 2);
+      }
+      toque();
+      return { ok: true, no };
+    }, modo);
+
+    const prep = await sequencia('pinca');
+    assert.ok(prep && prep.ok, JSON.stringify(prep));
+    await page.waitForFunction(() => {
+      const s = window.mural.getState();
+      return !!(s.selected && s.selected.id === 'kochpac');
+    }, null, { timeout: 4000 });
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
+    const estado = await ler();
+    assert.equal(estado.view, 'all', JSON.stringify(estado));
+    assert.ok(estado.n > 1000, JSON.stringify(estado));
+    assert.equal(estado.id, 'kochpac', JSON.stringify(estado));
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 650)));
+    assert.equal(await page.evaluate(() => window.mural.getState().view), 'all');
+
+    const duplo = await sequencia('duplo');
+    assert.ok(duplo && duplo.ok, JSON.stringify(duplo));
+    await page.waitForFunction(() => window.mural.getState().view === 'custom', null, { timeout: 4000 });
+    const aberto = await ler();
+    assert.equal(aberto.view, 'custom', JSON.stringify(aberto));
+    assert.equal(aberto.id, 'kochpac', JSON.stringify(aberto));
+    assert.ok(aberto.n > 1 && aberto.n < 1644, JSON.stringify(aberto));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
