@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="couro-osso">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com 'sha256-NYHWG3UDFe52Q62jbDmo0YOaKZhrUlURkZp9+qztRwE='; style-src 'self' 'sha256-lpDLPUFgcWX348TTCYwSxT+Mn++lABdVuJ7riHHsh2E='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src https://challenges.cloudflare.com;">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:,">
+  <title>Cancelar assinatura · Códigos do Poder</title>
+  <style>/* Fontes self-hosted (EB Garamond, Courier Prime · SIL OFL 1.1), latin + latin-ext, font-display:swap */
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:italic;font-weight:400;font-display:swap;src:url("fonts/eb-garamond-400i.woff2") format("woff2")}
+@font-face{font-family:"EB Garamond";font-style:normal;font-weight:600;font-display:swap;src:url("fonts/eb-garamond-600.woff2") format("woff2")}
+@font-face{font-family:"Courier Prime";font-style:normal;font-weight:400;font-display:swap;src:url("fonts/courier-prime-400.woff2") format("woff2")}
+/* ═══════════════════════════════════════════════════════════════════════════
+   Códigos do Poder · tema D1 "Couro e Osso" · tokens finais (UX5d, PROPOSTA)
+   Uso: <html data-theme="couro-osso">. Todo o CSS/JS/template deve ler SÓ estes tokens.
+   Regras do tema:
+   · Vermelho-sangue (#5a0000–#8b0000) é SUPERFÍCIE (faixa, lombada, lacre, seleção,
+     cabeçalho da ficha, botão primário) com texto osso por cima. Como texto ou fio fino
+     sobre o escuro usa-se --blood-text / --blood-thread.
+   · Nenhum tipo de nó, aresta, evidência ou erro é vermelho. Erro/aviso = âmbar + ⚠.
+   · FATO / INFERÊNCIA / HIPÓTESE: borda sólida / tracejada / pontilhada.
+   · Sem filter/blur em nós e arestas. Textura, vela e vinheta são camadas estáticas.
+   Contraste conferido por contraste.cjs (texto ≥ 4,5:1; UI, bordas, fios ≥ 3:1).
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="couro-osso"]{
+  color-scheme:dark;
+
+  /* ── Superfícies (couro, do mais fundo ao mais alto) ── */
+  --bg:#0a0706;            /* fundo da página, cabeçalho do quadro, legenda */
+  --map-bg:#0d0907;        /* a mesa do mural (atrás das fichas) */
+  --surface-1:#140f0c;     /* barra do topo, índice lateral */
+  --surface-2:#1b1410;     /* pasta (ficha lateral) e painel do chat */
+  --surface-3:#241b15;     /* aba da pasta, abas inativas, campos elevados */
+  --line:#2f241c;          /* divisória decorativa (sem mínimo de contraste) */
+  --border:#8b7660;        /* borda de campo e controles (≥ 3:1) */
+
+  /* ── Texto sobre couro ── */
+  --ink:#ede3cd;           /* texto principal */
+  --ink-2:#cdbfa4;         /* texto secundário, rascunho em streaming */
+  --ink-3:#ab9b82;         /* notas, contadores, placeholders */
+
+  /* ── Papel: fichas de nó (osso) e folha da pasta ── */
+  --card:#e2d6bc;          /* cartão de nó / bilhete / pergunta do chat */
+  --card-ink:#23170f;      /* título no cartão */
+  --card-ink-2:#5b4634;    /* tipo e metadados no cartão */
+  --card-edge:#e2d6bc;     /* silhueta do cartão contra a mesa */
+  --card-back:#b9aa8c;     /* papel de baixo (pilhas, verso da folha) */
+  --sheet:#e9dfc8;         /* folha dentro da pasta */
+  --sheet-ink:#24170f;
+  --sheet-ink-2:#5a4533;
+  --stamp-ink:#7d0a0a;     /* carimbo CONFIDENCIAL em tinta, só sobre papel */
+
+  /* ── Sangue (marca) ── */
+  --blood:#7a0a0a;         /* superfície: faixa, lombada, lacre, seleção, primário */
+  --blood-deep:#2b0303;    /* sombra do sangue (gradiente, borda do lacre) */
+  --on-blood:#f2e7d2;      /* texto/filete osso sobre sangue */
+  --blood-text:#d47a6e;    /* vermelho claro: links, nº de fonte, carimbo sobre couro */
+  --blood-thread:#c43a30;  /* fio e contorno de seleção sobre a mesa */
+
+  /* ── Tipos de nó (aba/tachinha; também ícone + rótulo) ── */
+  --tab-ink:#1c120c;       /* ícone escuro sobre a aba colorida */
+  --n-pessoa:#d4c6a6; --n-familia:#c99a48; --n-instituicao:#8f9ba3; --n-empresa:#a8845e;
+  --n-governo:#b3ad6c; --n-operacao:#b86c3f; --n-fonte:#6f9a7a; --n-generico:#958e84;
+
+  /* ── Fios por tipo de aresta (cor + traço; ver componentes.md) ── */
+  --e-parentesco:#d4c6a6; --e-casamento:#c99a48; --e-financiamento:#8fa06a; --e-fundacao:#a8845e;
+  --e-controle:#8f9ba3; --e-subscricao:#7e8a7a; --e-cargo:#b86c3f; --e-indice:#958e84; --e-outro:#77716a;
+  --edge-label:#d8cbb0;    /* rótulo de fio/grupo sobre a mesa */
+
+  /* ── Evidência (nunca vermelha) ── */
+  --ev-fato:#a9b884; --ev-fato-bg:#1a1e12;   /* borda sólida  + ■ */
+  --ev-inf:#c49660;  --ev-inf-bg:#271d0e;    /* borda tracejada + ◆ */
+  --ev-hip:#b5afc4;  --ev-hip-bg:#1e1c25;    /* borda pontilhada + ○ */
+
+  /* ── Estados de sistema ── */
+  --danger:#f2d35c; --danger-bg:#2a2008;     /* erro/aviso: âmbar + ⚠, nunca o sangue */
+  --nosrc:#a3abb0; --nosrc-bg:#15181a;       /* "não há fonte na base": ardósia sóbria */
+
+  /* ── Botões em relevo ── */
+  --btn:#3b2c22; --btn-hi:#54402f; --btn-ink:#ede3cd; --btn-edge:#8b7660;
+  --btn-off:#221a15; --btn-off-ink:#8f806b; --btn-off-edge:#4a3c31;   /* desabilitado */
+
+  /* ── Foco visível: anel osso + halo preto (lê em couro e em papel) ── */
+  --focus-ring:#f2e7d2; --focus-halo:#000000;
+
+  /* ── Esmaecido, sombra, véu ── */
+  --dim:#2e2520; --dim-opacity:.22;
+  --shadow:#000000; --shadow-soft:#000000a6; --scrim:#000000b3;
+
+  /* ── Tipografia ── (Cormorant foi descartada: acentos mal posicionados no teste) */
+
+  /* Aliases temporários do tema anterior (UX4), para var(--gold/--panel/…) ainda no CSS/JS */
+  --panel:var(--surface-2);
+  --panel-deep:var(--surface-1);
+  --muted:var(--ink-3);
+  --gold:var(--blood-text);
+  --family:var(--n-familia);
+  --person:var(--n-pessoa);
+  --organization:var(--n-instituicao);
+  --event:var(--n-operacao);
+  --generic:var(--n-generico);
+  --draft:var(--ev-hip);
+  --font-display:"EB Garamond",Georgia,serif;   /* títulos, seminegrito 600 */
+  --font-body:"EB Garamond",Georgia,serif;      /* texto, 15–17 px; itálico para notas */
+  --font-mono:"Courier Prime","Courier New",monospace; /* só nº de registro (ENT-0412) */
+
+  /* ── Atmosfera (camadas estáticas, sem animação) ── */
+  --grain-opacity:.11;
+  --candle:radial-gradient(60% 55% at 46% 44%,#4a2a1255 0%,#2a160a33 40%,transparent 75%);
+  --vignette:radial-gradient(95% 85% at 48% 45%,transparent 38%,#000000b3 82%,#000000e6 100%);
+}
+
+*{box-sizing:border-box} [hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:19px;line-height:1.45;min-height:100vh;background-image:var(--candle)}
+a{color:var(--blood-text);text-underline-offset:4px}button,input,textarea,select{font:inherit}
+header{border-bottom:1px solid var(--border);background:var(--surface-1);padding:18px 28px;display:flex;justify-content:space-between;gap:16px;align-items:center}
+.brand{font-weight:600;font-size:24px;color:var(--ink);text-decoration:none}.brand small{display:block;font-size:14px;color:var(--ink-3);font-weight:400}
+main{max-width:850px;margin:40px auto;padding:0 24px 40px}.eyebrow{font-family:var(--font-mono);font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+h1{font-weight:600;line-height:1.12;font-size:42px;margin:10px 0 16px}h2{font-size:26px;line-height:1.2;margin:0 0 12px}p{margin:0 0 16px}.intro{color:var(--ink-2);max-width:650px}
+.panel{background:var(--surface-2);border:1px solid var(--border);border-top:4px solid var(--blood);border-radius:6px;padding:24px;margin:24px 0;box-shadow:0 12px 36px var(--shadow-soft)}
+label{display:block;margin-bottom:6px}input,textarea,select{border:1px solid var(--border);border-radius:4px;background:var(--surface-3);color:var(--ink);padding:12px;width:100%}input,select{min-height:48px}textarea{min-height:108px;resize:vertical}input::placeholder,textarea::placeholder{color:var(--ink-3)}
+button,.button{display:inline-block;min-height:46px;padding:10px 18px;border-radius:4px;border:1px solid var(--border);background:var(--blood);color:var(--on-blood);font-weight:600;text-decoration:none;cursor:pointer}
+button:disabled{background:var(--btn-off);color:var(--btn-off-ink);cursor:wait}.quiet{background:var(--btn);color:var(--btn-ink)}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:4px}.actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:16px}.note{font-size:16px;color:var(--ink-3)}
+.status{min-height:28px;color:var(--ink-2);margin:14px 0;overflow-wrap:anywhere}.status.warning{color:var(--danger)}
+.field{margin:18px 0}.history{display:grid;gap:18px;margin:24px 0}.bubble{padding:20px;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;overflow-wrap:anywhere;white-space:pre-wrap}.bubble.question{background:var(--card);color:var(--card-ink)}
+.bubble h2{font-family:var(--font-mono);font-weight:400;font-size:13px;letter-spacing:.04em}.answer-block{border-left:3px solid var(--ev-fato);padding-left:14px;margin:16px 0}.answer-block.inference{border-left:3px dashed var(--ev-inf)}.answer-block small{color:var(--ink-3);font-family:var(--font-mono);font-size:12px}.sources{font-size:16px;color:var(--ink-2)}
+.code{display:block;font-family:var(--font-mono);font-size:24px;letter-spacing:.04em;color:var(--ink);overflow-wrap:anywhere;margin:18px 0}.instructions{padding-left:24px}.instructions li{margin-bottom:12px}.footer{padding-top:12px;border-top:1px solid var(--line);font-size:16px;color:var(--ink-3)}
+@media(max-width:500px){header{padding:14px 18px}.brand{font-size:21px}header>a:last-child{font-size:16px}main{margin-top:26px;padding:0 18px 24px}h1{font-size:34px}.panel{padding:18px}.actions button,.actions .button{width:100%;text-align:center}.code{font-size:20px}.bubble{padding:16px}}
+
+#auth-turnstile:empty{display:none}
+
+dl{display:grid;grid-template-columns:9rem 1fr;gap:8px 16px;margin:12px 0 0}
+dt{color:var(--ink-3);font-family:var(--font-mono);font-size:13px;letter-spacing:.04em;text-transform:uppercase}
+dd{margin:0}
+#confirma{margin-top:16px;padding:16px;border:1px solid var(--border);background:var(--surface-3);border-radius:4px}
+</style>
+</head>
+<body>
+  <header><a class="brand" href="index.html">Códigos do Poder<small>mural investigativo</small></a><a href="index.html">Voltar ao atlas</a></header>
+  <main>
+    <span class="eyebrow">Aion · Assinatura</span>
+    <h1>Cancelar a recorrência.</h1>
+    <p class="intro">Aqui você vê o plano desta conta no sandbox e pode encerrar as próximas cobranças. O acesso segue até a data já registrada. Esta página não trata de devolução de valores.</p>
+    <p id="retorno" class="note" hidden></p>
+    <p id="status" class="status" role="status" aria-live="polite">Entre na sua conta para ver a assinatura.</p>
+    <form id="login-form" class="panel">
+      <h2>Entrar no atlas</h2>
+      <div class="field"><label for="email">E-mail</label><input id="email" type="email" autocomplete="username" required></div>
+      <div class="field"><label for="password">Senha</label><input id="password" type="password" autocomplete="current-password" required></div>
+      <div id="auth-turnstile"></div>
+      <div class="actions"><button id="login" type="submit">Entrar</button></div>
+      <p class="note">Use o mesmo login do site.</p>
+    </form>
+    <section id="conta" class="panel" hidden aria-labelledby="conta-titulo">
+      <h2 id="conta-titulo">Sua assinatura</h2>
+      <dl>
+        <dt>Plano</dt><dd id="plano">—</dd>
+        <dt>Status</dt><dd id="situacao">—</dd>
+        <dt>Acesso até</dt><dd id="acesso">—</dd>
+      </dl>
+      <p id="sem-cancelar" class="note" hidden>Não há recorrência aberta para cancelar nesta conta.</p>
+      <div class="actions"><button id="pedir" type="button" hidden>Cancelar assinatura</button><button id="sair" class="quiet" type="button">Sair</button></div>
+      <div id="confirma" hidden>
+        <p>Confirma o cancelamento da recorrência? As próximas cobranças param. O acesso continua até a data já registrada.</p>
+        <div class="actions"><button id="confirmar" type="button">Confirmar cancelamento</button><button id="voltar" class="quiet" type="button">Voltar</button></div>
+      </div>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script>(async function () {
+  'use strict';
+  const CHAVE = 'codigos-do-poder:auth:v1';
+  const ORIGEM = 'https://ozeiyqpbtggvuyhplisa.supabase.co';
+  const $ = (id) => document.getElementById(id);
+  const status = (texto, aviso) => {
+    $('status').textContent = texto;
+    $('status').classList.toggle('warning', !!aviso);
+  };
+  const PLANOS = { free: 'Gratuito', basico: 'Básico', plus: 'Plus' };
+  const STATUS = {
+    free: 'Sem assinatura paga',
+    checkout: 'Checkout em aberto',
+    trial: 'Período inicial',
+    ativa: 'Ativa',
+    inadimplente: 'Pagamento em atraso',
+    suspensa: 'Suspensa',
+    cancelamento_solicitado: 'Cancelamento pedido',
+    cancelada: 'Cancelada',
+    divergente: 'Em conferência',
+  };
+
+  function lerJwt(token) {
+    try {
+      const parte = String(token).split('.')[1] || '';
+      const pad = parte.length % 4 === 0 ? '' : '='.repeat(4 - (parte.length % 4));
+      return JSON.parse(atob(parte.replace(/-/g, '+').replace(/_/g, '/') + pad));
+    } catch { return null; }
+  }
+  function chaveRuim(chave) {
+    if (typeof chave !== 'string' || !chave.trim()) return true;
+    if (/sb_secret_|sk-or-|postgresql:\/\//i.test(chave)) return true;
+    const papel = lerJwt(chave.trim());
+    return !!(papel && papel.role === 'service_role');
+  }
+  function siteKeyOk(valor) {
+    const chave = typeof valor === 'string' ? valor.trim() : '';
+    if (!/^[0-9A-Za-z_-]{1,100}$/.test(chave)) return '';
+    const baixo = chave.toLowerCase();
+    if (baixo.includes('secret') || baixo.startsWith('sk-') || baixo.includes('service_role') || baixo.startsWith('sb_secret')) return '';
+    if (/^[123]x0{31}aa$/i.test(chave)) return '';
+    return chave;
+  }
+  function dataBr(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(typeof iso === 'string' ? iso : '');
+    return m ? m[3] + '/' + m[2] + '/' + m[1] : '—';
+  }
+  function lerSessao() {
+    try {
+      const salva = JSON.parse(localStorage.getItem(CHAVE) || 'null');
+      if (salva && typeof salva.accessToken === 'string' && typeof salva.refreshToken === 'string') return salva;
+    } catch { /* sessão ilegível */ }
+    return null;
+  }
+  function gravarSessao(proxima) {
+    if (!proxima) localStorage.removeItem(CHAVE);
+    else localStorage.setItem(CHAVE, JSON.stringify(proxima));
+  }
+  function sessaoDe(payload) {
+    if (!payload || typeof payload.access_token !== 'string' || typeof payload.refresh_token !== 'string') return null;
+    const expiraEm = Number(payload.expires_in);
+    const expiresAt = Date.now() + (Number.isFinite(expiraEm) && expiraEm > 0 ? expiraEm * 1000 : 3600 * 1000);
+    return { accessToken: payload.access_token, refreshToken: payload.refresh_token, expiresAt };
+  }
+  function cabecalhos(token) {
+    const headers = { apikey: config.supabaseAnonKey, 'content-type': 'application/json' };
+    if (token) headers.authorization = 'Bearer ' + token;
+    return headers;
+  }
+
+  const config = window.ATLAS_PUBLIC_CONFIG;
+  if (!config || config.supabaseUrl !== ORIGEM || chaveRuim(config.supabaseAnonKey)) {
+    status('A configuração do serviço está indisponível.', true);
+    $('login').disabled = true;
+    return;
+  }
+  const siteKey = siteKeyOk(config.turnstileSiteKey);
+  let captchaToken = '';
+
+  function montarTurnstile() {
+    if (!siteKey) return;
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.onload = () => {
+      const api = window.turnstile;
+      const alvo = $('auth-turnstile');
+      if (!api || typeof api.render !== 'function' || !alvo) return;
+      try {
+        api.render(alvo, {
+          sitekey: siteKey,
+          callback(token) { captchaToken = typeof token === 'string' ? token : ''; },
+          'expired-callback'() { captchaToken = ''; },
+          'error-callback'() { captchaToken = ''; },
+        });
+      } catch { /* sem desafio, o login segue recusado */ }
+    };
+    document.head.appendChild(script);
+  }
+
+  function mostrarConta(ativa) {
+    $('login-form').hidden = ativa;
+    $('conta').hidden = !ativa;
+  }
+
+  function mostrarStatus(corpo) {
+    const plano = corpo && PLANOS[corpo.plano] ? PLANOS[corpo.plano] : 'Gratuito';
+    const situacao = corpo && STATUS[corpo.status] ? STATUS[corpo.status] : 'Sem assinatura paga';
+    $('plano').textContent = plano;
+    $('situacao').textContent = situacao;
+    $('acesso').textContent = dataBr(corpo && corpo.acesso_ate);
+    const podeTentar = !!(corpo && corpo.pode_tentar_de_novo === true);
+    const pode = !!(corpo && corpo.pode_cancelar === true) || podeTentar;
+    $('pedir').hidden = !pode;
+    $('pedir').textContent = podeTentar ? 'Tentar de novo' : 'Cancelar assinatura';
+    $('sem-cancelar').hidden = pode;
+    $('confirma').hidden = true;
+  }
+
+  async function tokenAtual() {
+    let sessao = lerSessao();
+    if (!sessao) return null;
+    if (typeof sessao.expiresAt === 'number' && sessao.expiresAt > Date.now() + 30000) return sessao.accessToken;
+    const resposta = await fetch(ORIGEM + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST', headers: cabecalhos(), credentials: 'omit', redirect: 'error',
+      body: JSON.stringify({ refresh_token: sessao.refreshToken }),
+    });
+    if (!resposta.ok) { gravarSessao(null); return null; }
+    sessao = sessaoDe(await resposta.json());
+    if (!sessao) { gravarSessao(null); return null; }
+    gravarSessao(sessao);
+    return sessao.accessToken;
+  }
+
+  async function consultar(silencioso) {
+    const token = await tokenAtual();
+    if (!token) { mostrarConta(false); status('Entre na sua conta para ver a assinatura.', true); return; }
+    mostrarConta(true);
+    status('Consultando a assinatura…');
+    const resposta = await fetch(ORIGEM + '/functions/v1/asaas-cancel', {
+      method: 'GET', headers: cabecalhos(token), credentials: 'omit', redirect: 'error',
+    });
+    let corpo = null;
+    try { corpo = await resposta.json(); } catch { corpo = null; }
+    if (resposta.status === 401) { gravarSessao(null); mostrarConta(false); status('A sessão expirou. Entre de novo.', true); return; }
+    if (!resposta.ok || !corpo) { status('Não foi possível consultar a assinatura.', true); return; }
+    mostrarStatus(corpo);
+    if (!silencioso) status('Status lido no servidor. O retorno do checkout não confirma pagamento.');
+  }
+
+  const retorno = new URLSearchParams(location.search).get('retorno');
+  if (retorno === 'sucesso') {
+    $('retorno').hidden = false;
+    $('retorno').textContent = 'Você voltou do checkout. Isso não confirma o pagamento. O status só muda quando o servidor registra a assinatura.';
+  } else if (retorno === 'cancelado') {
+    $('retorno').hidden = false;
+    $('retorno').textContent = 'O checkout foi interrompido antes de concluir.';
+  } else if (retorno === 'expirado') {
+    $('retorno').hidden = false;
+    $('retorno').textContent = 'O link do checkout expirou. Nada foi confirmado por esta página.';
+  }
+
+  if (siteKey) montarTurnstile();
+  $('login-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    $('login').disabled = true;
+    status('Entrando…');
+    try {
+      if (siteKey && !captchaToken) { status('Confirme a verificação antes de entrar.', true); return; }
+      const corpo = { email: $('email').value.trim(), password: $('password').value };
+      if (captchaToken) corpo.gotrue_meta_security = { captcha_token: captchaToken };
+      const resposta = await fetch(ORIGEM + '/auth/v1/token?grant_type=password', {
+        method: 'POST', headers: cabecalhos(), credentials: 'omit', redirect: 'error', body: JSON.stringify(corpo),
+      });
+      if (!resposta.ok) { status('E-mail ou senha não conferem.', true); return; }
+      const sessao = sessaoDe(await resposta.json());
+      if (!sessao) { status('Não foi possível entrar. Tente novamente.', true); return; }
+      gravarSessao(sessao);
+      await consultar();
+    } catch { status('Não foi possível entrar. Tente novamente.', true); }
+    finally { $('password').value = ''; $('login').disabled = false; }
+  });
+  $('pedir').addEventListener('click', () => { $('confirma').hidden = false; });
+  $('voltar').addEventListener('click', () => { $('confirma').hidden = true; });
+  $('confirmar').addEventListener('click', async () => {
+    $('confirmar').disabled = true;
+    status('Pedindo o cancelamento…');
+    try {
+      const token = await tokenAtual();
+      if (!token) { mostrarConta(false); status('A sessão expirou. Entre de novo.', true); return; }
+      const resposta = await fetch(ORIGEM + '/functions/v1/asaas-cancel', {
+        method: 'POST', headers: cabecalhos(token), credentials: 'omit', redirect: 'error', body: '{}',
+      });
+      let corpo = null;
+      try { corpo = await resposta.json(); } catch { corpo = null; }
+      if (resposta.status === 404) { status('Não há assinatura para cancelar.', true); $('confirma').hidden = true; return; }
+      if (!resposta.ok) { status('Não foi possível cancelar a assinatura.', true); return; }
+      await consultar(true);
+      status(corpo && corpo.ja ? 'O cancelamento já tinha sido pedido. O acesso segue até a data registrada.' : 'Cancelamento pedido. A recorrência para; o acesso segue até a data já registrada.');
+    } catch { status('Não foi possível cancelar a assinatura.', true); }
+    finally { $('confirmar').disabled = false; }
+  });
+  $('sair').addEventListener('click', () => {
+    gravarSessao(null);
+    mostrarConta(false);
+    $('confirma').hidden = true;
+    status('Você saiu desta página. A sessão local foi apagada.');
+  });
+  if (lerSessao()) consultar().catch(() => status('Não foi possível consultar a assinatura.', true));
+  else status('Entre na sua conta para ver a assinatura.');
+})();
+</script>
+</body>
+</html>
