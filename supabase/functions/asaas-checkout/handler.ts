@@ -1,7 +1,7 @@
 import { ASAAS_SANDBOX_BASE, NOME_ITEM, ORIGEM_SITE, PRECO_REAIS, TRIAL_DIAS } from '../_shared/asaas_planos.ts'
 import { corsAsaas } from '../_shared/asaas_cors.ts'
 import { cpfCnpjValido, somenteDigitos } from '../_shared/asaas_cpf.ts'
-import { AsaasErro, urlCheckout, type AsaasClient } from '../_shared/asaas_client.ts'
+import { AsaasErro, urlCheckout, type AsaasClient, type AssinaturaRemota } from '../_shared/asaas_client.ts'
 import type { AsaasDb, PrepCheckout } from '../_shared/asaas_db.ts'
 import { nextDueDate } from '../_shared/asaas_datas.ts'
 import { falhaDeSchema, logSeguro } from '../_shared/asaas_token.ts'
@@ -21,9 +21,10 @@ export interface DepsCheckout {
 // Não se cria outra com nextDueDate = hoje. Preço, plano e datas saem daqui, nunca do corpo.
 // valor, value, price e nextDueDate enviados pelo cliente são ignorados.
 // A reserva cobre a janela do checkout (60 min). Resultado incerto não apaga a linha.
-// Reserva com checkout_id ou incerta, ao expirar, fica correlacionável. O handler consulta
-// GET /v3/subscriptions?customer= antes de abrir outra. Sem customer não há assinatura remota.
-// Falha dessa consulta recusa o checkout. POST no Asaas não tem retry.
+// A intenção `enviando` é gravada antes do POST, com o id interno como externalReference.
+// Reserva enviando, incerta ou com checkout_id, ao expirar, fica correlacionável e não é apagada.
+// Antes de substituir, o handler consulta GET por customer e por externalReference.
+// Falha de qualquer consulta recusa o checkout. POST no Asaas não tem retry.
 // Nesta etapa o único ambiente é o sandbox.
 
 function objeto(valor: unknown): Record<string, unknown> | null {
@@ -33,9 +34,10 @@ function objeto(valor: unknown): Record<string, unknown> | null {
 type JsonFn = (value: unknown, status?: number) => Response
 
 /**
- * Reserva expirada ou incerta. Sem customer no banco não existe assinatura remota, então libera.
- * GET com falha recusa. Assinatura remota não deletada vincula a reserva antiga e recusa outro checkout.
- * Não grava data de acesso. O POST do checkout novo só acontece depois de uma lista vazia.
+ * Reserva potencialmente enviada. Consulta por externalReference e, se houver, por customer.
+ * Qualquer falha recusa. Lista vazia só libera com a geração lida no preparar.
+ * Assinatura remota não deletada vincula a reserva antiga e recusa outro checkout.
+ * Não grava data de acesso. O POST do checkout novo só acontece depois das listas vazias.
  */
 async function reconciliar(
   db: AsaasDb,
@@ -44,19 +46,29 @@ async function reconciliar(
   plano: 'basico' | 'plus',
   planejado: string,
   assinaturaId: string,
+  geracao: number,
   json: JsonFn,
 ): Promise<PrepCheckout | Response> {
   const customer = await db.obterCliente('sandbox', userId)
-  if (!customer) return db.liberarCheckout('sandbox', userId, plano, planejado)
-  let remotas
+  let listas: AssinaturaRemota[][]
   try {
-    remotas = await asaas.listarAssinaturas(customer)
+    const consultas = [asaas.listarAssinaturasPorReferencia(assinaturaId)]
+    if (customer) consultas.push(asaas.listarAssinaturas(customer))
+    listas = await Promise.all(consultas)
   } catch {
     return json({ code: 'checkout_em_andamento', message: 'Não foi possível confirmar se já existe uma assinatura. Tente de novo.' }, 503)
   }
-  const vivas = remotas.filter((item) => item.deleted !== true)
-  if (!vivas.length) return db.liberarCheckout('sandbox', userId, plano, planejado)
-  const preferida = vivas.find((item) => item.externalReference) ?? vivas[0]
+  const vivas: AssinaturaRemota[] = []
+  const vistos = new Set<string>()
+  for (const item of listas.flat()) {
+    if (item.deleted === true || vistos.has(item.id)) continue
+    vistos.add(item.id)
+    vivas.push(item)
+  }
+  if (!vivas.length) return db.liberarCheckout('sandbox', userId, plano, planejado, geracao)
+  const preferida = vivas.find((item) => item.externalReference === assinaturaId)
+    ?? vivas.find((item) => item.externalReference)
+    ?? vivas[0]
   const candidatos = [preferida.externalReference, assinaturaId].filter((id): id is string => !!id)
   const unicos = [...new Set(candidatos)]
   for (const id of unicos) {
@@ -125,7 +137,7 @@ export function createAsaasCheckoutHandler(d: DepsCheckout) {
     }
     if (prep.code === 'reconciliar' && prep.assinaturaId) {
       try {
-        const seguido = await reconciliar(db, asaas, userId, plano, planejado, prep.assinaturaId, json)
+        const seguido = await reconciliar(db, asaas, userId, plano, planejado, prep.assinaturaId, prep.geracao ?? -1, json)
         if (seguido instanceof Response) return seguido
         prep = seguido
       } catch (erro) {
@@ -154,6 +166,7 @@ export function createAsaasCheckoutHandler(d: DepsCheckout) {
         await db.gravarCliente('sandbox', userId, criado.id)
         customer = await db.obterCliente('sandbox', userId) ?? criado.id
       }
+      await db.marcarCheckoutEnviando('sandbox', userId, reserva)
       const sessao = await asaas.criarCheckout({
         customer,
         plano,
@@ -167,6 +180,7 @@ export function createAsaasCheckoutHandler(d: DepsCheckout) {
       return json({ url: sessao.url })
     } catch (erro) {
       if (erro instanceof AsaasErro && erro.definitivo) {
+        await db.descartarEnvioRecusado('sandbox', userId, reserva).catch(() => {})
         await db.descartarCheckout('sandbox', userId, reserva).catch(() => {})
       } else {
         await db.marcarCheckoutIncerto('sandbox', userId, reserva).catch(() => {})

@@ -1,5 +1,5 @@
 import { planoPorCentavos, precoCentavos, type PlanoPago } from './asaas_planos.ts'
-import type { Ambiente, Bloqueio, EventoDb, Recorrencia, ReservaCheckout, StatusAssinatura } from './asaas_db.ts'
+import type { Ambiente, Bloqueio, EstadoCancelamento, EventoDb, Recorrencia, ReservaCheckout, StatusAssinatura } from './asaas_db.ts'
 import { instanteAnterior, somarMesIso } from './asaas_datas.ts'
 
 export interface LinhaAssinatura {
@@ -20,6 +20,8 @@ export interface LinhaAssinatura {
   precoCentavos: number | null
   nextDuePlanejado: string | null
   resultadoIncerto: boolean
+  /** Preenchido quando a intenção foi gravada antes do POST. A expiração não apaga essa linha. */
+  envioEm: string | null
   criadoEm: string
   atualizadoEm: string
 }
@@ -108,7 +110,7 @@ export function alinharLinha(linha: LinhaAssinatura): void {
     linha.recorrencia = eixos.recorrencia
     linha.bloqueio = eixos.bloqueio
   }
-  if (linha.reserva !== 'aberta' && linha.reserva !== 'incerta' && linha.reserva !== 'expirada') {
+  if (linha.reserva !== 'aberta' && linha.reserva !== 'enviando' && linha.reserva !== 'incerta' && linha.reserva !== 'expirada') {
     linha.reserva = linha.resultadoIncerto ? 'incerta' : 'aberta'
   }
   const derivado = derivarStatus(linha)
@@ -140,6 +142,25 @@ export function concederAcesso(linha: LinhaAssinatura, hoje: string): boolean {
 export function podeCancelar(linha: LinhaAssinatura): boolean {
   if (!linha.subscriptionId) return false
   return linha.recorrencia === 'ativa' || linha.recorrencia === 'pendente'
+}
+
+/**
+ * Lease ativo ou cancelamento já concluído escondem o botão.
+ * `falhou` ou lease vencido devolvem os dois sinais para a página tentar de novo.
+ */
+export function decisaoCancelamento(
+  linha: LinhaAssinatura | null,
+  op: { estado: EstadoCancelamento, leaseAte: string | null } | null,
+  agoraMs: number,
+): { pode_cancelar: boolean, pode_tentar_de_novo: boolean } {
+  if (!linha?.subscriptionId) return { pode_cancelar: false, pode_tentar_de_novo: false }
+  if (linha.recorrencia === 'ativa' || linha.recorrencia === 'pendente') {
+    return { pode_cancelar: true, pode_tentar_de_novo: false }
+  }
+  if (linha.recorrencia !== 'cancelamento_pendente') return { pode_cancelar: false, pode_tentar_de_novo: false }
+  const leaseVivo = !!op && op.estado === 'pendente' && !!op.leaseAte && Date.parse(op.leaseAte) > agoraMs
+  if (leaseVivo || op?.estado === 'concluido') return { pode_cancelar: false, pode_tentar_de_novo: false }
+  return { pode_cancelar: true, pode_tentar_de_novo: true }
 }
 
 export function historicoDeTrial(linhas: LinhaAssinatura[], atual: LinhaAssinatura, trials: Set<string>): boolean {
@@ -197,7 +218,7 @@ export function acharLinha(linhas: LinhaAssinatura[], evento: EventoDb, userId: 
   return { linha: null, ignorado: false }
 }
 
-function novaLinha(base: Omit<LinhaAssinatura, 'criadoEm' | 'atualizadoEm' | 'precoCentavos' | 'nextDuePlanejado' | 'resultadoIncerto' | 'reserva'> & {
+function novaLinha(base: Omit<LinhaAssinatura, 'criadoEm' | 'atualizadoEm' | 'precoCentavos' | 'nextDuePlanejado' | 'resultadoIncerto' | 'reserva' | 'envioEm'> & {
   quando: string
   precoCentavos?: number | null
   nextDuePlanejado?: string | null
@@ -219,6 +240,7 @@ function novaLinha(base: Omit<LinhaAssinatura, 'criadoEm' | 'atualizadoEm' | 'pr
     precoCentavos: base.precoCentavos ?? null,
     nextDuePlanejado: base.nextDuePlanejado ?? null,
     resultadoIncerto: false,
+    envioEm: null,
     criadoEm: base.quando,
     atualizadoEm: base.quando,
   }
@@ -253,8 +275,9 @@ export function transicionar(
   ctx: ContextoTransicao = { linhas: [], trials: new Set() },
 ): Transicao {
   if (linha) alinharLinha(linha)
-  if (linha && instanteAnterior(evento.quando, linha.ultimoEventoEm)) return { linha, mudou: false, motivo: 'antigo' }
   const tipo = evento.tipo
+  const estorno = tipo === 'PAYMENT_REFUNDED' || tipo === 'PAYMENT_CHARGEBACK_REQUESTED'
+  if (linha && !estorno && instanteAnterior(evento.quando, linha.ultimoEventoEm)) return { linha, mudou: false, motivo: 'antigo' }
   const encerrada = linha?.recorrencia === 'encerrada'
   if (tipo === 'SUBSCRIPTION_CREATED' || tipo === 'CHECKOUT_PAID') {
     if (encerrada) return { linha, mudou: false, motivo: 'terminal' }
@@ -280,12 +303,15 @@ function aplicarBloqueio(linha: LinhaAssinatura | null, evento: EventoDb, bloque
   const proximo: Bloqueio = bloqueio === 'inadimplente' && (atual === 'suspensa' || atual === 'divergente')
     ? atual
     : bloqueio
+  const ultimo = linha.ultimoEventoEm && instanteAnterior(evento.quando, linha.ultimoEventoEm)
+    ? linha.ultimoEventoEm
+    : evento.quando
   const next: LinhaAssinatura = {
     ...linha,
     ...comIds(linha, evento),
     bloqueio: proximo,
     resultadoIncerto: false,
-    ultimoEventoEm: evento.quando,
+    ultimoEventoEm: ultimo,
     atualizadoEm: evento.quando,
   }
   publicarStatus(next)

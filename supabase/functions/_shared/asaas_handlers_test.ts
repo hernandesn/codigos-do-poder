@@ -16,6 +16,7 @@ const NOME = 'Maria Exemplo'
 const RELOGIO = () => new Date('2026-11-18T15:00:00.000Z')
 const PERMITIDAS = new Set([
   'chat_private.asaas_preparar_checkout', 'chat_private.asaas_vincular_checkout', 'chat_private.asaas_descartar_checkout',
+  'chat_private.asaas_marcar_checkout_enviando', 'chat_private.asaas_descartar_envio_recusado',
   'chat_private.asaas_marcar_checkout_incerto',
   'chat_private.asaas_obter_cliente', 'chat_private.asaas_gravar_cliente', 'chat_private.asaas_aplicar_evento',
   'chat_private.asaas_status', 'chat_private.asaas_pedir_cancelamento', 'chat_private.asaas_marcar_cancelamento',
@@ -81,7 +82,7 @@ function rotasOk(chamada: Chamada): Response {
     return Response.json({ id: 'chk_teste123', link: 'https://sandbox.asaas.com/checkoutSession/show?id=chk_teste123' })
   }
   if (chamada.method === 'GET' && chamada.url.includes('/v3/customers/')) return Response.json({ id: 'cus_teste123' })
-  if (chamada.method === 'GET' && chamada.url.includes('/v3/subscriptions?customer=')) return Response.json({ data: [], hasMore: false })
+  if (chamada.method === 'GET' && chamada.url.includes('/v3/subscriptions?')) return Response.json({ data: [], hasMore: false })
   if (chamada.method === 'DELETE') return Response.json({ deleted: true, id: 'sub_do_usuario' })
   return Response.json({ id: 'sub_do_usuario', deleted: false, status: 'ACTIVE' })
 }
@@ -239,6 +240,9 @@ Deno.test('checkout reusa sessão recente, descarta tentativa falha e não vaza 
     rotas(chamada: Chamada) {
       if (chamada.url.endsWith('/v3/customers')) return Response.json({ id: 'cus_teste123' })
       vistos += 1
+      equal(quebrado.linhas[0]?.reserva, 'enviando')
+      assert(!!quebrado.linhas[0]?.envioEm)
+      equal(JSON.parse(chamada.body || '{}').externalReference, quebrado.linhas[0]?.id)
       return new Response(JSON.stringify({ errors: [{ description: 'CORPO_REMOTO_NAO_VAZAR ' + CPF }] }), { status: 400 })
     },
   })
@@ -318,6 +322,7 @@ Deno.test('cancelamento: sem JWT 401, sem assinatura 404, só a própria e idemp
   equal(g.chamadas.length, 1)
   const depois = await ler(await g.handler(pedido('http://local/asaas-cancel', undefined, {}, 'GET')))
   equal(depois.body?.pode_cancelar, false)
+  equal(depois.body?.pode_tentar_de_novo, false)
   semSegredo(g.logs, feito.text + deNovo.text)
   tabelasOk(mem)
 
@@ -345,6 +350,9 @@ Deno.test('cancelamento: sem JWT 401, sem assinatura 404, só a própria e idemp
   equal(instavel.linhas[0].recorrencia, 'cancelamento_pendente')
   equal(instavel.cancelamentos[0].estado, 'falhou')
   equal(deletesInstavel, 1)
+  const retry = await ler(await i.handler(pedido('http://local/asaas-cancel', undefined, {}, 'GET')))
+  equal(retry.body?.pode_cancelar, true)
+  equal(retry.body?.pode_tentar_de_novo, true)
   const refeito = await ler(await i.handler(pedido('http://local/asaas-cancel', {})))
   equal(refeito.status, 200)
   equal(refeito.body?.ja, false)
@@ -724,6 +732,9 @@ Deno.test('cancelamento concorrente reserva antes do DELETE e o segundo não rep
   })
   equal(mem.linhas[0].bloqueio, 'suspensa')
   equal(mem.linhas[0].status, 'suspensa')
+  const durante = await ler(await h.handler(pedido('http://local/asaas-cancel', undefined, {}, 'GET')))
+  equal(durante.body?.pode_cancelar, false)
+  equal(durante.body?.pode_tentar_de_novo, false)
   const segundo = await ler(await h.handler(pedido('http://local/asaas-cancel', {})))
   equal(segundo.status, 409)
   equal(segundo.body?.code, 'cancelamento_em_andamento')
@@ -874,6 +885,9 @@ Deno.test('lease vencido refaz o DELETE e o GET deleted conclui sem outro DELETE
   await semear(mem, USER, { status: 'ativa', subscriptionId: 'sub_do_usuario', pagoAte: '2027-03-18' })
   await mem.db.pedirCancelamento('sandbox', USER)
   mem.cancelamentos[0].leaseAte = '2020-01-01T00:00:00.000Z'
+  const vencido = await ler(await cancelDe(mem, { criarAsaas: () => { throw new Error('cliente no GET') } }).handler(pedido('http://local/asaas-cancel', undefined, {}, 'GET')))
+  equal(vencido.body?.pode_cancelar, true)
+  equal(vencido.body?.pode_tentar_de_novo, true)
   let gets = 0
   let deletes = 0
   const h = cancelDe(mem, {
@@ -960,4 +974,235 @@ Deno.test('webhook não aplica evento de outra assinatura, trial divergente nem 
   tabelasOk(data)
   tabelasOk(curto)
   tabelasOk(mantem)
+})
+
+async function ate(cond: () => boolean) {
+  for (let i = 0; i < 100; i++) {
+    if (cond()) return
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  throw new Error('nao convergiram')
+}
+
+Deno.test('envio interrompido não apaga a reserva e reconcilia antes de outro POST', async () => {
+  const mem = criarMemoriaAsaas(RELOGIO)
+  const prep = await mem.db.prepararCheckout('sandbox', USER, 'basico', '2026-11-25')
+  const id = prep.assinaturaId!
+  await mem.db.marcarCheckoutEnviando('sandbox', USER, id)
+  equal(mem.linhas[0].reserva, 'enviando')
+  assert(!!mem.linhas[0].envioEm)
+  await mem.db.descartarCheckout('sandbox', USER, id)
+  equal(mem.linhas.length, 1)
+  const cedo = checkoutDe(mem)
+  equal((await ler(await cedo.handler(pedido('http://local/asaas-checkout', PEDIDO)))).body?.code, 'checkout_em_andamento')
+  equal(cedo.chamadas.filter((c) => c.url.endsWith('/v3/checkouts')).length, 0)
+
+  mem.linhas[0].atualizadoEm = '2026-11-18T13:59:00.000Z'
+  const falha = checkoutDe(mem, {
+    rotas(chamada: Chamada) {
+      if (chamada.url.includes('/v3/subscriptions?')) return new Response('falhou', { status: 500 })
+      return rotasOk(chamada)
+    },
+  })
+  const recusou = await ler(await falha.handler(pedido('http://local/asaas-checkout', PEDIDO)))
+  equal(recusou.status, 503)
+  equal(recusou.body?.code, 'checkout_em_andamento')
+  equal(mem.linhas.some((linha) => linha.id === id), true)
+  equal(falha.chamadas.filter((c) => c.url.endsWith('/v3/checkouts')).length, 0)
+  equal(falha.chamadas.some((c) => c.url.includes('externalReference=')), true)
+
+  const semCliente = criarMemoriaAsaas(RELOGIO)
+  const prepSem = await semCliente.db.prepararCheckout('sandbox', USER, 'basico', '2026-11-25')
+  const idSem = prepSem.assinaturaId!
+  await semCliente.db.marcarCheckoutEnviando('sandbox', USER, idSem)
+  semCliente.linhas[0].atualizadoEm = '2026-11-18T13:59:00.000Z'
+  const orfa = checkoutDe(semCliente, {
+    rotas(chamada: Chamada) {
+      if (chamada.url.includes('externalReference=')) {
+        return Response.json({
+          hasMore: false,
+          data: [{ id: 'sub_orfa1', deleted: false, status: 'ACTIVE', externalReference: idSem }],
+        })
+      }
+      return rotasOk(chamada)
+    },
+  })
+  const achou = await ler(await orfa.handler(pedido('http://local/asaas-checkout', PEDIDO)))
+  equal(achou.status, 409)
+  equal(achou.body?.code, 'assinatura_ativa')
+  equal(orfa.chamadas.filter((c) => c.url.endsWith('/v3/checkouts')).length, 0)
+  equal(semCliente.linhas[0].id, idSem)
+  equal(semCliente.linhas[0].subscriptionId, 'sub_orfa1')
+  equal(semCliente.linhas[0].pagoAte, null)
+
+  const consulta = criarMemoriaAsaas(RELOGIO)
+  const prepConsulta = await consulta.db.prepararCheckout('sandbox', USER, 'basico', '2026-11-25')
+  const idConsulta = prepConsulta.assinaturaId!
+  await consulta.db.marcarCheckoutEnviando('sandbox', USER, idConsulta)
+  consulta.linhas[0].atualizadoEm = '2026-11-18T13:59:00.000Z'
+  const cega = checkoutDe(consulta, {
+    rotas(chamada: Chamada) {
+      if (chamada.url.includes('/v3/subscriptions?')) return new Response('falhou', { status: 500 })
+      return rotasOk(chamada)
+    },
+  })
+  equal((await ler(await cega.handler(pedido('http://local/asaas-checkout', PEDIDO)))).status, 503)
+  equal(consulta.linhas.some((linha) => linha.id === idConsulta), true)
+  equal(cega.chamadas.filter((c) => c.url.endsWith('/v3/checkouts')).length, 0)
+
+  const livre = checkoutDe(mem)
+  const ok = await ler(await livre.handler(pedido('http://local/asaas-checkout', PEDIDO)))
+  equal(ok.status, 200)
+  equal(mem.linhas.some((linha) => linha.id === id), true)
+  equal(mem.linhas.length, 2)
+  tabelasOk(mem)
+  tabelasOk(semCliente)
+  tabelasOk(consulta)
+})
+
+Deno.test('reconciliação concorrente não abre dois checkouts', async () => {
+  const mem = criarMemoriaAsaas(RELOGIO)
+  const prep = await mem.db.prepararCheckout('sandbox', USER, 'basico', '2026-11-25')
+  await mem.db.vincularCheckout('sandbox', USER, prep.assinaturaId!, 'chk_velho')
+  await mem.db.gravarCliente('sandbox', USER, 'cus_teste123')
+  mem.linhas[0].atualizadoEm = '2026-11-18T13:59:00.000Z'
+  const fila: Array<() => void> = []
+  let posts = 0
+  const h = checkoutDe(mem, {
+    rotas: async (chamada: Chamada) => {
+      if (chamada.url.includes('externalReference=')) return Response.json({ data: [], hasMore: false })
+      if (chamada.url.includes('customer=')) {
+        await new Promise<void>((resolve) => fila.push(resolve))
+        return Response.json({ data: [], hasMore: false })
+      }
+      if (chamada.url.endsWith('/v3/checkouts')) {
+        posts += 1
+        return new Response('falhou', { status: 500 })
+      }
+      return rotasOk(chamada)
+    },
+  })
+  const primeiro = h.handler(pedido('http://local/asaas-checkout', PEDIDO))
+  const segundo = h.handler(pedido('http://local/asaas-checkout', PEDIDO))
+  await ate(() => fila.length === 2)
+  fila[0]()
+  const r1 = await ler(await primeiro)
+  equal(r1.status, 502)
+  equal(posts, 1)
+  fila[1]()
+  const r2 = await ler(await segundo)
+  equal(r2.status, 409)
+  equal(r2.body?.code, 'checkout_em_andamento')
+  equal(posts, 1)
+  equal(mem.linhas.some((linha) => linha.id === prep.assinaturaId), true)
+  equal(mem.linhas.some((linha) => linha.reserva === 'incerta'), true)
+  tabelasOk(mem)
+})
+
+Deno.test('estorno fora de ordem bloqueia mesmo depois de um evento de recorrência mais novo', async () => {
+  async function ordem(primeiro: string, segundo: string) {
+    const mem = criarMemoriaAsaas(RELOGIO)
+    await mem.db.gravarCliente('sandbox', USER, 'cus_user1')
+    await semear(mem, USER, { status: 'ativa', subscriptionId: 'sub_ord', pagoAte: '2027-01-18', plano: 'basico' })
+    const tipos = [primeiro, segundo]
+    const horas = primeiro === 'SUBSCRIPTION_DELETED' ? ['2026-11-18 15:10:00', '2026-11-18 15:09:00'] : ['2026-11-18 15:09:00', '2026-11-18 15:10:00']
+    for (let i = 0; i < tipos.length; i++) {
+      const tipo = tipos[i]
+      const corpo = tipo === 'SUBSCRIPTION_DELETED'
+        ? { subscription: { id: 'sub_ord', customer: 'cus_user1' } }
+        : { payment: { id: 'pay_ord_' + i, customer: 'cus_user1', subscription: 'sub_ord', value: 9.9 } }
+      equal((await ler(await postWh(whDe(mem).handler, evento('evt_ord_' + tipo + i, tipo, corpo, horas[i])))).status, 200)
+    }
+    equal(mem.linhas[0].bloqueio, 'suspensa')
+    equal(mem.linhas[0].recorrencia, 'encerrada')
+    equal(mem.linhas[0].ultimoEventoEm, '2026-11-18T18:10:00.000Z')
+    equal(mem.linhas[0].pagoAte, '2027-01-18')
+    const visto = await mem.db.lerStatus('sandbox', USER)
+    equal(visto.plano, 'free')
+    equal(visto.status, 'suspensa')
+    tabelasOk(mem)
+  }
+  await ordem('SUBSCRIPTION_DELETED', 'PAYMENT_REFUNDED')
+  await ordem('PAYMENT_REFUNDED', 'SUBSCRIPTION_DELETED')
+})
+
+Deno.test('lease de 240s segura a tentativa e o token antigo não grava por cima', async () => {
+  let agora = new Date('2026-11-18T15:00:00.000Z').getTime()
+  const clock = () => new Date(agora)
+  const mem = criarMemoriaAsaas(clock)
+  await semear(mem, USER, { status: 'ativa', subscriptionId: 'sub_do_usuario', pagoAte: '2027-03-18' })
+  let deletes = 0
+  let liberar!: () => void
+  const espera = new Promise<void>((resolve) => { liberar = resolve })
+  let chegou!: () => void
+  const gate = new Promise<void>((resolve) => { chegou = resolve })
+  const h = cancelDe(mem, {
+    rotas: async (chamada: Chamada) => {
+      if (chamada.method === 'DELETE') {
+        deletes += 1
+        chegou()
+        await espera
+        return Response.json({ deleted: true, id: 'sub_do_usuario' })
+      }
+      return rotasOk(chamada)
+    },
+  })
+  const primeiro = h.handler(pedido('http://local/asaas-cancel', {}))
+  await gate
+  agora += 120_000
+  const segundo = await ler(await h.handler(pedido('http://local/asaas-cancel', {})))
+  equal(segundo.status, 409)
+  equal(segundo.body?.code, 'cancelamento_em_andamento')
+  equal(deletes, 1)
+  liberar()
+  equal((await ler(await primeiro)).status, 200)
+  equal(deletes, 1)
+  equal(mem.cancelamentos[0].estado, 'concluido')
+
+  agora = new Date('2026-11-18T15:00:00.000Z').getTime()
+  const troca = criarMemoriaAsaas(clock)
+  await semear(troca, USER, { status: 'ativa', subscriptionId: 'sub_do_usuario', pagoAte: '2027-03-18' })
+  let fase: 'primeiro' | 'segundo' | 'solto' = 'primeiro'
+  const portoes: Array<{ modo: string, seguir: () => void }> = []
+  let apagou = 0
+  const i = cancelDe(troca, {
+    rotas: async (chamada: Chamada) => {
+      if (chamada.method === 'GET') return Response.json({ id: 'sub_do_usuario', deleted: false, status: 'ACTIVE' })
+      if (chamada.method === 'DELETE') {
+        apagou += 1
+        const modo = apagou === 1 ? 'primeiro' : 'segundo'
+        if (fase === modo) {
+          await new Promise<void>((resolve) => portoes.push({ modo, seguir: resolve }))
+        }
+        if (modo === 'primeiro') return new Response('falhou', { status: 500 })
+        return Response.json({ deleted: true, id: 'sub_do_usuario' })
+      }
+      return rotasOk(chamada)
+    },
+  })
+  const antigo = i.handler(pedido('http://local/asaas-cancel', {}))
+  await ate(() => portoes.some((item) => item.modo === 'primeiro'))
+  const tentativaAntiga = troca.cancelamentos[0].tentativaId
+  agora += 300_000
+  fase = 'segundo'
+  const novo = i.handler(pedido('http://local/asaas-cancel', {}))
+  await ate(() => portoes.some((item) => item.modo === 'segundo'))
+  const tentativaNova = troca.cancelamentos[0].tentativaId
+  assert(tentativaAntiga !== tentativaNova)
+  fase = 'solto'
+  portoes.find((item) => item.modo === 'primeiro')!.seguir()
+  const velho = await ler(await antigo)
+  equal(velho.status, 502)
+  equal(troca.cancelamentos[0].estado, 'pendente')
+  equal(troca.cancelamentos[0].tentativaId, tentativaNova)
+  portoes.find((item) => item.modo === 'segundo')!.seguir()
+  const atual = await ler(await novo)
+  equal(atual.status, 200)
+  equal(troca.cancelamentos[0].estado, 'concluido')
+  equal(await troca.db.marcarCancelamento('sandbox', USER, 'sub_do_usuario', tentativaAntiga), false)
+  equal(await troca.db.falharCancelamento('sandbox', USER, 'sub_do_usuario', tentativaAntiga), false)
+  equal(troca.cancelamentos[0].estado, 'concluido')
+  equal(troca.cancelamentos[0].tentativaId, tentativaNova)
+  tabelasOk(mem)
+  tabelasOk(troca)
 })

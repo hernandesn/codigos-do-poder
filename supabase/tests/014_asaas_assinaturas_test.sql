@@ -46,6 +46,9 @@ DECLARE
   u_rev uuid := '28282828-2828-4282-8282-282828282828';
   u_tcan uuid := '29292929-2929-4292-8292-292929292929';
   u_est uuid := '30303030-3030-4303-8303-303030303030';
+  u_env uuid := '31313131-3131-4313-8313-313131313131';
+  u_ord uuid := '32323232-3232-4323-8323-323232323232';
+  u_ord2 uuid := '34343434-3434-4343-8343-343434343434';
   v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
   v_fim date;
   v_ini date;
@@ -54,6 +57,9 @@ DECLARE
   v_id2 uuid;
   v_def text;
   v_prep text;
+  v_ped text;
+  v_ger bigint;
+  v_tent uuid;
   n integer;
   pago date;
   q0 timestamptz := timestamptz '2026-11-18 08:00:00-03';
@@ -74,7 +80,8 @@ BEGIN
     (u_free),(u_sand),(u_plus),(u_trial),(u_jan),(u_flow),(u_div),(u_cross),(u_null),
     (u_prep),(u_desc),(u_can),(u_both),(u_inad),(u_solic),(u_exp),(u_known),(u_texp),
     (u_ativa),(u_hist),(u_leap),(u_fora),(u_data),(u_dia),(u_preco),(u_curto),
-    (u_mantem),(u_susp),(u_diva),(u_incerto),(u_rev),(u_tcan),(u_est);
+    (u_mantem),(u_susp),(u_diva),(u_incerto),(u_rev),(u_tcan),(u_est),
+    (u_env),(u_ord),(u_ord2);
 
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'chat_private.assinaturas'::regclass) THEN
     RAISE EXCEPTION 'rls assinaturas';
@@ -231,7 +238,8 @@ BEGIN
      OR (SELECT reserva FROM chat_private.assinaturas WHERE id = v_id2) IS DISTINCT FROM 'expirada' THEN
     RAISE EXCEPTION 'reuso velho %', v;
   END IF;
-  v := chat_private.asaas_liberar_checkout('sandbox', u_prep, 'basico');
+  v_ger := (v->>'geracao')::bigint;
+  v := chat_private.asaas_liberar_checkout('sandbox', u_prep, 'basico', NULL, v_ger);
   IF (v->>'ok')::boolean IS NOT TRUE OR (v->>'assinatura_id')::uuid = v_id2
      OR (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_prep) <> 2
      OR (SELECT checkout_id FROM chat_private.assinaturas WHERE id = v_id2) IS DISTINCT FROM 'chk_reuso' THEN
@@ -430,7 +438,8 @@ BEGIN
      OR (SELECT status FROM chat_private.assinaturas WHERE user_id = u_can) IS DISTINCT FROM 'cancelamento_solicitado' THEN
     RAISE EXCEPTION 'pedir %', v;
   END IF;
-  PERFORM chat_private.asaas_marcar_cancelamento('sandbox', u_can, 'sub_can');
+  v_tent := (v->>'tentativa_id')::uuid;
+  PERFORM chat_private.asaas_marcar_cancelamento('sandbox', u_can, 'sub_can', v_tent);
   IF (SELECT status FROM chat_private.assinaturas WHERE user_id = u_can) IS DISTINCT FROM 'cancelamento_solicitado'
      OR (SELECT pago_ate FROM chat_private.assinaturas WHERE user_id = u_can) IS DISTINCT FROM DATE '2027-03-18'
      OR (SELECT trial_ate FROM chat_private.assinaturas WHERE user_id = u_can) IS DISTINCT FROM DATE '2026-11-25' THEN
@@ -442,6 +451,7 @@ BEGIN
   END IF;
   v := chat_private.asaas_status('sandbox', u_can);
   IF v->>'status' IS DISTINCT FROM 'cancelamento_solicitado' OR (v->>'pode_cancelar')::boolean
+     OR (v->>'pode_tentar_de_novo')::boolean
      OR v->>'acesso_ate' IS DISTINCT FROM '2027-03-18' OR v->>'plano' IS DISTINCT FROM 'basico' THEN
     RAISE EXCEPTION 'status %', v;
   END IF;
@@ -449,12 +459,12 @@ BEGIN
   IF (SELECT status FROM chat_private.assinaturas WHERE user_id = u_can) IS DISTINCT FROM 'cancelada' THEN
     RAISE EXCEPTION 'cancelou de vez';
   END IF;
-  PERFORM chat_private.asaas_marcar_cancelamento('sandbox', u_can, 'sub_can');
+  PERFORM chat_private.asaas_marcar_cancelamento('sandbox', u_can, 'sub_can', v_tent);
   IF (SELECT status FROM chat_private.assinaturas WHERE user_id = u_can) IS DISTINCT FROM 'cancelada' THEN
     RAISE EXCEPTION 'marcar reabriu';
   END IF;
   v := chat_private.asaas_status('sandbox', u_free);
-  IF v->>'plano' IS DISTINCT FROM 'free' OR (v->>'pode_cancelar')::boolean THEN RAISE EXCEPTION 'status free %', v; END IF;
+  IF v->>'plano' IS DISTINCT FROM 'free' OR (v->>'pode_cancelar')::boolean OR (v->>'pode_tentar_de_novo')::boolean THEN RAISE EXCEPTION 'status free %', v; END IF;
 
   IF (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_flow) <> 1 THEN RAISE EXCEPTION 'flow duplicou linha'; END IF;
 
@@ -583,7 +593,7 @@ BEGIN
     RAISE EXCEPTION 'cancelar suspensa %', v;
   END IF;
   PERFORM pg_temp.ev('producao', 'evt_susp_del', 'SUBSCRIPTION_DELETED', 'sub_susp', 'sub_susp', NULL, NULL, NULL, NULL, NULL, NULL, q8);
-  PERFORM chat_private.asaas_marcar_cancelamento('producao', u_susp, 'sub_susp');
+  PERFORM chat_private.asaas_marcar_cancelamento('producao', u_susp, 'sub_susp', (v->>'tentativa_id')::uuid);
   IF (SELECT bloqueio FROM chat_private.assinaturas WHERE user_id = u_susp) IS DISTINCT FROM 'suspensa'
      OR (SELECT recorrencia FROM chat_private.assinaturas WHERE user_id = u_susp) IS DISTINCT FROM 'encerrada'
      OR (SELECT status FROM chat_private.assinaturas WHERE user_id = u_susp) IS DISTINCT FROM 'suspensa'
@@ -638,7 +648,8 @@ BEGIN
      OR (SELECT resultado_incerto FROM chat_private.assinaturas WHERE id = v_id2) IS NOT TRUE THEN
     RAISE EXCEPTION 'incerto 61 %', v;
   END IF;
-  v := chat_private.asaas_liberar_checkout('sandbox', u_incerto, 'plus');
+  v_ger := (v->>'geracao')::bigint;
+  v := chat_private.asaas_liberar_checkout('sandbox', u_incerto, 'plus', NULL, v_ger);
   IF (v->>'ok')::boolean IS NOT TRUE OR (v->>'assinatura_id')::uuid = v_id2
      OR (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_incerto) <> 2
      OR (SELECT preco_centavos FROM chat_private.assinaturas WHERE id = v_id2) IS DISTINCT FROM 990
@@ -662,25 +673,47 @@ BEGIN
      OR (SELECT tentativas FROM chat_private.asaas_cancelamentos WHERE user_id = u_rev) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'reserva cancel %', v;
   END IF;
+  IF (chat_private.asaas_status('sandbox', u_rev)->>'pode_cancelar')::boolean
+     OR (chat_private.asaas_status('sandbox', u_rev)->>'pode_tentar_de_novo')::boolean THEN
+    RAISE EXCEPTION 'lease vivo permite retry';
+  END IF;
   v := chat_private.asaas_pedir_cancelamento('sandbox', u_rev);
   IF (v->>'ja')::boolean OR v->>'code' IS DISTINCT FROM 'cancelamento_em_andamento'
      OR (SELECT tentativas FROM chat_private.asaas_cancelamentos WHERE user_id = u_rev) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'segunda reserva %', v;
   END IF;
   UPDATE chat_private.asaas_cancelamentos SET lease_ate = now() - interval '1 minute' WHERE user_id = u_rev;
+  v := chat_private.asaas_status('sandbox', u_rev);
+  IF (v->>'pode_cancelar')::boolean IS NOT TRUE OR (v->>'pode_tentar_de_novo')::boolean IS NOT TRUE THEN
+    RAISE EXCEPTION 'lease vencido esconde retry %', v;
+  END IF;
   v := chat_private.asaas_pedir_cancelamento('sandbox', u_rev);
   IF (v->>'refazer')::boolean IS NOT TRUE OR (v->>'ja')::boolean
      OR (SELECT tentativas FROM chat_private.asaas_cancelamentos WHERE user_id = u_rev) IS DISTINCT FROM 2
      OR (SELECT recorrencia FROM chat_private.assinaturas WHERE user_id = u_rev) IS DISTINCT FROM 'cancelamento_pendente' THEN
     RAISE EXCEPTION 'lease vencido %', v;
   END IF;
-  PERFORM chat_private.asaas_falhar_cancelamento('sandbox', u_rev, 'sub_rev');
+  v_tent := (v->>'tentativa_id')::uuid;
+  IF chat_private.asaas_falhar_cancelamento('sandbox', u_rev, 'sub_rev', '00000000-0000-4000-8000-000000000000') THEN
+    RAISE EXCEPTION 'falha de outra tentativa';
+  END IF;
+  IF (SELECT estado FROM chat_private.asaas_cancelamentos WHERE user_id = u_rev) IS DISTINCT FROM 'pendente' THEN
+    RAISE EXCEPTION 'falha alheia mudou';
+  END IF;
+  IF NOT chat_private.asaas_falhar_cancelamento('sandbox', u_rev, 'sub_rev', v_tent) THEN
+    RAISE EXCEPTION 'falha nao gravou';
+  END IF;
   IF (SELECT estado FROM chat_private.asaas_cancelamentos WHERE user_id = u_rev) IS DISTINCT FROM 'falhou'
      OR (SELECT status FROM chat_private.assinaturas WHERE user_id = u_rev) IS DISTINCT FROM 'cancelamento_solicitado'
      OR (SELECT pago_ate FROM chat_private.assinaturas WHERE user_id = u_rev) IS DISTINCT FROM DATE '2027-04-01' THEN
     RAISE EXCEPTION 'falha restaurou';
   END IF;
+  v := chat_private.asaas_status('sandbox', u_rev);
+  IF (v->>'pode_cancelar')::boolean IS NOT TRUE OR (v->>'pode_tentar_de_novo')::boolean IS NOT TRUE THEN
+    RAISE EXCEPTION 'falhou esconde retry %', v;
+  END IF;
   v := chat_private.asaas_pedir_cancelamento('sandbox', u_rev);
+  v_tent := (v->>'tentativa_id')::uuid;
   IF (v->>'refazer')::boolean IS NOT TRUE OR (SELECT tentativas FROM chat_private.asaas_cancelamentos WHERE user_id = u_rev) IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'falhou nao refaz %', v;
   END IF;
@@ -694,21 +727,113 @@ BEGIN
      OR (SELECT pago_ate FROM chat_private.assinaturas WHERE user_id = u_rev) IS DISTINCT FROM DATE '2027-04-01' THEN
     RAISE EXCEPTION 'pagamento no meio %', v;
   END IF;
-  PERFORM chat_private.asaas_marcar_cancelamento('sandbox', u_rev, 'sub_rev');
+  PERFORM chat_private.asaas_marcar_cancelamento('sandbox', u_rev, 'sub_rev', v_tent);
   v := chat_private.asaas_pedir_cancelamento('sandbox', u_rev);
   IF (v->>'ja')::boolean IS NOT TRUE OR (SELECT pago_ate FROM chat_private.assinaturas WHERE user_id = u_rev) IS DISTINCT FROM DATE '2027-04-01' THEN
     RAISE EXCEPTION 'so concluido e ja %', v;
   END IF;
 
+  v := chat_private.asaas_preparar_checkout('sandbox', u_env, 'basico', DATE '2026-11-25');
+  v_id := (v->>'assinatura_id')::uuid;
+  PERFORM chat_private.asaas_marcar_checkout_enviando('sandbox', u_env, v_id);
+  PERFORM chat_private.asaas_descartar_checkout('sandbox', u_env, v_id);
+  IF (SELECT count(*) FROM chat_private.assinaturas WHERE id = v_id) <> 1
+     OR (SELECT reserva FROM chat_private.assinaturas WHERE id = v_id) IS DISTINCT FROM 'enviando'
+     OR (SELECT envio_em FROM chat_private.assinaturas WHERE id = v_id) IS NULL THEN
+    RAISE EXCEPTION 'descartou enviando';
+  END IF;
+  PERFORM chat_private.asaas_descartar_envio_recusado('sandbox', u_env, v_id);
+  IF (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_env) <> 0 THEN
+    RAISE EXCEPTION '4xx nao descartou envio';
+  END IF;
+  v := chat_private.asaas_preparar_checkout('sandbox', u_env, 'basico', DATE '2026-11-25');
+  v_id := (v->>'assinatura_id')::uuid;
+  PERFORM chat_private.asaas_marcar_checkout_enviando('sandbox', u_env, v_id);
+  IF (chat_private.asaas_preparar_checkout('sandbox', u_env, 'plus')->>'code') IS DISTINCT FROM 'checkout_em_andamento' THEN
+    RAISE EXCEPTION 'enviando recente liberou';
+  END IF;
+  v_ger := (SELECT geracao FROM chat_private.asaas_checkout_geracao WHERE ambiente = 'sandbox' AND user_id = u_env);
+  v := chat_private.asaas_liberar_checkout('sandbox', u_env, 'plus', NULL, v_ger);
+  IF v->>'code' IS DISTINCT FROM 'checkout_em_andamento'
+     OR (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_env) <> 1 THEN
+    RAISE EXCEPTION 'liberar com enviando %', v;
+  END IF;
+  UPDATE chat_private.assinaturas SET atualizado_em = now() - interval '61 minutes' WHERE id = v_id;
+  v := chat_private.asaas_preparar_checkout('sandbox', u_env, 'plus');
+  IF v->>'code' IS DISTINCT FROM 'reconciliar' OR (v->>'assinatura_id')::uuid IS DISTINCT FROM v_id
+     OR (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_env) <> 1
+     OR (SELECT reserva FROM chat_private.assinaturas WHERE id = v_id) IS DISTINCT FROM 'expirada'
+     OR (SELECT envio_em FROM chat_private.assinaturas WHERE id = v_id) IS NULL THEN
+    RAISE EXCEPTION 'enviando 61 %', v;
+  END IF;
+  v_ger := (v->>'geracao')::bigint;
+  v := chat_private.asaas_liberar_checkout('sandbox', u_env, 'plus', NULL, v_ger - 1);
+  IF v->>'code' IS DISTINCT FROM 'checkout_em_andamento'
+     OR (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_env) <> 1 THEN
+    RAISE EXCEPTION 'geracao velha %', v;
+  END IF;
+  v := chat_private.asaas_liberar_checkout('sandbox', u_env, 'plus', NULL, v_ger);
+  IF (v->>'ok')::boolean IS NOT TRUE OR (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_env) <> 2 THEN
+    RAISE EXCEPTION 'liberar geracao certa %', v;
+  END IF;
+  v_id2 := (v->>'assinatura_id')::uuid;
+  PERFORM chat_private.asaas_marcar_checkout_incerto('sandbox', u_env, v_id2);
+  v_ger := (SELECT geracao FROM chat_private.asaas_checkout_geracao WHERE ambiente = 'sandbox' AND user_id = u_env);
+  v := chat_private.asaas_liberar_checkout('sandbox', u_env, 'basico', NULL, v_ger);
+  IF v->>'code' IS DISTINCT FROM 'checkout_em_andamento'
+     OR (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_env) <> 2
+     OR (SELECT reserva FROM chat_private.assinaturas WHERE id = v_id2) IS DISTINCT FROM 'incerta' THEN
+    RAISE EXCEPTION 'liberar com incerta %', v;
+  END IF;
+  PERFORM chat_private.asaas_descartar_envio_recusado('sandbox', u_env, v_id2);
+  PERFORM chat_private.asaas_descartar_checkout('sandbox', u_env, v_id);
+  IF (SELECT count(*) FROM chat_private.assinaturas WHERE user_id = u_env) <> 2 THEN
+    RAISE EXCEPTION 'descarte apagou reserva potencialmente enviada';
+  END IF;
+
+  INSERT INTO chat_private.assinaturas (ambiente, user_id, plano, status, subscription_id, pago_ate)
+  VALUES ('producao', u_ord, 'basico', 'ativa', 'sub_ord', v_hoje + 30);
+  PERFORM pg_temp.ev('producao', 'evt_ord_del', 'SUBSCRIPTION_DELETED', 'sub_ord', 'sub_ord', NULL, NULL, NULL, NULL, NULL, NULL, timestamptz '2026-11-18 15:10:00-03');
+  v := pg_temp.ev('producao', 'evt_ord_ref', 'PAYMENT_REFUNDED', 'pay_ord', 'sub_ord', NULL, NULL, NULL, 9.90, NULL, NULL, timestamptz '2026-11-18 15:09:00-03');
+  IF v->>'antigo' IS NOT DISTINCT FROM 'true'
+     OR (SELECT bloqueio FROM chat_private.assinaturas WHERE user_id = u_ord) IS DISTINCT FROM 'suspensa'
+     OR (SELECT recorrencia FROM chat_private.assinaturas WHERE user_id = u_ord) IS DISTINCT FROM 'encerrada'
+     OR (SELECT ultimo_evento_em FROM chat_private.assinaturas WHERE user_id = u_ord) IS DISTINCT FROM timestamptz '2026-11-18 15:10:00-03'
+     OR (SELECT pago_ate FROM chat_private.assinaturas WHERE user_id = u_ord) IS DISTINCT FROM v_hoje + 30
+     OR (chat_private.plano_atual(u_ord)->>'plano') IS DISTINCT FROM 'free' THEN
+    RAISE EXCEPTION 'estorno fora de ordem %', v;
+  END IF;
+  v := pg_temp.ev('producao', 'evt_ord_over', 'PAYMENT_OVERDUE', 'pay_ord_over', 'sub_ord', NULL, NULL, NULL, NULL, NULL, NULL, timestamptz '2026-11-18 15:09:30-03');
+  IF v->>'antigo' IS DISTINCT FROM 'true'
+     OR (SELECT bloqueio FROM chat_private.assinaturas WHERE user_id = u_ord) IS DISTINCT FROM 'suspensa'
+     OR (SELECT ultimo_evento_em FROM chat_private.assinaturas WHERE user_id = u_ord) IS DISTINCT FROM timestamptz '2026-11-18 15:10:00-03' THEN
+    RAISE EXCEPTION 'overdue antigo aplicou %', v;
+  END IF;
+  INSERT INTO chat_private.assinaturas (ambiente, user_id, plano, status, subscription_id, pago_ate)
+  VALUES ('producao', u_ord2, 'basico', 'ativa', 'sub_ord2', v_hoje + 30);
+  PERFORM pg_temp.ev('producao', 'evt_ord2_ref', 'PAYMENT_REFUNDED', 'pay_ord2', 'sub_ord2', NULL, NULL, NULL, 9.90, NULL, NULL, timestamptz '2026-11-18 15:09:00-03');
+  PERFORM pg_temp.ev('producao', 'evt_ord2_del', 'SUBSCRIPTION_DELETED', 'sub_ord2', 'sub_ord2', NULL, NULL, NULL, NULL, NULL, NULL, timestamptz '2026-11-18 15:10:00-03');
+  IF (SELECT bloqueio FROM chat_private.assinaturas WHERE user_id = u_ord2) IS DISTINCT FROM 'suspensa'
+     OR (SELECT recorrencia FROM chat_private.assinaturas WHERE user_id = u_ord2) IS DISTINCT FROM 'encerrada'
+     OR (SELECT ultimo_evento_em FROM chat_private.assinaturas WHERE user_id = u_ord2) IS DISTINCT FROM timestamptz '2026-11-18 15:10:00-03'
+     OR (chat_private.plano_atual(u_ord2)->>'plano') IS DISTINCT FROM 'free' THEN
+    RAISE EXCEPTION 'estorno em ordem';
+  END IF;
+
   v_def := pg_get_functiondef('chat_private.asaas_aplicar_evento(text,text,text,text,text,text,text,text,numeric,date,date,timestamptz)'::regprocedure);
   v_prep := pg_get_functiondef('chat_private.asaas_preparar_checkout(text,uuid,text,date)'::regprocedure);
+  v_ped := pg_get_functiondef('chat_private.asaas_pedir_cancelamento(text,uuid)'::regprocedure);
   IF position('FOR UPDATE' in v_def) = 0
      OR position('ultimo_evento_em <= v_quando' in v_def) = 0
      OR position('GREATEST' in v_def) = 0
      OR position('asaas-user:' in v_def) = 0
      OR position('60 minutes' in v_prep) = 0
      OR position('2 minutes' in v_prep) > 0
-     OR position('2 minutes' in v_def) > 0 THEN
+     OR position('2 minutes' in v_def) > 0
+     OR position('240 seconds' in v_ped) = 0
+     OR position('90 seconds' in v_ped) > 0
+     OR position('tentativa_id' in pg_get_functiondef('chat_private.asaas_marcar_cancelamento(text,uuid,text,uuid)'::regprocedure)) = 0
+     OR position('tentativa_id' in pg_get_functiondef('chat_private.asaas_falhar_cancelamento(text,uuid,text,uuid)'::regprocedure)) = 0 THEN
     RAISE EXCEPTION 'lock ou janela';
   END IF;
 END

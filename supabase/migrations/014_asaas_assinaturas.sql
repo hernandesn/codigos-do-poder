@@ -4,17 +4,24 @@
 -- Um trial por usuário no ambiente, consumido na tabela asaas_trials (UNIQUE ambiente, user_id).
 -- Quem já teve assinatura é recusado com trial_ja_usado (não se abre outra com vencimento para hoje).
 -- A reserva de checkout dura 60 minutos (minutesToExpire).
--- Reserva com checkout_id ou marcada incerta nunca é apagada: ao passar de 60 min fica expirada,
--- com o id interno e o checkout_id, para um webhook atrasado ainda correlacionar.
--- Antes de outro checkout o handler reconcilia GET /v3/subscriptions?customer=.
+-- Antes do POST a reserva vai para `enviando`, com envio_em e o id interno (externalReference).
+-- Reserva enviando, incerta ou com checkout_id é potencialmente enviada: a expiração não apaga.
+-- Ao passar de 60 min fica expirada, para um webhook atrasado ainda correlacionar.
+-- A liberação revalida, com lock por (ambiente, user_id), toda reserva aberta, enviando ou incerta
+-- e a geração lida no preparar. Geração diferente recusa.
+-- Antes de outro checkout o handler reconcilia GET /v3/subscriptions?customer= e por externalReference.
 -- Três eixos: recorrencia (pendente|ativa|cancelamento_pendente|encerrada),
 -- bloqueio (NULL|inadimplente|suspensa|divergente) e as datas trial_ate/pago_ate.
 -- status exibido é derivado. Bloqueio ganha da recorrência.
 -- Inadimplente não tem carência: bloqueia como suspensa e divergente.
 -- Encerrar a recorrência não limpa bloqueio e não concede acesso que não existia.
 -- Recorrência encerrada não reabre. PAYMENT_CONFIRMED depois disso não estende pago_ate.
--- Estorno, chargeback, atraso e captura recusada ainda gravam o bloqueio.
--- O cancelamento é a tabela asaas_cancelamentos (pendente|concluido|falhou), com lease de 90 segundos.
+-- Estorno e chargeback gravam o bloqueio mesmo se a recorrência já viu um evento mais novo.
+-- O relógio da recorrência não anda para trás por causa desse estorno.
+-- Atraso e captura recusada ainda gravam o bloqueio, mas respeitam o relógio.
+-- O cancelamento é a tabela asaas_cancelamentos (pendente|concluido|falhou).
+-- O lease é de 240 segundos: cabe 2 GET de 60s e 1 DELETE de 60s.
+-- Conclusão e falha exigem o tentativa_id da tentativa atual.
 -- O webhook não mexe nessa tabela. pago_ate confirmado, fora do encerramento, nunca encolhe.
 -- O webhook só liga subscription_id se checkout_id ou externalReference e o customer baterem.
 -- Limites, iguais a supabase/functions/_shared/asaas_planos.ts:
@@ -28,21 +35,24 @@
 -- Rollback futuro, não executado aqui:
 -- BEGIN;
 -- DROP FUNCTION IF EXISTS chat_private.plano_atual(uuid);
--- DROP FUNCTION IF EXISTS chat_private.asaas_marcar_cancelamento(text, uuid, text);
+-- DROP FUNCTION IF EXISTS chat_private.asaas_marcar_cancelamento(text, uuid, text, uuid);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_pedir_cancelamento(text, uuid);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_status(text, uuid);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_aplicar_evento(text, text, text, text, text, text, text, text, numeric, date, date, timestamptz);
--- DROP FUNCTION IF EXISTS chat_private.asaas_falhar_cancelamento(text, uuid, text);
+-- DROP FUNCTION IF EXISTS chat_private.asaas_falhar_cancelamento(text, uuid, text, uuid);
+-- DROP FUNCTION IF EXISTS chat_private.asaas_descartar_envio_recusado(text, uuid, uuid);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_descartar_checkout(text, uuid, uuid);
+-- DROP FUNCTION IF EXISTS chat_private.asaas_marcar_checkout_enviando(text, uuid, uuid);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_marcar_checkout_incerto(text, uuid, uuid);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_vincular_assinatura_remota(text, uuid, uuid, text);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_vincular_checkout(text, uuid, uuid, text);
--- DROP FUNCTION IF EXISTS chat_private.asaas_liberar_checkout(text, uuid, text, date);
+-- DROP FUNCTION IF EXISTS chat_private.asaas_liberar_checkout(text, uuid, text, date, bigint);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_preparar_checkout(text, uuid, text, date);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_gravar_cliente(text, uuid, text);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_obter_cliente(text, uuid);
 -- DROP FUNCTION IF EXISTS chat_private.asaas_derivar_status();
 -- DROP TABLE IF EXISTS chat_private.asaas_cancelamentos;
+-- DROP TABLE IF EXISTS chat_private.asaas_checkout_geracao;
 -- DROP TABLE IF EXISTS chat_private.asaas_eventos;
 -- DROP TABLE IF EXISTS chat_private.asaas_trials;
 -- DROP TABLE IF EXISTS chat_private.assinaturas;
@@ -73,12 +83,13 @@ CREATE TABLE chat_private.assinaturas (
   )),
   recorrencia text NOT NULL CHECK (recorrencia IN ('pendente', 'ativa', 'cancelamento_pendente', 'encerrada')),
   bloqueio text CHECK (bloqueio IS NULL OR bloqueio IN ('inadimplente', 'suspensa', 'divergente')),
-  reserva text NOT NULL DEFAULT 'aberta' CHECK (reserva IN ('aberta', 'incerta', 'expirada')),
+  reserva text NOT NULL DEFAULT 'aberta' CHECK (reserva IN ('aberta', 'enviando', 'incerta', 'expirada')),
   trial_ate date,
   pago_ate date,
   preco_centavos integer CHECK (preco_centavos IS NULL OR preco_centavos IN (990, 2990)),
   next_due_planejado date,
   resultado_incerto boolean NOT NULL DEFAULT false,
+  envio_em timestamptz,
   ultimo_evento_em timestamptz,
   criado_em timestamptz NOT NULL DEFAULT now(),
   atualizado_em timestamptz NOT NULL DEFAULT now(),
@@ -107,7 +118,9 @@ CREATE TABLE chat_private.asaas_trials (
 );
 
 -- Operação de cancelamento, independente do status que o webhook altera.
--- Lease de 90 segundos. Só um processo segura a reserva. O webhook não escreve aqui.
+-- Lease de 240 segundos: 2 GET × 60s + 1 DELETE × 60s = 180s, abaixo do lease.
+-- tentativa_id impede que a tentativa antiga conclua ou falhe a nova.
+-- O webhook não escreve aqui.
 CREATE TABLE chat_private.asaas_cancelamentos (
   ambiente text NOT NULL CHECK (ambiente IN ('sandbox', 'producao')),
   assinatura_id uuid NOT NULL REFERENCES chat_private.assinaturas(id) ON DELETE CASCADE,
@@ -115,9 +128,18 @@ CREATE TABLE chat_private.asaas_cancelamentos (
   subscription_id text NOT NULL CHECK (subscription_id ~ '^[A-Za-z0-9_-]{1,80}$'),
   estado text NOT NULL CHECK (estado IN ('pendente', 'concluido', 'falhou')),
   tentativas integer NOT NULL CHECK (tentativas >= 1),
+  tentativa_id uuid NOT NULL,
   lease_ate timestamptz,
   atualizado_em timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (ambiente, assinatura_id)
+);
+
+-- Contador por (ambiente, user_id). Só sobe. Apagar uma reserva não devolve a geração.
+CREATE TABLE chat_private.asaas_checkout_geracao (
+  ambiente text NOT NULL CHECK (ambiente IN ('sandbox', 'producao')),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  geracao bigint NOT NULL DEFAULT 0 CHECK (geracao >= 0),
+  PRIMARY KEY (ambiente, user_id)
 );
 
 CREATE FUNCTION chat_private.asaas_derivar_status()
@@ -161,7 +183,7 @@ FOR EACH ROW EXECUTE FUNCTION chat_private.asaas_derivar_status();
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['asaas_clientes', 'assinaturas', 'asaas_eventos', 'asaas_trials', 'asaas_cancelamentos'] LOOP
+  FOREACH t IN ARRAY ARRAY['asaas_clientes', 'assinaturas', 'asaas_eventos', 'asaas_trials', 'asaas_cancelamentos', 'asaas_checkout_geracao'] LOOP
     EXECUTE format('ALTER TABLE chat_private.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON TABLE chat_private.%I FROM PUBLIC, anon, authenticated, chat_fn, chat_writer', t);
   END LOOP;
@@ -190,7 +212,7 @@ CREATE FUNCTION chat_private.asaas_preparar_checkout(p_ambiente text, p_user uui
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, chat_private
 AS $$
-DECLARE v_id uuid; v_checkout text;
+DECLARE v_id uuid; v_checkout text; v_geracao bigint;
 BEGIN
   IF p_ambiente NOT IN ('sandbox', 'producao') OR p_user IS NULL OR p_plano NOT IN ('basico', 'plus') THEN
     RETURN jsonb_build_object('ok', false, 'code', 'plano_invalido');
@@ -228,22 +250,29 @@ BEGIN
   ) THEN
     RETURN jsonb_build_object('ok', false, 'code', 'checkout_em_andamento');
   END IF;
+  DELETE FROM chat_private.assinaturas
+  WHERE ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente' AND reserva = 'aberta'
+    AND checkout_id IS NULL AND resultado_incerto = false AND envio_em IS NULL
+    AND atualizado_em <= now() - interval '60 minutes';
   UPDATE chat_private.assinaturas
   SET reserva = 'expirada', atualizado_em = now()
   WHERE ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente' AND reserva <> 'expirada'
     AND atualizado_em <= now() - interval '60 minutes'
-    AND (checkout_id IS NOT NULL OR resultado_incerto OR reserva = 'incerta');
+    AND (checkout_id IS NOT NULL OR resultado_incerto OR reserva IN ('incerta', 'enviando') OR envio_em IS NOT NULL);
   SELECT id INTO v_id FROM chat_private.assinaturas
   WHERE ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente' AND reserva = 'expirada'
-  ORDER BY (checkout_id IS NOT NULL) DESC, atualizado_em DESC
+  ORDER BY (checkout_id IS NOT NULL) DESC, (envio_em IS NOT NULL) DESC, atualizado_em DESC
   LIMIT 1;
   IF FOUND THEN
-    RETURN jsonb_build_object('ok', false, 'code', 'reconciliar', 'assinatura_id', v_id);
+    SELECT g.geracao INTO v_geracao FROM chat_private.asaas_checkout_geracao g
+    WHERE g.ambiente = p_ambiente AND g.user_id = p_user;
+    IF NOT FOUND THEN v_geracao := 0; END IF;
+    RETURN jsonb_build_object('ok', false, 'code', 'reconciliar', 'assinatura_id', v_id, 'geracao', v_geracao);
   END IF;
-  DELETE FROM chat_private.assinaturas
-  WHERE ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente' AND reserva = 'aberta'
-    AND checkout_id IS NULL AND resultado_incerto = false
-    AND atualizado_em <= now() - interval '60 minutes';
+  INSERT INTO chat_private.asaas_checkout_geracao (ambiente, user_id, geracao)
+  VALUES (p_ambiente, p_user, 1)
+  ON CONFLICT (ambiente, user_id) DO UPDATE
+  SET geracao = chat_private.asaas_checkout_geracao.geracao + 1;
   INSERT INTO chat_private.assinaturas (ambiente, user_id, plano, status, recorrencia, bloqueio, reserva, preco_centavos, next_due_planejado)
   VALUES (
     p_ambiente, p_user, p_plano, 'checkout', 'pendente', NULL, 'aberta',
@@ -254,16 +283,22 @@ BEGIN
   RETURN jsonb_build_object('ok', true, 'assinatura_id', v_id, 'checkout_id', NULL, 'reutilizado', false);
 END $$;
 
-CREATE FUNCTION chat_private.asaas_liberar_checkout(p_ambiente text, p_user uuid, p_plano text, p_next_due date DEFAULT NULL)
+CREATE FUNCTION chat_private.asaas_liberar_checkout(p_ambiente text, p_user uuid, p_plano text, p_next_due date, p_geracao bigint)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, chat_private
 AS $$
-DECLARE v_id uuid;
+DECLARE v_id uuid; v_geracao bigint;
 BEGIN
   IF p_ambiente NOT IN ('sandbox', 'producao') OR p_user IS NULL OR p_plano NOT IN ('basico', 'plus') THEN
     RETURN jsonb_build_object('ok', false, 'code', 'plano_invalido');
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended('asaas-user:' || p_ambiente || ':' || p_user::text, 0));
+  SELECT g.geracao INTO v_geracao FROM chat_private.asaas_checkout_geracao g
+  WHERE g.ambiente = p_ambiente AND g.user_id = p_user;
+  IF NOT FOUND THEN v_geracao := 0; END IF;
+  IF p_geracao IS NULL OR p_geracao IS DISTINCT FROM v_geracao THEN
+    RETURN jsonb_build_object('ok', false, 'code', 'checkout_em_andamento');
+  END IF;
   IF EXISTS (
     SELECT 1 FROM chat_private.assinaturas
     WHERE ambiente = p_ambiente AND user_id = p_user
@@ -274,11 +309,15 @@ BEGIN
   END IF;
   IF EXISTS (
     SELECT 1 FROM chat_private.assinaturas
-    WHERE ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente' AND reserva = 'aberta'
-      AND atualizado_em > now() - interval '60 minutes'
+    WHERE ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente'
+      AND reserva IN ('aberta', 'enviando', 'incerta')
   ) THEN
     RETURN jsonb_build_object('ok', false, 'code', 'checkout_em_andamento');
   END IF;
+  INSERT INTO chat_private.asaas_checkout_geracao (ambiente, user_id, geracao)
+  VALUES (p_ambiente, p_user, 1)
+  ON CONFLICT (ambiente, user_id) DO UPDATE
+  SET geracao = chat_private.asaas_checkout_geracao.geracao + 1;
   INSERT INTO chat_private.assinaturas (ambiente, user_id, plano, status, recorrencia, bloqueio, reserva, preco_centavos, next_due_planejado)
   VALUES (
     p_ambiente, p_user, p_plano, 'checkout', 'pendente', NULL, 'aberta',
@@ -329,16 +368,53 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, chat_private
 AS $$
   DELETE FROM chat_private.assinaturas
   WHERE id = p_assinatura AND ambiente = p_ambiente AND user_id = p_user
-    AND recorrencia = 'pendente' AND reserva = 'aberta' AND checkout_id IS NULL AND resultado_incerto = false;
+    AND recorrencia = 'pendente' AND reserva = 'aberta' AND checkout_id IS NULL
+    AND resultado_incerto = false AND envio_em IS NULL;
+$$;
+
+-- Intenção antes do POST. O id da linha já é o externalReference. Não apaga.
+CREATE FUNCTION chat_private.asaas_marcar_checkout_enviando(p_ambiente text, p_user uuid, p_assinatura uuid)
+RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, chat_private
+AS $$
+  WITH marca AS (
+    UPDATE chat_private.assinaturas
+    SET reserva = 'enviando', envio_em = coalesce(envio_em, now()), atualizado_em = now()
+    WHERE id = p_assinatura AND ambiente = p_ambiente AND user_id = p_user
+      AND recorrencia = 'pendente' AND checkout_id IS NULL
+    RETURNING ambiente, user_id
+  )
+  INSERT INTO chat_private.asaas_checkout_geracao (ambiente, user_id, geracao)
+  SELECT ambiente, user_id, 1 FROM marca
+  ON CONFLICT (ambiente, user_id) DO UPDATE
+  SET geracao = chat_private.asaas_checkout_geracao.geracao + 1;
+$$;
+
+-- Só o 4xx definitivo do POST. Timeout, 5xx e processo morto não chamam esta função.
+CREATE FUNCTION chat_private.asaas_descartar_envio_recusado(p_ambiente text, p_user uuid, p_assinatura uuid)
+RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, chat_private
+AS $$
+  DELETE FROM chat_private.assinaturas
+  WHERE id = p_assinatura AND ambiente = p_ambiente AND user_id = p_user
+    AND recorrencia = 'pendente' AND reserva = 'enviando'
+    AND checkout_id IS NULL AND resultado_incerto = false;
 $$;
 
 CREATE FUNCTION chat_private.asaas_marcar_checkout_incerto(p_ambiente text, p_user uuid, p_assinatura uuid)
 RETURNS void
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, chat_private
 AS $$
-  UPDATE chat_private.assinaturas
-  SET resultado_incerto = true, reserva = 'incerta', atualizado_em = now()
-  WHERE id = p_assinatura AND ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente';
+  WITH marca AS (
+    UPDATE chat_private.assinaturas
+    SET resultado_incerto = true, reserva = 'incerta', atualizado_em = now()
+    WHERE id = p_assinatura AND ambiente = p_ambiente AND user_id = p_user AND recorrencia = 'pendente'
+    RETURNING ambiente, user_id
+  )
+  INSERT INTO chat_private.asaas_checkout_geracao (ambiente, user_id, geracao)
+  SELECT ambiente, user_id, 1 FROM marca
+  ON CONFLICT (ambiente, user_id) DO UPDATE
+  SET geracao = chat_private.asaas_checkout_geracao.geracao + 1;
 $$;
 
 CREATE FUNCTION chat_private.asaas_aplicar_evento(
@@ -455,7 +531,8 @@ BEGIN
   ELSIF v_user IS NOT NULL THEN
     PERFORM pg_advisory_xact_lock(hashtextextended('asaas-user:' || p_ambiente || ':' || v_user::text, 0));
   END IF;
-  IF v_found AND v_row.ultimo_evento_em IS NOT NULL AND v_quando < v_row.ultimo_evento_em THEN
+  IF v_found AND v_row.ultimo_evento_em IS NOT NULL AND v_quando < v_row.ultimo_evento_em
+     AND p_tipo NOT IN ('PAYMENT_REFUNDED', 'PAYMENT_CHARGEBACK_REQUESTED') THEN
     RETURN jsonb_build_object('aplicado', true, 'duplicado', false, 'antigo', true);
   END IF;
 
@@ -620,10 +697,12 @@ BEGIN
         checkout_id = coalesce(checkout_id, p_checkout_id),
         bloqueio = 'suspensa',
         resultado_incerto = false,
-        ultimo_evento_em = v_quando,
+        ultimo_evento_em = CASE
+          WHEN ultimo_evento_em IS NULL OR ultimo_evento_em <= v_quando THEN v_quando
+          ELSE ultimo_evento_em
+        END,
         atualizado_em = now()
-      WHERE id = v_row.id
-        AND (ultimo_evento_em IS NULL OR ultimo_evento_em <= v_quando);
+      WHERE id = v_row.id;
     END IF;
     RETURN jsonb_build_object('aplicado', true, 'duplicado', false);
   END IF;
@@ -655,19 +734,33 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, chat_priv
 AS $$
 DECLARE
   v_row chat_private.assinaturas%ROWTYPE;
+  v_op chat_private.asaas_cancelamentos%ROWTYPE;
   v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
   v_acesso date;
+  v_tem boolean := false;
+  v_lease boolean := false;
+  v_retry boolean := false;
+  v_pode boolean := false;
 BEGIN
   SELECT * INTO v_row FROM chat_private.assinaturas
   WHERE ambiente = p_ambiente AND user_id = p_user
   ORDER BY atualizado_em DESC LIMIT 1;
   IF NOT FOUND THEN
-    RETURN jsonb_build_object('plano', 'free', 'status', 'free', 'trial_ate', NULL, 'pago_ate', NULL, 'acesso_ate', NULL, 'pode_cancelar', false);
+    RETURN jsonb_build_object('plano', 'free', 'status', 'free', 'trial_ate', NULL, 'pago_ate', NULL, 'acesso_ate', NULL, 'pode_cancelar', false, 'pode_tentar_de_novo', false);
   END IF;
   v_acesso := coalesce(v_row.pago_ate, v_row.trial_ate);
   IF v_row.recorrencia = 'encerrada' AND v_row.bloqueio IS NULL AND (v_acesso IS NULL OR v_acesso < v_hoje) THEN
-    RETURN jsonb_build_object('plano', 'free', 'status', 'free', 'trial_ate', NULL, 'pago_ate', NULL, 'acesso_ate', NULL, 'pode_cancelar', false);
+    RETURN jsonb_build_object('plano', 'free', 'status', 'free', 'trial_ate', NULL, 'pago_ate', NULL, 'acesso_ate', NULL, 'pode_cancelar', false, 'pode_tentar_de_novo', false);
   END IF;
+  SELECT * INTO v_op FROM chat_private.asaas_cancelamentos
+  WHERE ambiente = p_ambiente AND assinatura_id = v_row.id;
+  v_tem := FOUND;
+  v_lease := v_tem AND v_op.estado = 'pendente' AND v_op.lease_ate IS NOT NULL AND v_op.lease_ate > now();
+  v_retry := v_row.subscription_id IS NOT NULL
+    AND v_row.recorrencia = 'cancelamento_pendente'
+    AND NOT v_lease
+    AND (NOT v_tem OR v_op.estado IS DISTINCT FROM 'concluido');
+  v_pode := v_retry OR (v_row.subscription_id IS NOT NULL AND v_row.recorrencia IN ('ativa', 'pendente'));
   RETURN jsonb_build_object(
     'plano', CASE
       WHEN v_row.bloqueio IS NULL
@@ -678,7 +771,8 @@ BEGIN
     'trial_ate', to_char(v_row.trial_ate, 'YYYY-MM-DD'),
     'pago_ate', to_char(v_row.pago_ate, 'YYYY-MM-DD'),
     'acesso_ate', to_char(v_acesso, 'YYYY-MM-DD'),
-    'pode_cancelar', v_row.subscription_id IS NOT NULL AND v_row.recorrencia IN ('ativa', 'pendente')
+    'pode_cancelar', v_pode,
+    'pode_tentar_de_novo', v_retry
   );
 END $$;
 
@@ -691,6 +785,7 @@ DECLARE
   v_op chat_private.asaas_cancelamentos%ROWTYPE;
   v_tem boolean := false;
   v_status text;
+  v_tentativa uuid;
 BEGIN
   IF p_ambiente NOT IN ('sandbox', 'producao') OR p_user IS NULL THEN
     RETURN jsonb_build_object('ok', false, 'code', 'sem_assinatura');
@@ -720,27 +815,32 @@ BEGIN
       );
     END IF;
     IF NOT v_tem THEN
+      v_tentativa := gen_random_uuid();
       UPDATE chat_private.assinaturas
       SET recorrencia = 'cancelamento_pendente', atualizado_em = now()
       WHERE id = v_row.id
       RETURNING status INTO v_status;
-      INSERT INTO chat_private.asaas_cancelamentos (ambiente, assinatura_id, user_id, subscription_id, estado, tentativas, lease_ate)
-      VALUES (p_ambiente, v_row.id, p_user, v_row.subscription_id, 'pendente', 1, now() + interval '90 seconds');
+      INSERT INTO chat_private.asaas_cancelamentos (ambiente, assinatura_id, user_id, subscription_id, estado, tentativas, tentativa_id, lease_ate)
+      VALUES (p_ambiente, v_row.id, p_user, v_row.subscription_id, 'pendente', 1, v_tentativa, now() + interval '240 seconds');
       RETURN jsonb_build_object(
         'ok', true, 'ja', false, 'refazer', false, 'estado', 'pendente',
         'status', v_status, 'status_anterior', v_row.status,
         'subscription_id', v_row.subscription_id,
+        'tentativa_id', v_tentativa,
         'acesso_ate', to_char(coalesce(v_row.pago_ate, v_row.trial_ate), 'YYYY-MM-DD')
       );
     END IF;
+    v_tentativa := gen_random_uuid();
     UPDATE chat_private.asaas_cancelamentos
-    SET estado = 'pendente', tentativas = tentativas + 1, lease_ate = now() + interval '90 seconds',
+    SET estado = 'pendente', tentativas = tentativas + 1, tentativa_id = v_tentativa,
+        lease_ate = now() + interval '240 seconds',
         subscription_id = v_row.subscription_id, atualizado_em = now()
     WHERE ambiente = p_ambiente AND assinatura_id = v_row.id;
     RETURN jsonb_build_object(
       'ok', true, 'ja', false, 'refazer', true, 'estado', 'pendente',
       'status', v_row.status, 'status_anterior', v_row.status,
       'subscription_id', v_row.subscription_id,
+      'tentativa_id', v_tentativa,
       'acesso_ate', to_char(coalesce(v_row.pago_ate, v_row.trial_ate), 'YYYY-MM-DD')
     );
   END IF;
@@ -760,27 +860,39 @@ BEGIN
   RETURN jsonb_build_object('ok', false, 'code', 'sem_assinatura');
 END $$;
 
-CREATE FUNCTION chat_private.asaas_marcar_cancelamento(p_ambiente text, p_user uuid, p_subscription text)
-RETURNS void
+CREATE FUNCTION chat_private.asaas_marcar_cancelamento(p_ambiente text, p_user uuid, p_subscription text, p_tentativa uuid)
+RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, chat_private
 AS $$
+DECLARE n integer;
 BEGIN
+  IF p_tentativa IS NULL THEN RETURN false; END IF;
   UPDATE chat_private.asaas_cancelamentos
   SET estado = 'concluido', lease_ate = NULL, atualizado_em = now()
-  WHERE ambiente = p_ambiente AND user_id = p_user AND subscription_id = p_subscription AND estado <> 'concluido';
+  WHERE ambiente = p_ambiente AND user_id = p_user AND subscription_id = p_subscription
+    AND estado <> 'concluido' AND tentativa_id = p_tentativa;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RETURN false; END IF;
   UPDATE chat_private.assinaturas
   SET recorrencia = 'cancelamento_pendente', atualizado_em = now()
   WHERE ambiente = p_ambiente AND user_id = p_user AND subscription_id = p_subscription AND recorrencia <> 'encerrada';
+  RETURN true;
 END $$;
 
-CREATE FUNCTION chat_private.asaas_falhar_cancelamento(p_ambiente text, p_user uuid, p_subscription text)
-RETURNS void
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, chat_private
+CREATE FUNCTION chat_private.asaas_falhar_cancelamento(p_ambiente text, p_user uuid, p_subscription text, p_tentativa uuid)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, chat_private
 AS $$
+DECLARE n integer;
+BEGIN
+  IF p_tentativa IS NULL THEN RETURN false; END IF;
   UPDATE chat_private.asaas_cancelamentos
   SET estado = 'falhou', lease_ate = NULL, atualizado_em = now()
-  WHERE ambiente = p_ambiente AND user_id = p_user AND subscription_id = p_subscription AND estado = 'pendente';
-$$;
+  WHERE ambiente = p_ambiente AND user_id = p_user AND subscription_id = p_subscription
+    AND estado = 'pendente' AND tentativa_id = p_tentativa;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n = 1;
+END $$;
 
 -- Só produção libera plano. Sandbox não concede.
 -- Inadimplente não tem carência. Suspensa, divergente e data vencida caem em free.
@@ -845,7 +957,8 @@ BEGIN
     WHERE n.nspname = 'chat_private' AND p.proname IN (
       'asaas_obter_cliente', 'asaas_gravar_cliente', 'asaas_preparar_checkout', 'asaas_liberar_checkout',
       'asaas_vincular_checkout', 'asaas_vincular_assinatura_remota', 'asaas_descartar_checkout',
-      'asaas_marcar_checkout_incerto', 'asaas_aplicar_evento', 'asaas_status', 'asaas_pedir_cancelamento',
+      'asaas_marcar_checkout_enviando', 'asaas_descartar_envio_recusado', 'asaas_marcar_checkout_incerto',
+      'asaas_aplicar_evento', 'asaas_status', 'asaas_pedir_cancelamento',
       'asaas_marcar_cancelamento', 'asaas_falhar_cancelamento', 'asaas_derivar_status', 'plano_atual'
     )
   LOOP

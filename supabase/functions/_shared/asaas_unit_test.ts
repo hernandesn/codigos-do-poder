@@ -1,4 +1,4 @@
-import { ASAAS_TIMEOUT_MS, AsaasErro, createAsaasClient, urlCheckout } from './asaas_client.ts'
+import { ASAAS_TIMEOUT_MS, CANCEL_LEASE_MS, CANCEL_TENTATIVA_MAX_MS, AsaasErro, createAsaasClient, urlCheckout } from './asaas_client.ts'
 import { cpfCnpjValido, cnpjValido, cpfValido } from './asaas_cpf.ts'
 import { dataIsoNoFuso, nextDueDate, parseInstanteAsaas, somarMesIso } from './asaas_datas.ts'
 import { acharLinha, assinaturaAberta, centavosDe, transicionar, type LinhaAssinatura } from './asaas_estado.ts'
@@ -78,6 +78,9 @@ Deno.test('token do webhook compara os dois digests e não o texto cru', async (
 
 Deno.test('cliente Asaas: timeout, sem retry, sem vazar corpo e URL só do sandbox', async () => {
   equal(ASAAS_TIMEOUT_MS >= 60_000, true)
+  equal(CANCEL_TENTATIVA_MAX_MS, ASAAS_TIMEOUT_MS * 3)
+  equal(CANCEL_TENTATIVA_MAX_MS < CANCEL_LEASE_MS, true)
+  equal(CANCEL_LEASE_MS, 240_000)
   let chamadas = 0
   const pendente = createAsaasClient({
     apiKey: CHAVE,
@@ -213,7 +216,7 @@ Deno.test('transição não regride, cancelada é terminal e divergente ainda ac
   const base: LinhaAssinatura = {
     id: USER, ambiente: 'sandbox', userId: USER, subscriptionId: 'sub_teste123', checkoutId: null,
     plano: 'basico', status: 'ativa', recorrencia: 'ativa', bloqueio: null, reserva: 'aberta', trialAte: null, pagoAte: '2027-01-18', ultimoEventoEm: '2026-11-18T15:00:00.000Z',
-    precoCentavos: 990, nextDuePlanejado: null, resultadoIncerto: false,
+    precoCentavos: 990, nextDuePlanejado: null, resultadoIncerto: false, envioEm: null,
     criadoEm: '2026-11-18T12:00:00.000Z', atualizadoEm: '2026-11-18T15:00:00.000Z',
   }
   const evento = (tipo: string, quando: string, valor: number | null): EventoDb => ({
@@ -252,13 +255,37 @@ Deno.test('transição não regride, cancelada é terminal e divergente ainda ac
     vencimento: '2027-08-01',
   }, USER)
   equal(estende.linha?.pagoAte, '2027-09-01')
+  const encerrada = transicionar(base, evento('SUBSCRIPTION_DELETED', '2026-11-18T18:10:00.000Z', null), USER)
+  equal(encerrada.linha?.recorrencia, 'encerrada')
+  equal(encerrada.linha?.ultimoEventoEm, '2026-11-18T18:10:00.000Z')
+  const fora = transicionar(encerrada.linha, evento('PAYMENT_REFUNDED', '2026-11-18T18:09:00.000Z', 9.9), USER)
+  equal(fora.motivo, 'ok')
+  equal(fora.linha?.bloqueio, 'suspensa')
+  equal(fora.linha?.recorrencia, 'encerrada')
+  equal(fora.linha?.pagoAte, '2027-01-18')
+  equal(fora.linha?.ultimoEventoEm, '2026-11-18T18:10:00.000Z')
+  const atraso = transicionar(fora.linha, evento('PAYMENT_OVERDUE', '2026-11-18T18:09:30.000Z', null), USER)
+  equal(atraso.motivo, 'antigo')
+  equal(atraso.linha?.bloqueio, 'suspensa')
+  const cronologico = transicionar(
+    transicionar({ ...base, ultimoEventoEm: '2026-11-18T18:00:00.000Z' }, evento('PAYMENT_REFUNDED', '2026-11-18T18:09:00.000Z', 9.9), USER).linha,
+    evento('SUBSCRIPTION_DELETED', '2026-11-18T18:10:00.000Z', null),
+    USER,
+  )
+  equal(cronologico.linha?.bloqueio, 'suspensa')
+  equal(cronologico.linha?.recorrencia, 'encerrada')
+  equal(cronologico.linha?.ultimoEventoEm, '2026-11-18T18:10:00.000Z')
+  const chargeback = transicionar(encerrada.linha, evento('PAYMENT_CHARGEBACK_REQUESTED', '2026-11-18T18:08:00.000Z', 9.9), USER)
+  equal(chargeback.motivo, 'ok')
+  equal(chargeback.linha?.bloqueio, 'suspensa')
+  equal(chargeback.linha?.ultimoEventoEm, '2026-11-18T18:10:00.000Z')
 })
 
 Deno.test('correlação ignora outra assinatura e o trial exige preço e data da reserva', () => {
   const aberta: LinhaAssinatura = {
     id: 'linha-a', ambiente: 'sandbox', userId: USER, subscriptionId: 'sub_atual', checkoutId: null,
     plano: 'basico', status: 'ativa', recorrencia: 'ativa', bloqueio: null, reserva: 'aberta', trialAte: null, pagoAte: '2027-06-01', ultimoEventoEm: null,
-    precoCentavos: 990, nextDuePlanejado: null, resultadoIncerto: false,
+    precoCentavos: 990, nextDuePlanejado: null, resultadoIncerto: false, envioEm: null,
     criadoEm: '2026-11-18T12:00:00.000Z', atualizadoEm: '2026-11-18T12:00:00.000Z',
   }
   const outra: EventoDb = {

@@ -42,6 +42,8 @@ test('cancelar.html trava script e estilo no hash e só fala com o projeto', () 
   assert.equal(html.includes('id="confirma"'), true);
   assert.equal(html.includes('não confirma o pagamento'), true);
   assert.equal(html.includes('não trata de devolução'), true);
+  assert.equal(html.includes('Tentar de novo'), true);
+  assert.equal(html.includes('pode_tentar_de_novo'), true);
   assert.equal(html.includes('sb_publishable_'), false);
   assert.equal(html.includes('0x4AAAAAAGDto'), false);
 });

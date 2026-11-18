@@ -1,6 +1,9 @@
 import { ASAAS_SANDBOX_BASE, CICLO_ASSINATURA, URLS_CALLBACK, type PlanoPago } from './asaas_planos.ts'
 
 export const ASAAS_TIMEOUT_MS = 60_000
+/** 2 GET com retry (2 × 60s) + 1 DELETE (60s) = 180s. O lease fica acima desse teto. */
+export const CANCEL_TENTATIVA_MAX_MS = ASAAS_TIMEOUT_MS * 3
+export const CANCEL_LEASE_MS = 240_000
 
 export class AsaasErro extends Error {
   readonly codigo = 'provedor'
@@ -37,6 +40,8 @@ export interface AsaasClient {
   cancelarAssinatura(id: string): Promise<{ deleted: boolean, ausente: boolean }>
   obterAssinatura(id: string): Promise<{ id: string, deleted: boolean, status: string | null }>
   listarAssinaturas(customerId: string): Promise<AssinaturaRemota[]>
+  /** Mesma regra fail-closed de listarAssinaturas. O id interno da reserva é o externalReference. */
+  listarAssinaturasPorReferencia(externalReference: string): Promise<AssinaturaRemota[]>
 }
 
 const ID_OK = /^[A-Za-z0-9_-]{1,80}$/
@@ -134,6 +139,15 @@ export function createAsaasClient(opts: {
     }
   }
 
+  async function listar(path: string): Promise<AssinaturaRemota[]> {
+    const res = await chamar('GET', path, undefined, 1)
+    if (res.status === 404 || !res.data || res.data.hasMore === true || !Array.isArray(res.data.data)) throw new AsaasErro(false)
+    return res.data.data.map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw new AsaasErro(false)
+      return remota(item as Record<string, unknown>)
+    })
+  }
+
   return {
     async criarCliente(input) {
       const { data } = await chamar('POST', '/v3/customers', {
@@ -190,12 +204,11 @@ export function createAsaasClient(opts: {
     },
     async listarAssinaturas(customerId) {
       if (!idOk(customerId)) throw new AsaasErro(true)
-      const res = await chamar('GET', '/v3/subscriptions?customer=' + encodeURIComponent(customerId) + '&limit=100', undefined, 1)
-      if (res.status === 404 || !res.data || res.data.hasMore === true || !Array.isArray(res.data.data)) throw new AsaasErro(false)
-      return res.data.data.map((item) => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) throw new AsaasErro(false)
-        return remota(item as Record<string, unknown>)
-      })
+      return listar('/v3/subscriptions?customer=' + encodeURIComponent(customerId) + '&limit=100')
+    },
+    async listarAssinaturasPorReferencia(externalReference) {
+      if (!idOk(externalReference)) throw new AsaasErro(true)
+      return listar('/v3/subscriptions?externalReference=' + encodeURIComponent(externalReference) + '&limit=100')
     },
   }
 }

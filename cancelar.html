@@ -2,7 +2,7 @@
 <html lang="pt-BR" data-theme="couro-osso">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com 'sha256-g9HkvaX1XQ/cD8Gr1mZrQmtrFspVRQZQHOUZJev0AWg='; style-src 'self' 'sha256-lpDLPUFgcWX348TTCYwSxT+Mn++lABdVuJ7riHHsh2E='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src https://challenges.cloudflare.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com 'sha256-NYHWG3UDFe52Q62jbDmo0YOaKZhrUlURkZp9+qztRwE='; style-src 'self' 'sha256-lpDLPUFgcWX348TTCYwSxT+Mn++lABdVuJ7riHHsh2E='; style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src https://challenges.cloudflare.com;">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
@@ -282,8 +282,10 @@ dd{margin:0}
     $('plano').textContent = plano;
     $('situacao').textContent = situacao;
     $('acesso').textContent = dataBr(corpo && corpo.acesso_ate);
-    const pode = !!(corpo && corpo.pode_cancelar === true);
+    const podeTentar = !!(corpo && corpo.pode_tentar_de_novo === true);
+    const pode = !!(corpo && corpo.pode_cancelar === true) || podeTentar;
     $('pedir').hidden = !pode;
+    $('pedir').textContent = podeTentar ? 'Tentar de novo' : 'Cancelar assinatura';
     $('sem-cancelar').hidden = pode;
     $('confirma').hidden = true;
   }

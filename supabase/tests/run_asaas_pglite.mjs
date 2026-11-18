@@ -84,15 +84,15 @@ function comparar(antes, depois) {
     if (!depois.funcoes.some((row) => row.assinatura === assinatura)) throw new Error('Função removida: ' + assinatura)
   }
   assert.deepEqual(novas.sort(), [
-    'asaas_aplicar_evento', 'asaas_derivar_status', 'asaas_descartar_checkout', 'asaas_falhar_cancelamento',
-    'asaas_gravar_cliente', 'asaas_liberar_checkout', 'asaas_marcar_cancelamento', 'asaas_marcar_checkout_incerto',
-    'asaas_obter_cliente', 'asaas_pedir_cancelamento', 'asaas_preparar_checkout', 'asaas_status',
-    'asaas_vincular_assinatura_remota', 'asaas_vincular_checkout', 'plano_atual',
+    'asaas_aplicar_evento', 'asaas_derivar_status', 'asaas_descartar_checkout', 'asaas_descartar_envio_recusado',
+    'asaas_falhar_cancelamento', 'asaas_gravar_cliente', 'asaas_liberar_checkout', 'asaas_marcar_cancelamento',
+    'asaas_marcar_checkout_enviando', 'asaas_marcar_checkout_incerto', 'asaas_obter_cliente', 'asaas_pedir_cancelamento',
+    'asaas_preparar_checkout', 'asaas_status', 'asaas_vincular_assinatura_remota', 'asaas_vincular_checkout', 'plano_atual',
   ])
   const tabelasAntes = new Set(antes.colunas.map((row) => row.relname))
   const tabelasDepois = new Set(depois.colunas.map((row) => row.relname))
   const criadas = [...tabelasDepois].filter((nome) => !tabelasAntes.has(nome)).sort()
-  assert.deepEqual(criadas, ['asaas_cancelamentos', 'asaas_clientes', 'asaas_eventos', 'asaas_trials', 'assinaturas'])
+  assert.deepEqual(criadas, ['asaas_cancelamentos', 'asaas_checkout_geracao', 'asaas_clientes', 'asaas_eventos', 'asaas_trials', 'assinaturas'])
   for (const nome of tabelasAntes) {
     assert.deepEqual(
       depois.colunas.filter((row) => row.relname === nome),
@@ -143,7 +143,7 @@ try {
   assert.equal(ok[0].ok, true)
   comparar(antes, await foto(db))
 
-  const tabelas = ['chat_private.asaas_clientes', 'chat_private.assinaturas', 'chat_private.asaas_eventos', 'chat_private.asaas_trials', 'chat_private.asaas_cancelamentos']
+  const tabelas = ['chat_private.asaas_clientes', 'chat_private.assinaturas', 'chat_private.asaas_eventos', 'chat_private.asaas_trials', 'chat_private.asaas_cancelamentos', 'chat_private.asaas_checkout_geracao']
   for (const tabela of tabelas) {
     const { rows } = await db.query(`SELECT relrowsecurity FROM pg_class WHERE oid = '${tabela}'::regclass`)
     assert.equal(rows[0].relrowsecurity, true, tabela)
@@ -161,7 +161,7 @@ try {
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'chat_private' AND (p.proname LIKE 'asaas\\_%' OR p.proname = 'plano_atual')
   `)
-  assert.equal(funcoes.length, 15)
+  assert.equal(funcoes.length, 17)
   for (const row of funcoes) {
     assert.equal(row.chat_fn, true, row.proname)
     assert.equal(row.anon, false, row.proname)

@@ -11,6 +11,12 @@ function texto(valor: unknown): string | null {
   return typeof valor === 'string' ? valor : null
 }
 
+function numero(valor: unknown): number | undefined {
+  if (typeof valor === 'number' && Number.isFinite(valor)) return valor
+  if (typeof valor === 'string' && valor !== '' && Number.isFinite(Number(valor))) return Number(valor)
+  return undefined
+}
+
 const STATUS = new Set<StatusAssinatura>([
   'checkout', 'trial', 'ativa', 'inadimplente', 'suspensa', 'cancelamento_solicitado', 'cancelada', 'divergente',
 ])
@@ -34,17 +40,21 @@ export function createPgAsaasDb(url: string): AsaasDb {
         checkoutId: texto(row.checkout_id),
         reutilizado: row.reutilizado === true,
       }
+      const geracao = numero(row.geracao)
+      if (geracao !== undefined) prep.geracao = geracao
       if (row.code === 'trial_ja_usado' || row.code === 'assinatura_ativa' || row.code === 'checkout_em_andamento' || row.code === 'plano_invalido' || row.code === 'reconciliar') prep.code = row.code
       return prep
     },
-    async liberarCheckout(ambiente, userId, plano, nextDue = null) {
-      const row = objeto(await valor(sql`select chat_private.asaas_liberar_checkout(${ambiente}, ${userId}::uuid, ${plano}, ${nextDue}::date) as v`))
+    async liberarCheckout(ambiente, userId, plano, nextDue, geracao) {
+      const row = objeto(await valor(sql`select chat_private.asaas_liberar_checkout(${ambiente}, ${userId}::uuid, ${plano}, ${nextDue}::date, ${geracao}::bigint) as v`))
       const prep: PrepCheckout = {
         ok: row.ok === true,
         assinaturaId: texto(row.assinatura_id) ?? undefined,
         checkoutId: texto(row.checkout_id),
         reutilizado: row.reutilizado === true,
       }
+      const lida = numero(row.geracao)
+      if (lida !== undefined) prep.geracao = lida
       if (row.code === 'trial_ja_usado' || row.code === 'assinatura_ativa' || row.code === 'checkout_em_andamento' || row.code === 'plano_invalido' || row.code === 'reconciliar') prep.code = row.code
       return prep
     },
@@ -56,6 +66,12 @@ export function createPgAsaasDb(url: string): AsaasDb {
     },
     async descartarCheckout(ambiente, userId, assinaturaId) {
       await sql`select chat_private.asaas_descartar_checkout(${ambiente}, ${userId}::uuid, ${assinaturaId}::uuid)`
+    },
+    async marcarCheckoutEnviando(ambiente, userId, assinaturaId) {
+      await sql`select chat_private.asaas_marcar_checkout_enviando(${ambiente}, ${userId}::uuid, ${assinaturaId}::uuid)`
+    },
+    async descartarEnvioRecusado(ambiente, userId, assinaturaId) {
+      await sql`select chat_private.asaas_descartar_envio_recusado(${ambiente}, ${userId}::uuid, ${assinaturaId}::uuid)`
     },
     async marcarCheckoutIncerto(ambiente, userId, assinaturaId) {
       await sql`select chat_private.asaas_marcar_checkout_incerto(${ambiente}, ${userId}::uuid, ${assinaturaId}::uuid)`
@@ -82,6 +98,7 @@ export function createPgAsaasDb(url: string): AsaasDb {
       return {
         plano, status, trial_ate: texto(row.trial_ate), pago_ate: texto(row.pago_ate),
         acesso_ate: texto(row.acesso_ate), pode_cancelar: row.pode_cancelar === true,
+        pode_tentar_de_novo: row.pode_tentar_de_novo === true,
       } as StatusPublico
     },
     async pedirCancelamento(ambiente, userId) {
@@ -97,13 +114,17 @@ export function createPgAsaasDb(url: string): AsaasDb {
       if (statusConhecido(row.status_anterior)) prep.statusAnterior = row.status_anterior
       if (row.code === 'sem_assinatura' || row.code === 'cancelamento_em_andamento') prep.code = row.code
       if (row.estado === 'pendente' || row.estado === 'concluido' || row.estado === 'falhou') prep.estado = row.estado
+      const tentativa = texto(row.tentativa_id)
+      if (tentativa) prep.tentativaId = tentativa
       return prep
     },
-    async marcarCancelamento(ambiente, userId, subscriptionId) {
-      await sql`select chat_private.asaas_marcar_cancelamento(${ambiente}, ${userId}::uuid, ${subscriptionId})`
+    async marcarCancelamento(ambiente, userId, subscriptionId, tentativaId) {
+      const row = await valor(sql`select chat_private.asaas_marcar_cancelamento(${ambiente}, ${userId}::uuid, ${subscriptionId}, ${tentativaId}::uuid) as v`)
+      return row === true
     },
-    async falharCancelamento(ambiente, userId, subscriptionId) {
-      await sql`select chat_private.asaas_falhar_cancelamento(${ambiente}, ${userId}::uuid, ${subscriptionId})`
+    async falharCancelamento(ambiente, userId, subscriptionId, tentativaId) {
+      const row = await valor(sql`select chat_private.asaas_falhar_cancelamento(${ambiente}, ${userId}::uuid, ${subscriptionId}, ${tentativaId}::uuid) as v`)
+      return row === true
     },
   }
 }

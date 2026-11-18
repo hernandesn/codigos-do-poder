@@ -17,6 +17,7 @@ export interface DepsCancel {
 // A operação fica em asaas_cancelamentos. ja só quando ela está concluída ou a recorrência já encerrou.
 // Lease válido responde cancelamento_em_andamento e não chama o Asaas de novo.
 // Lease vencido ou falhou refaz o DELETE. Se o GET mostrar deleted, conclui sem outro DELETE.
+// Conclusão e falha só gravam se o tentativa_id ainda for o da tentativa atual.
 // Falha do DELETE grava falhou e devolve 502. Não devolve a linha ao estado anterior.
 // Encerrar não apaga bloqueio. Até o fim de pago_ate ou trial_ate o plano continua, se não houver bloqueio.
 
@@ -73,12 +74,13 @@ export function createAsaasCancelHandler(d: DepsCancel) {
     }
     if (!prep.ok || !prep.subscriptionId) return json({ code: 'sem_assinatura', message: 'Não há assinatura para cancelar.' }, 404)
     if (prep.ja) return json({ status: prep.status, ja: true, acesso_ate: prep.acesso_ate ?? null })
-    if (prep.code === 'cancelamento_em_andamento') {
+    if (prep.code === 'cancelamento_em_andamento' || !prep.tentativaId) {
       return json({ code: 'cancelamento_em_andamento', message: 'O cancelamento desta assinatura já está em andamento.' }, 409)
     }
+    const tentativaId = prep.tentativaId
     const asaas = d.criarAsaas()
     const falhar = async () => {
-      await db.falharCancelamento('sandbox', userId, prep.subscriptionId!)
+      await db.falharCancelamento('sandbox', userId, prep.subscriptionId!, tentativaId)
     }
     if (!asaas) {
       try {
@@ -93,7 +95,10 @@ export function createAsaasCancelHandler(d: DepsCancel) {
         const remota = await asaas.obterAssinatura(prep.subscriptionId)
         if (remota.deleted) {
           try {
-            await db.marcarCancelamento('sandbox', userId, prep.subscriptionId)
+            const marcou = await db.marcarCancelamento('sandbox', userId, prep.subscriptionId, tentativaId)
+            if (!marcou) {
+              return json({ code: 'cancelamento_em_andamento', message: 'O cancelamento desta assinatura já está em andamento.' }, 409)
+            }
           } catch (erro) {
             return falhaRpc(erro)
           }
@@ -115,7 +120,10 @@ export function createAsaasCancelHandler(d: DepsCancel) {
       return json({ code: 'provedor', message: 'Não foi possível cancelar a assinatura.' }, 502)
     }
     try {
-      await db.marcarCancelamento('sandbox', userId, prep.subscriptionId)
+      const marcou = await db.marcarCancelamento('sandbox', userId, prep.subscriptionId, tentativaId)
+      if (!marcou) {
+        return json({ code: 'cancelamento_em_andamento', message: 'O cancelamento desta assinatura já está em andamento.' }, 409)
+      }
     } catch (erro) {
       return falhaRpc(erro)
     }
