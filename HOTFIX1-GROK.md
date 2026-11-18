@@ -648,3 +648,33 @@ Teste: `chat_hotfix1_test.ts:2021`. Entidade «Casa Alfa AP_E777» e fonte «Rel
 `node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
 
 **185 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os quatro `hotfix1j` desta seção. `git diff 23d54ca -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.
+
+## Hotfix1k
+
+Sobre `d531bbf`. A revisão Codex desse commit deu REPROVADO (dois médios novos contra `e981dc6`). Na função só muda `chat_core.ts`. `pauta.ts` não muda. O Básico continua `deepseek/deepseek-v4.1-flash-1017` (`chat_core.ts:25`). O formato dos eventos SSE não muda: o evento final continua com `avisos: []` (`chat_core.ts:4213`). O prompt do sistema não muda. A lista de `safePublicClaim` não foi alargada.
+
+### 1. URL não entra na limpeza de código
+
+Achado: o replace genérico em `fontes_detalhe.url` comia `BR101`, `RS2021`, `CIK0001038583`, `VOL1` e `EST024`. `protegerUrls` (`2179`) tira cada `http(s)` antes do corte e devolve o mesmo texto. Entra em `sanearRestaurado` (`2585`), `semCodigosInternos` (`2531`), `limparCodigosDoNome` e `ocultarIdsVisiveis`. O mesmo placeholder envolve `publicChatText`, senão `.json` virava «documento». `casaCodigo` e `casouVazamento` ignoram o miolo da URL, para o segmento não derrubar a frase depois que ela foi preservada.
+
+O campo `url` (`2721`) que começa com `http(s)` e não tem código fixo de ficha (`AP_E`, `OP`, `BR_H`, `PR`, `F/R`, `[n]`) fica byte a byte. Código fixo dentro do endereço não é cortado no meio: o campo sai, para o teste do Hotfix1j continuar sem `AP_E777` nem `OP901` no JSON. Localizador que é `http(s)` também sai byte a byte. Localizador que não é URL continua no saneador (`p. AP_E777` não publica o código).
+
+Testes: `chat_hotfix1_test.ts:2058`, um por URL, como `url` da fonte, como localizador e citada no texto do bloco. Cada uma sai idêntica no evento final:
+
+- `https://cbmm.com/reports/sustainability-report-2021/assets/docs/CBMM-RS2021-D15.pdf`
+- `https://data.sec.gov/submissions/CIK0001038583.json`
+- `https://funag.gov.br/loja/download/1212-Formacao-da-diplomacia-economica-no-brasil-VOL1.pdf`
+- `https://www.goldmansachs.com/worldwide/brazil/areas-de-negocios/ipo/banco-btg-pactual/0155-DEF-EST024-PROVA-2.pdf`
+- `https://example.com/acervo/BR101/1936.pdf`
+
+### 2. Termo jurídico que o corte inventa
+
+Achado: `cri"AP_E777"me` virava `crime` no título e no nome, depois da guarda. `termoJuridicoCriado` (`2173`) usa a mesma lista de `safePublicClaim`. Se o valor saneado tem termo jurídico que não era palavra inteira no original, o valor saneado cai. Título de fonte vira «Documento» (`2714`). Entidade sai da lista exibida (`2707`). `nomePublico` (`2419`) devolve nulo, então o nome não entra na pergunta estrutural. Valor que já tinha o termo como palavra inteira fica.
+
+Teste: `chat_hotfix1_test.ts:2084`. Título `O grupo praticou cri"AP_E777"me.` vira «Documento». Entidade `Casa cri"AP_E777"me` sai do evento final, sem «crime» em `JSON.stringify`. Título «Relatório sobre crime organizado» continua igual.
+
+### Suíte
+
+`node --experimental-strip-types supabase/functions/_shared/chat_core_node_test.mjs`
+
+**191 passed, 0 failed, 3 skipped, 9 ignored.** Os 3 skips e os 9 ignored são os mesmos. Nada foi desligado no runner. Os testes novos são os cinco `hotfix1k` de URL e o de termo jurídico. `git diff d531bbf -- 'supabase/functions/_shared/*_test.ts' 'supabase/functions/_shared/*_test.mjs' | grep '^-'` só devolve o cabeçalho `--- a/.../chat_hotfix1_test.ts`. Nenhuma asserção ou fixture existente foi removida.

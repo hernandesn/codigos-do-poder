@@ -2045,3 +2045,93 @@ Deno.test('hotfix1j nome e título do evento final não vazam código', async ()
   assert(detalhe, 'fonte permanece')
   assert(detalhe.titulo === 'Relatório' || detalhe.titulo === 'Documento', detalhe.titulo)
 })
+
+const URLS_PRODUCAO = [
+  'https://cbmm.com/reports/sustainability-report-2021/assets/docs/CBMM-RS2021-D15.pdf',
+  'https://data.sec.gov/submissions/CIK0001038583.json',
+  'https://funag.gov.br/loja/download/1212-Formacao-da-diplomacia-economica-no-brasil-VOL1.pdf',
+  'https://www.goldmansachs.com/worldwide/brazil/areas-de-negocios/ipo/banco-btg-pactual/0155-DEF-EST024-PROVA-2.pdf',
+  'https://example.com/acervo/BR101/1936.pdf',
+]
+
+for (const url of URLS_PRODUCAO) {
+  Deno.test(`hotfix1k URL de fonte e do texto fica idêntica: ${url}`, async () => {
+    const ctx = campanhaCtx()
+    ctx.fontes = ctx.fontes.map((fonte) => fonte.id === 'B01'
+      ? { ...fonte, url, localizador: url }
+      : fonte)
+    const r = await rodarModelo({
+      ctx,
+      agora: 30_000,
+      respostas: [gerar(JSON.stringify({
+        blocos: [docCampanha(`O contrato de 1936 ficou registrado no papel citado em ${url} no arquivo.`)],
+        sem_base: false,
+        em_aberto: null,
+      }), 0.0002)],
+    })
+    const final = finalDe(r.emitted)
+    const cru = JSON.stringify(final)
+    const detalhe = final.fontes_detalhe.B01
+    assert(detalhe, 'fonte permanece')
+    eq(detalhe.url, url, 'url da fonte')
+    eq(detalhe.localizador, url, 'localizador')
+    assert(final.blocos.some((bloco) => bloco.texto.includes(url)), cru)
+    assert(cru.includes(url), cru)
+    assert(cru.split(url).length >= 3, 'url no texto e na fonte')
+  })
+}
+
+Deno.test('hotfix1k termo jurídico criado pelo saneamento sai; o que já era palavra inteira fica', async () => {
+  const tituloRuim = 'O grupo praticou cri"AP_E777"me.'
+  const ctxTitulo = campanhaCtx()
+  ctxTitulo.fontes = ctxTitulo.fontes.map((fonte) => fonte.id === 'B01'
+    ? { ...fonte, titulo: tituloRuim }
+    : fonte)
+  const rTitulo = await rodarModelo({
+    ctx: ctxTitulo,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const finalTitulo = finalDe(rTitulo.emitted)
+  eq(finalTitulo.fontes_detalhe.B01.titulo, 'Documento', JSON.stringify(finalTitulo.fontes_detalhe))
+
+  const ctxEnt = campanhaCtx()
+  ctxEnt.entidades = ctxEnt.entidades.map((item) => item.id === 'casa_ms'
+    ? { ...item, nome: 'Casa cri"AP_E777"me' }
+    : item)
+  const rEnt = await rodarModelo({
+    ctx: ctxEnt,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const finalEnt = finalDe(rEnt.emitted)
+  const cruEnt = JSON.stringify(finalEnt)
+  assert(!finalEnt.entidades.some((ent) => ent.id === 'casa_ms'), cruEnt)
+  assert(!cruEnt.includes('Casa cri'), cruEnt)
+  assert(!/crime/i.test(cruEnt), cruEnt)
+
+  const tituloBom = 'Relatório sobre crime organizado'
+  const ctxBom = campanhaCtx()
+  ctxBom.fontes = ctxBom.fontes.map((fonte) => fonte.id === 'B01'
+    ? { ...fonte, titulo: tituloBom }
+    : fonte)
+  const rBom = await rodarModelo({
+    ctx: ctxBom,
+    agora: 30_000,
+    respostas: [gerar(JSON.stringify({
+      blocos: [docCampanha('O contrato de 1936 ficou registrado no papel citado.')],
+      sem_base: false,
+      em_aberto: null,
+    }), 0.0002)],
+  })
+  const finalBom = finalDe(rBom.emitted)
+  eq(finalBom.fontes_detalhe.B01.titulo, tituloBom, JSON.stringify(finalBom.fontes_detalhe))
+})

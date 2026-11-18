@@ -1635,7 +1635,7 @@ function entityName(ctx: ChatContextPayload, id: string): string {
 
 function fonteDetalhe(fonte: ChatContextFonte, entityNames: string[] = []): FonteDetalhe {
   const clean = sanitizePublicFonte(fonte, entityNames)
-  const detalhe: FonteDetalhe = { titulo: publicChatText(clean.titulo?.trim() || clean.id) }
+  const detalhe: FonteDetalhe = { titulo: protegerUrls(clean.titulo?.trim() || clean.id, publicChatText) }
   if (clean.url) detalhe.url = clean.url
   if (clean.localizador) detalhe.localizador = clean.localizador
   return detalhe
@@ -1652,6 +1652,8 @@ function idPareceCodigo(id: string): boolean {
 
 /** Tira id cru e apelido "[n]" do texto visível. Entidade vira o nome antes de "·". Uma passada só. */
 export function ocultarIdsVisiveis(texto: string, ctx: ChatContextPayload): string {
+  // [n] e id cru não cortam http(s). A segunda chamada já recebe o texto sem URL.
+  if (/https?:\/\/\S/.test(texto)) return protegerUrls(texto, (sem) => ocultarIdsVisiveis(sem, ctx))
   const nomes = new Map<string, string>()
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
     if (!item?.id || !idPareceCodigo(item.id)) continue
@@ -2160,29 +2162,59 @@ function tokenProtegido(token: string, ctx?: ChatContextPayload): boolean {
   return tokensDoRecorte(ctx).has(token)
 }
 
+/** A mesma lista de safePublicClaim, sem alargar. Só a palavra inteira conta. */
+const TERMO_JURIDICO_SRC = String.raw`\b(?:escândalo\w*|esquema\w*|lavagem|crime\w*|criminos\w*|ilegal\w*|il[ií]cit\w*|fraude\w*|conspira\w*|culpad\w*|corrup\w*|corrompe\w*|subor\w*|propina\w*)\b`
+
+function termosJuridicos(valor: string): string[] {
+  return [...valor.matchAll(new RegExp(TERMO_JURIDICO_SRC, 'giu'))].map((achado) => achado[0])
+}
+
+/** O saneamento criou termo jurídico que o valor original não tinha como palavra inteira. */
+function termoJuridicoCriado(original: string, saneado: string): boolean {
+  const antes = new Set(termosJuridicos(original).map((termo) => termo.toLowerCase()))
+  return termosJuridicos(saneado).some((termo) => !antes.has(termo.toLowerCase()))
+}
+
+/** http(s) sai e volta inteira. Índice que esta chamada não guardou fica (há proteção aninhada). */
+function protegerUrls(texto: string, fn: (semUrl: string) => string): string {
+  const urls: string[] = []
+  const sem = texto.replace(/https?:\/\/\S+/g, (url) => {
+    const token = `\u0006${urls.length}\u0006`
+    urls.push(url)
+    return token
+  })
+  return fn(sem).replace(/\u0006(\d+)\u0006/g, (token, i: string) => {
+    const n = Number(i)
+    return n < urls.length ? urls[n] : token
+  })
+}
+
 function casaCodigo(texto: string, ctx?: ChatContextPayload): boolean {
-  if (new RegExp(CODIGO_FIXO_SRC, 'i').test(texto)) return true
+  const corpo = texto.replace(/https?:\/\/\S+/g, ' ')
+  if (new RegExp(CODIGO_FIXO_SRC, 'i').test(corpo)) return true
   const re = new RegExp(CODIGO_GENERICO_SRC, 'g')
   let achado: RegExpExecArray | null
-  while ((achado = re.exec(texto))) {
+  while ((achado = re.exec(corpo))) {
     if (!tokenProtegido(achado[0], ctx)) return true
   }
   return false
 }
 
-/** Tira snake_case, código de ficha e colchete. O que sobra é o nome que pode ir à pergunta. */
+/** Tira snake_case, código de ficha e colchete. O que sobra é o nome que pode ir à pergunta. URL não entra. */
 function limparCodigosDoNome(value: string, ctx?: ChatContextPayload): string {
-  const protegidos = tokensDoRecorte(ctx)
-  return value
-    .replace(/\[[^\]]*\]/g, ' ')
-    .replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
-    .replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), ' ')
-    .replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => protegidos.has(m) ? m : ' ')
-    .replace(/[\[\]]/g, ' ')
-    .replace(/(?:\s*[-–—]\s*)+$/g, '')
-    .replace(/^(?:\s*[-–—]\s*)+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+  return protegerUrls(value, (semUrl) => {
+    const protegidos = tokensDoRecorte(ctx)
+    return semUrl
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
+      .replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), ' ')
+      .replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => protegidos.has(m) ? m : ' ')
+      .replace(/[\[\]]/g, ' ')
+      .replace(/(?:\s*[-–—]\s*)+$/g, '')
+      .replace(/^(?:\s*[-–—]\s*)+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  })
 }
 
 function textoTemCodigoInterno(value: string, ctx?: ChatContextPayload): boolean {
@@ -2378,10 +2410,14 @@ function nomePublico(ctx: ChatContextPayload, id: string): string | null {
       break
     }
   }
-  const curto = limparCodigosDoNome(bruto.replace(/<[^>]*>/g, '').split('·')[0], ctx)
+  const parte = bruto.replace(/<[^>]*>/g, '').split('·')[0]
+  const curto = limparCodigosDoNome(parte, ctx)
   const util = curto.replace(/[^\p{L}\p{N}]+/gu, '')
   if (util.length < 2 || curto === id || textoTemCodigoInterno(curto, ctx)) return null
   if (!/\s/.test(curto) && curto.includes('_')) return null
+  // Limpar o código não pode inventar «crime» e pôr esse nome na pergunta.
+  const exibido = sanearRotulo(parte, ctx)
+  if (!exibido || termoJuridicoCriado(parte, exibido)) return null
   return curto
 }
 
@@ -2404,7 +2440,7 @@ function parComAresta(ctx: ChatContextPayload, ranking: Array<[string, number]>)
 function sanearPerguntaMontada(pergunta: string, ctx: ChatContextPayload): string {
   let t = ocultarIdsVisiveis(pergunta, ctx)
   t = limparCodigosDoNome(t, ctx)
-  t = publicChatText(t)
+  t = protegerUrls(t, publicChatText)
   t = t.split(/(https?:\/\/\S+)/g).map((parte, i) => i % 2 === 1
     ? parte
     : parte.replace(/\b\p{L}+(?:_+\p{L}+)+\b/gu, ' ')
@@ -2484,24 +2520,24 @@ function idsDeCodigo(ctx: ChatContextPayload): string[] {
 }
 
 function casouVazamento(texto: string, ctx?: ChatContextPayload): boolean {
-  if (casaCodigo(texto, ctx)) return true
-  if (new RegExp(SNAKE_NOME.source).test(texto)) return true
+  const corpo = texto.replace(/https?:\/\/\S+/g, ' ')
+  if (casaCodigo(corpo, ctx)) return true
+  if (new RegExp(SNAKE_NOME.source).test(corpo)) return true
   if (!ctx) return false
-  return idsDeCodigo(ctx).some((id) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeReg(id)}(?![\\p{L}\\p{N}])`, 'u').test(texto))
+  return idsDeCodigo(ctx).some((id) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeReg(id)}(?![\\p{L}\\p{N}])`, 'u').test(corpo))
 }
 
-/** O mesmo padrão de casaCodigo. Código vazio junta as letras ao lado (`cri"AP_E777"me` → `cri""me`); a guarda vê a palavra. */
+/** O mesmo padrão de casaCodigo. Código vazio junta as letras ao lado (`cri"AP_E777"me` → `cri""me`); a guarda vê a palavra. Não atua dentro de http(s). */
 function semCodigosInternos(t: string, ctx?: ChatContextPayload): string {
-  const ids = ctx ? idsDeCodigo(ctx) : []
-  const protegidos = tokensDoRecorte(ctx)
-  return t.split(/(https?:\/\/\S+)/g).map((parte, i) => {
-    if (i % 2 === 1) return parte
+  return protegerUrls(t, (parte) => {
+    const ids = ctx ? idsDeCodigo(ctx) : []
+    const protegidos = tokensDoRecorte(ctx)
     let pedaco = parte.replace(new RegExp(SNAKE_NOME.source, 'g'), ' ')
     pedaco = pedaco.replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), '')
     pedaco = pedaco.replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => protegidos.has(m) ? m : '')
     if (ids.length) pedaco = pedaco.replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:${ids.map(escapeReg).join('|')})(?![\\p{L}\\p{N}])`, 'gu'), '')
     return pedaco
-  }).join('')
+  })
 }
 
 function fecharAspas(t: string): string {
@@ -2547,21 +2583,24 @@ function fecharAspas(t: string): string {
 }
 
 function sanearRestaurado(texto: string, ctx?: ChatContextPayload): string {
-  // Esconde o código inteiro para o passo de id (F14, [n], E99) não partir PR13-E006 no meio.
-  // A ficha só reescreve «a ficha do X registra» quando ainda vê o código, então o corte é depois.
-  const mascaras: string[] = []
-  const guardar = (m: string) => {
-    const token = `\u0005${mascaras.length}\u0005`
-    mascaras.push(m)
-    return token
-  }
-  let t = texto.replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), (m) => m.startsWith('[') ? m : guardar(m))
-  t = t.replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => tokenProtegido(m, ctx) ? m : guardar(m))
-  if (ctx) t = ocultarIdsVisiveis(t, ctx)
-  t = t.replace(/\u0005(\d+)\u0005/g, (_m, i: string) => mascaras[Number(i)] ?? '')
-  t = semCodigosDeFicha(t, ctx)
-  t = semCodigosInternos(t, ctx)
-  return fecharAspas(t)
+  // A URL sai antes de qualquer corte (genérico e fixo) e volta depois, byte a byte.
+  return protegerUrls(texto, (semUrl) => {
+    // Esconde o código inteiro para o passo de id (F14, [n], E99) não partir PR13-E006 no meio.
+    // A ficha só reescreve «a ficha do X registra» quando ainda vê o código, então o corte é depois.
+    const mascaras: string[] = []
+    const guardar = (m: string) => {
+      const token = `\u0005${mascaras.length}\u0005`
+      mascaras.push(m)
+      return token
+    }
+    let t = semUrl.replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), (m) => m.startsWith('[') ? m : guardar(m))
+    t = t.replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => tokenProtegido(m, ctx) ? m : guardar(m))
+    if (ctx) t = ocultarIdsVisiveis(t, ctx)
+    t = t.replace(/\u0005(\d+)\u0005/g, (_m, i: string) => mascaras[Number(i)] ?? '')
+    t = semCodigosDeFicha(t, ctx)
+    t = semCodigosInternos(t, ctx)
+    return fecharAspas(t)
+  })
 }
 
 /** Depois da citação restaurada: o código sai. Se ainda casar, a frase cai. Sem declarativa, o trecho cai. */
@@ -2649,7 +2688,11 @@ function sanearRotulo(valor: string, ctx?: ChatContextPayload): string {
   return limpo.replace(/\s+/g, ' ').trim()
 }
 
-/** Nomes, títulos e descrições do evento final passam pelo mesmo saneador dos códigos. */
+/**
+ * Nomes, títulos e descrições passam pelo saneador dos códigos.
+ * Se o corte inventa termo jurídico que não era palavra inteira no original, o nome sai e o título vira «Documento».
+ * url e localizador http(s) não são reescritos.
+ */
 function aplicarMetadadosFinais(answer: SanitizedAnswer, ctx: ChatContextPayload): void {
   for (const bloco of answer.blocos) {
     bloco.texto = limparCampo(bloco.texto, ctx)
@@ -2663,21 +2706,21 @@ function aplicarMetadadosFinais(answer: SanitizedAnswer, ctx: ChatContextPayload
   answer.avisos = answer.avisos.map((aviso) => ({ ...aviso, texto: limparCampo(aviso.texto, ctx) })).filter((aviso) => aviso.texto.trim())
   answer.entidades = answer.entidades.flatMap((ent) => {
     const nome = sanearRotulo(ent.nome, ctx)
-    return nome ? [{ ...ent, nome }] : []
+    if (!nome || termoJuridicoCriado(ent.nome, nome)) return []
+    return [{ ...ent, nome }]
   })
   for (const detalhe of Object.values(answer.fontes_detalhe)) {
     const titulo = sanearRotulo(detalhe.titulo, ctx)
-    detalhe.titulo = titulo || 'Documento'
+    detalhe.titulo = titulo && !termoJuridicoCriado(detalhe.titulo, titulo) ? titulo : 'Documento'
     if (detalhe.localizador) {
-      const loc = sanearRotulo(detalhe.localizador, ctx)
-      if (loc) detalhe.localizador = loc
+      const original = detalhe.localizador
+      const loc = sanearRotulo(original, ctx)
+      if (loc && !termoJuridicoCriado(original, loc)) detalhe.localizador = loc
       else delete detalhe.localizador
     }
     if (detalhe.url) {
-      const url = detalhe.url
-        .replace(new RegExp(CODIGO_FIXO_SRC, 'gi'), '')
-        .replace(new RegExp(CODIGO_GENERICO_SRC, 'g'), (m) => tokenProtegido(m, ctx) ? m : '')
-      if (/^https?:\/\//.test(url)) detalhe.url = url
+      // Código fixo de ficha dentro do endereço não é cortado no meio: o campo sai, o resto fica byte a byte.
+      if (/^https?:\/\//.test(detalhe.url) && !new RegExp(CODIGO_FIXO_SRC, 'i').test(detalhe.url)) detalhe.url = detalhe.url
       else delete detalhe.url
     }
   }
@@ -2824,7 +2867,8 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
     if (tirouCjk) console.info(JSON.stringify({ evento: 'chat_cjk_removido', n: tirouCjk }))
     return saida.map((paragrafo) => aposRestaurar(restaurarTrechos(semCodigosDeFicha(paragrafo, ctx), mascaras), ctx)).filter((paragrafo) => paragrafo.trim()).join('\n\n')
   }
-  const visivel = (value: string, pergunta = false) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publicChatText(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))), pergunta)
+  const publico = (t: string) => protegerUrls(t, publicChatText)
+  const visivel = (value: string, pergunta = false) => semForaDaBase(semRotulos(semRecorte(semSnakeSolto(publico(semRotulos(semRecorte(ortografia(curtos(ocultarIdsVisiveis(value, ctx))))))))), pergunta)
   const allowedEntities = new Set<string>()
   for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
     if (item?.id) allowedEntities.add(item.id)
@@ -3022,7 +3066,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
     removed,
     answer: {
       blocos,
-      entidades: entityIds.map((id) => ({ id, nome: publicChatText(entityName(ctx, id)) })),
+      entidades: entityIds.map((id) => ({ id, nome: protegerUrls(entityName(ctx, id), publicChatText) })),
       fontes: fonteIds,
       fontes_detalhe,
       avisos,
