@@ -157,6 +157,9 @@
     dono: false,
     seguirCentro: false,
     seguirTimer: 0,
+    houvePinca: false,
+    pincaEncerrou: false,
+    limpandoMural: false,
     agora: () => performance.now(),
     passoAnim: null,
     quadroAnim: 0,
@@ -786,6 +789,8 @@
     vivo.seguirCentro = false;
     if (vivo.seguirTimer) clearTimeout(vivo.seguirTimer);
     vivo.seguirTimer = 0;
+    vivo.houvePinca = false;
+    vivo.pincaEncerrou = false;
     vivo.passoAnim = null;
     if (vivo.quadroAnim) cancelAnimationFrame(vivo.quadroAnim);
     vivo.quadroAnim = 0;
@@ -1325,6 +1330,37 @@
     vivo.ultimoQuando = 0;
   }
 
+  // lastClickNode mora no mural. Um toque parado no fundo do #network zera
+  // esse histórico; a pinça, no cartão ou no palco, dispara esse toque.
+  function limparCliqueDoMural() {
+    const rede = document.getElementById('network');
+    if (!rede || vivo.limpandoMural) return;
+    vivo.limpandoMural = true;
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      pointerId: 9001,
+      pointerType: 'mouse',
+      clientX: 0,
+      clientY: 0,
+      button: 0,
+      isPrimary: true,
+    };
+    try {
+      rede.dispatchEvent(new PointerEvent('pointerdown', Object.assign({}, base, { buttons: 1 })));
+      rede.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, base, { buttons: 0 })));
+    } finally {
+      vivo.limpandoMural = false;
+    }
+  }
+
+  function consumirFimDePinca() {
+    if (!vivo.pincaEncerrou || vivo.ponteiros.size || vivo.limpandoMural) return;
+    vivo.pincaEncerrou = false;
+    limparCliqueDoMural();
+  }
+
   // O hit-test deste turno continua na câmera atual. O delta entra no quadro
   // seguinte: um arrasto entre dois toques não pode trocar o nó sob o dedo
   // antes do pointerup que o teste (e o duplo toque) ainda vão ler.
@@ -1370,6 +1406,7 @@
   }
 
   function comecarPonteiro(ev) {
+    if (vivo.limpandoMural) return;
     if (!vivo.ativo || (ev.button && ev.button !== 0)) return;
     const alvo = alvoDoGesto(ev);
     if (alvo !== 'palco' && alvo !== 'rede') return;
@@ -1393,8 +1430,11 @@
       } catch { /* o gesto sintético não captura */ }
     }
     if (vivo.ponteiros.size >= 2) {
-      // Pinça não é o segundo toque. O histórico morre aqui, não no pointerup.
+      // Pinça não é o segundo toque. O histórico do grafo morre aqui.
+      // O do mural espera os dedos subirem: enquanto a pinça está ativa
+      // o pointerup dele não zera lastClickNode.
       limparToqueDuplo();
+      vivo.houvePinca = true;
       vivo.arraste = null;
       iniciarPinca();
       return;
@@ -1411,6 +1451,7 @@
   }
 
   function moverPonteiro(ev) {
+    if (vivo.limpandoMural) return;
     if (!vivo.ativo || !vivo.ponteiros.has(ev.pointerId)) return;
     if (ev.pointerType === 'touch') ev.preventDefault();
     if (alvoDoGesto(ev) !== 'rede') ev.stopPropagation();
@@ -1453,10 +1494,12 @@
   }
 
   function terminarPonteiro(ev) {
+    if (vivo.limpandoMural) return;
     if (!vivo.ponteiros.has(ev.pointerId) && !(vivo.arraste && vivo.arraste.id === ev.pointerId)) return;
+    const segueParaRede = alvoDoGesto(ev) === 'rede' || !!(ev.target && ev.target.closest && ev.target.closest('#network'));
     if (vivo.ponteiros.has(ev.pointerId)) {
       if (ev.pointerType === 'touch') ev.preventDefault();
-      if (alvoDoGesto(ev) !== 'rede' && !ev.target.closest('#network')) ev.stopPropagation();
+      if (!segueParaRede) ev.stopPropagation();
     }
     const cancelou = ev.type === 'pointercancel';
     vivo.capturaPalco.delete(ev.pointerId);
@@ -1479,7 +1522,14 @@
       // desenhada agora, senão o delta sai de uma base que já andou.
       // Se o quadro já publicou, reler a matriz só arredonda o valor.
       if (vivo.pendenteCam) adotar();
+      if (vivo.houvePinca) {
+        vivo.houvePinca = false;
+        vivo.pincaEncerrou = true;
+      }
     }
+    // No palco o evento não chega ao #network. No cartão, o bubble limpa
+    // depois que o mural já soltou a pinça.
+    if (!segueParaRede) consumirFimDePinca();
   }
 
   function naRoda(ev) {
@@ -1680,10 +1730,19 @@
     }, true);
 
     document.addEventListener('pointerup', ev => {
-      if (!vivo.ativo || !ehMobile()) return;
+      if (vivo.limpandoMural || !vivo.ativo || !ehMobile()) return;
       if (!ev.target.closest || !ev.target.closest('#sheet-handle')) return;
       pedirCentroLegitimo();
     }, true);
+
+    document.addEventListener('pointerup', () => {
+      if (vivo.limpandoMural) return;
+      consumirFimDePinca();
+    });
+    document.addEventListener('pointercancel', () => {
+      if (vivo.limpandoMural) return;
+      consumirFimDePinca();
+    });
 
     document.addEventListener('keydown', ev => {
       if (!vivo.ativo || ev.key !== 'Home' || ev.altKey || ev.ctrlKey || ev.metaKey) return;

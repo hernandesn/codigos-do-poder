@@ -913,3 +913,75 @@ test('com dono ativo a alça e o chip trazem o cartão para o centro', { timeout
   } finally { await mobile.context.close(); }
 });
 
+test('pinça no cartão não deixa o toque seguinte expandir', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrirAnimado(1440, 900);
+  try {
+    await mapaAberto(page);
+    await page.evaluate(() => { location.hash = 'e=kochpac'; });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('#network .network-node.selected .node-card');
+      const s = window.mural.getState();
+      return !!(s.selected && s.selected.id === 'kochpac' && s.view === 'all' && s.visibleNodes.length === 1644 && card);
+    }, null, { timeout: 8000 });
+    await assentar(page);
+    const ler = () => page.evaluate(() => {
+      const s = window.mural.getState();
+      return { view: s.view, n: s.visibleNodes.length, id: s.selected && s.selected.id };
+    });
+    const sequencia = modo => page.evaluate(modoAtual => {
+      const card = document.querySelector('#network .network-node.selected');
+      if (!card) return { erro: 'sem cartão' };
+      const r = card.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      if (x < 8 || y < 8 || x > innerWidth - 8 || y > innerHeight - 8) return { erro: 'cartão fora', x, y };
+      const disparar = (tipo, px, py, id) => {
+        const pressionado = tipo === 'pointerdown' || tipo === 'pointermove';
+        card.dispatchEvent(new PointerEvent(tipo, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          pointerId: id,
+          pointerType: 'touch',
+          clientX: px,
+          clientY: py,
+          button: tipo === 'pointermove' ? -1 : 0,
+          buttons: pressionado ? 1 : 0,
+          isPrimary: id === 1,
+        }));
+      };
+      const toque = () => { disparar('pointerdown', x, y, 1); disparar('pointerup', x, y, 1); };
+      toque();
+      if (modoAtual === 'pinca') {
+        disparar('pointerdown', x - 28, y, 1);
+        disparar('pointerdown', x + 28, y, 2);
+        disparar('pointermove', x - 70, y, 1);
+        disparar('pointermove', x + 70, y, 2);
+        disparar('pointerup', x - 70, y, 1);
+        disparar('pointerup', x + 70, y, 2);
+      }
+      toque();
+      return { ok: true, x, y };
+    }, modo);
+
+    const prep = await sequencia('pinca');
+    assert.ok(prep && prep.ok, JSON.stringify(prep));
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
+    const estado = await ler();
+    assert.equal(estado.view, 'all', JSON.stringify(estado));
+    assert.equal(estado.n, 1644, JSON.stringify(estado));
+    assert.equal(estado.id, 'kochpac', JSON.stringify(estado));
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 650)));
+    assert.equal(await page.evaluate(() => window.mural.getState().view), 'all');
+    assert.equal(await page.evaluate(() => window.mural.getState().visibleNodes.length), 1644);
+
+    const duplo = await sequencia('duplo');
+    assert.ok(duplo && duplo.ok, JSON.stringify(duplo));
+    await page.waitForFunction(() => window.mural.getState().view === 'custom', null, { timeout: 4000 });
+    const aberto = await ler();
+    assert.equal(aberto.view, 'custom', JSON.stringify(aberto));
+    assert.equal(aberto.id, 'kochpac', JSON.stringify(aberto));
+    assert.ok(aberto.n > 1 && aberto.n < 1644, JSON.stringify(aberto));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
