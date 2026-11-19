@@ -6,6 +6,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { test, before, after } = require('node:test');
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const { arquivoDoSite } = require('./site_files.cjs');
 const root = path.resolve(__dirname, '..');
 const fixture = {
   conversa_id: 'mock-pauta', blocos: [
@@ -19,8 +20,8 @@ before(async () => {
   server = http.createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url, 'http://localhost').pathname;
-      const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
-      if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
+      const file = arquivoDoSite(root, pathname);
+      if (!file) { res.writeHead(403); res.end(); return; }
       const body = await fs.promises.readFile(file);
       res.setHeader('content-type', file.endsWith('.html') ? 'text/html' : file.endsWith('.js') ? 'text/javascript' : file.endsWith('.json') ? 'application/json' : file.endsWith('.css') ? 'text/css' : 'application/octet-stream');
       res.end(body);
@@ -28,10 +29,10 @@ before(async () => {
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, channel: 'chrome' });
 });
 after(async () => { if (browser) await browser.close(); if (server) await new Promise(r => server.close(r)); });
-async function open(width, height, suffix = '/') {
+async function open(width, height, suffix = '/mapa/') {
   const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'reduce' });
   const errors = [], csp = []; let calls = 0;
   await context.route('**/*', async route => {

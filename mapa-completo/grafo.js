@@ -747,7 +747,7 @@
 
   function garantirPos() {
     if (!vivo.posPromise) {
-      vivo.posPromise = fetch('mapa-completo/posicoes.json', { credentials: 'same-origin' })
+      vivo.posPromise = fetch('/mapa-completo/posicoes.json', { credentials: 'same-origin' })
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .catch(erro => { console.warn('mapa completo: posições indisponíveis (' + (erro && erro.message || erro) + ')'); return null; });
     }

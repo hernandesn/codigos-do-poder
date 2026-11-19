@@ -7,13 +7,14 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { test, describe, before, after, afterEach } = require('node:test');
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const { arquivoDoSite } = require('./site_files.cjs');
 
 const root = path.resolve(__dirname, '..');
 const screens = path.resolve(root, '../ux4-ui-out/screens');
 const muralKey = 'codigos-do-poder:mural:v26';
 const draftKey = 'codigos-do-poder:chat-draft:v1';
 const draftTtl = 30 * 60 * 1000;
-const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'mapa', 'index.html'), 'utf8');
 const { dataRef, seedText } = require('./dados_site.cjs');
 const seed = JSON.parse(seedText(html, root));
 const question = 'Quais fontes documentam os bancos de Mauá?';
@@ -316,7 +317,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     server = http.createServer(async (req, res) => {
       try {
         const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-        const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
+        const file = arquivoDoSite(root, pathname);
         if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
         const data = await fs.promises.readFile(file);
         res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/octet-stream' });
@@ -325,7 +326,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     origin = `http://127.0.0.1:${server.address().port}`;
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, channel: 'chrome' });
   });
 
   afterEach(async () => {
@@ -392,8 +393,16 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   // UX6/L7: as ferramentas de edição só existem com ?editor=1; esta suíte cobre o modo editor.
   // O modo público (sem os controles no DOM) é coberto em ux6_ui_test.cjs.
-  const editorUrl = suffix => suffix.includes('?') ? suffix.replace('?', '?editor=1&') : suffix.replace(/^\//, '/?editor=1');
-  async function ready(page, suffix = '/') {
+  const editorUrl = suffix => {
+    const hashAt = suffix.indexOf('#');
+    const hash = hashAt >= 0 ? suffix.slice(hashAt) : '';
+    const before = hashAt >= 0 ? suffix.slice(0, hashAt) : suffix;
+    if (/(?:^|[?&])editor=1(?:&|$)/.test(before)) return before + hash;
+    const q = before.indexOf('?');
+    if (q === -1) return before + '?editor=1' + hash;
+    return before.slice(0, q) + '?editor=1&' + before.slice(q + 1) + hash;
+  };
+  async function ready(page, suffix = '/mapa/') {
     await page.goto(origin + editorUrl(suffix));
     await page.waitForFunction(() => !!window.mural && !!window.atlasAuthChat);
   }
@@ -477,7 +486,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   for (const width of [360, 390, 393]) test(`Legenda e barra de zoom separadas e dentro da viewport, ${width}px`, async () => {
     const { page, traffic } = await openPage({ width });
-    await ready(page, '/#all'); // UX6: o mapa completo é a opção avançada (#all).
+    await ready(page, '/mapa/#all'); // UX6: o mapa completo é a opção avançada (#all).
     const legenda = await page.locator('.legend-menu summary').boundingBox();
     const zoombar = await page.locator('.canvas-toolbar').boundingBox();
     assert.ok(legenda && zoombar, 'ambos os controles precisam estar visíveis');
@@ -557,7 +566,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     await page.locator('#chat-open').click();
     await gate(page);
     const hash = new URLSearchParams({ ...tokenResponse(), type: 'signup' }).toString();
-    await ready(page, '/?confirmed=1#' + hash);
+    await ready(page, '/mapa/?confirmed=1#' + hash);
     assert.equal(await page.locator('#chat-panel').isVisible(), true);
     assert.equal(await page.locator('#chat-mensagem').inputValue(), question);
     assert.equal(await page.locator('#chat-send').isEnabled(), true);
@@ -617,7 +626,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
       ...(savedState === 'historico-desligado' ? { filters: { historic: false } } : savedState === 'restritivo' ? { filters: { historic: false, identity: false, draft: false, strength: 5, decadeStart: 2000, decadeEnd: 2020, undated: false } } : {}),
     };
     const { page, traffic } = await openPage({ width, saved });
-    await ready(page, '/#e=maua');
+    await ready(page, '/mapa/#e=maua');
     const timing = await centered(page, 'maua');
     console.log(JSON.stringify({ aceite: 'hash-maua', width, savedState, ...timing }));
     assert.match(await page.locator('#inspector-content h2').innerText(), /Mauá/);
@@ -672,13 +681,13 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   test('hashes de caso e preset continuam funcionando na abertura e no hashchange', async () => {
     const { page, traffic } = await openPage();
-    await ready(page, '/#OP01');
+    await ready(page, '/mapa/#OP01');
     assert.equal(await page.evaluate(() => window.mural.getState().view), 'caso:OP01');
     await page.evaluate(() => { location.hash = 'OP02'; });
     await page.waitForFunction(() => window.mural.getState().view === 'caso:OP02');
     await page.evaluate(() => { location.hash = 'br_maua'; });
     await page.waitForFunction(() => window.mural.getState().view === 'br_maua');
-    await ready(page, '/?entrada=preset#linhagem_rockefeller');
+    await ready(page, '/mapa/?entrada=preset#linhagem_rockefeller');
     assert.equal(await page.evaluate(() => window.mural.getState().view), 'linhagem_rockefeller');
     healthy(traffic);
   });
@@ -689,7 +698,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
       ['caso:OP01', null], ['linhagem_rockefeller', null],
       ['brasil', '#scope-brasil'], ['mundo', '#scope-global'], ['all', '#scope-all'],
     ]) {
-      await ready(page, '/?entrada=mapa#e=maua');
+      await ready(page, '/mapa/?entrada=mapa#e=maua');
       await centered(page, 'maua');
       assert.equal(await page.evaluate(() => location.hash), '#e=maua', 'o deep link funciona também com a visão anterior salva');
       const historyLength = await page.evaluate(() => {
@@ -722,7 +731,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   test('selecionar outra entidade atualiza o deep link; ligação e limpar destaque o removem', async () => {
     const { page, traffic } = await openPage();
-    await ready(page, '/#e=maua');
+    await ready(page, '/mapa/#e=maua');
     await centered(page, 'maua');
     await page.locator('#close-inspector').click();
     assert.equal(await page.evaluate(() => location.hash), '#e=maua');
@@ -740,7 +749,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     await page.waitForFunction(() => !!window.mural);
     assert.equal(await page.evaluate(() => window.mural.getState().selected), null);
     assert.equal(await page.locator('#inspector').isVisible(), false);
-    await ready(page, '/#e=maua');
+    await ready(page, '/mapa/#e=maua');
     await centered(page, 'maua');
     await page.locator('#inspector-content [data-relation]').first().click();
     const relation = await page.evaluate(() => window.mural.getState().selected);
@@ -755,7 +764,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   test('FIX8: arrasto touch iniciado no cartão move a câmera em todos os pontos do gesto', async () => {
     const { page, context, traffic } = await openPage({ width: 393 });
-    await ready(page, '/#e=maua');
+    await ready(page, '/mapa/#e=maua');
     await centered(page, 'maua');
     assert.equal(await page.evaluate(() => navigator.maxTouchPoints > 0), true);
     const start = await page.locator('[data-node-id="maua"] .node-card').evaluate(el => {
@@ -810,7 +819,7 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
 
   test('modo leitura por padrão, rascunho explícito e retorno para leitura', async () => {
     const { page, traffic } = await openPage();
-    await ready(page, '/#e=maua');
+    await ready(page, '/mapa/#e=maua');
     await centered(page, 'maua');
     const tools = ['add-node', 'add-edge', 'detail-edit', 'detail-connect', 'export-button', 'import-button', 'undo', 'redo', 'layout', 'note-text'];
     assert.equal(await page.locator('#draft-mode').isChecked(), false);
@@ -850,12 +859,12 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     healthy(traffic);
   });
 
-  test('favicon inline evita 404 e nota técnica aparece só com debug=1', async () => {
+  test('favicon servido não gera 404 e nota técnica aparece só com debug=1', async () => {
     const { page, traffic } = await openPage();
     const generic = seed.nos.find(n => n.tipo === 'universidade').id;
     // O modular já reconhece universidade (mapa de tipos preservado no BUILD2).
     // Testa também esse suporte; o fallback usa um tipo realmente desconhecido.
-    await ready(page, '/?debug=1#e=' + generic);
+    await ready(page, '/mapa/?debug=1#e=' + generic);
     await centered(page, generic);
     assert.match(await page.locator('#inspector-content .entity-type').textContent(), /Universidade/);
     assert.doesNotMatch(await page.locator('#inspector-content').innerText(), /Tipo sem estilo próprio/);
@@ -868,22 +877,22 @@ describe('UX4 UI no Chromium', { timeout: 60000 }, () => {
     const fallbackHtml = ref.src ? html.replace(ref.attrs, ref.attrs.replace(/data-sha256="[0-9a-f]+"/, `data-sha256="${fallbackSha}"`))
       : html.replace(/(<script id="research-data"[^>]*>)[\s\S]*?(<\/script>)/,
         (_match, start, end) => start + fallbackBody.replace(/<\//g, '<\\/') + end);
-    const dataPath = ref.src ? '/' + ref.src.split('?')[0] : null;
+    const dataPath = ref.src ? '/' + ref.src.split('?')[0].replace(/^\/+/, '') : null;
     await page.route('**/*', route => route.request().resourceType() === 'document'
       ? route.fulfill({ contentType: 'text/html; charset=utf-8', body: fallbackHtml })
       : dataPath && new URL(route.request().url()).pathname === dataPath
         ? route.fulfill({ contentType: 'application/json; charset=utf-8', body: fallbackBody })
         : route.fallback());
-    await ready(page, '/#e=' + generic);
+    await ready(page, '/mapa/#e=' + generic);
     await centered(page, generic);
-    assert.equal(await page.locator('link[rel="icon"]').getAttribute('href'), 'data:,');
+    assert.equal(await page.locator('link[rel="icon"][href="/favicon.ico"]').getAttribute('href'), '/favicon.ico');
     assert.equal(await page.locator('#toast').isVisible(), false);
     assert.doesNotMatch(await page.locator('#inspector-content').innerText(), /Tipo sem estilo próprio/);
-    await ready(page, '/?debug=1#e=' + generic);
+    await ready(page, '/mapa/?debug=1#e=' + generic);
     assert.match(await page.locator('#toast').innerText(), /Tipo sem estilo próprio/);
     assert.equal(await page.locator('#toast').isVisible(), true);
     assert.match(await page.locator('#inspector-content').innerText(), /Tipo sem estilo próprio/);
-    assert.equal(traffic.favicon, 0);
+    assert.equal(traffic.notFound.some(p => /favicon|apple-touch|webmanifest|\/icon-/.test(p)), false);
     healthy(traffic);
   });
 });

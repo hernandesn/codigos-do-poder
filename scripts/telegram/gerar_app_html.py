@@ -7,8 +7,10 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 SITE = SCRIPTS.parent.parent
-# index.html mudou pelo grafo do mapa completo (#24).
-INDEX_SHA = 'a2181a1a4fbb342084e50037fa071838ff2141d618bf0b061f4b471e18dece60'
+# index.html da raiz é a landing (#23); o app do atlas foi para mapa/index.html.
+INDEX_SHA = '8e1182b0a26398143be78e2776e59133f045a3ad8d4a7f9feb4e1b979168b168'
+# O atlas (app do mural com o grafo) é mapa/index.html, gerado pelo construir_site.py da pesquisa.
+MAPA_SHA = '68681b197983985b0291877bfeb8aacca1c5d5b894be4867c8a0c9b5a67fc3f9'
 TURNSTILE_STYLE_ATTR = "style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='"
 
 
@@ -59,9 +61,9 @@ def render(page, origin=None):
 
 
 def build():
-    protected = [SITE / 'index.html', SITE / 'config.js', *sorted(SITE.glob('dados-*.json'))]
+    protected = [SITE / 'index.html', SITE / 'mapa' / 'index.html', SITE / 'config.js', *sorted(SITE.glob('dados-*.json'))]
     before = {p: digest(p.read_bytes()) for p in protected}
-    if before[SITE / 'index.html'] != INDEX_SHA:
+    if before[SITE / 'index.html'] != INDEX_SHA or before[SITE / 'mapa' / 'index.html'] != MAPA_SHA:
         raise ValueError('Index diverge da base pública; geração recusada.')
     for page in ('app', 'vincular'):
         (SITE / (page + '.html')).write_bytes(render(page).encode())
