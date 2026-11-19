@@ -78,8 +78,20 @@ async function mapaAberto(page) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => {
     const z = window.__grafo && window.__grafo.zoom();
-    return typeof z === 'number' && Math.abs(z - 1) < 0.04;
-  }, null, { timeout: 15000 });
+    if (!(typeof z === 'number' && Math.abs(z - 1) < 0.04)) return false;
+    const canvas = document.getElementById('grafo-canvas');
+    const p = window.mapaCompleto && window.mapaCompleto.pontoNaTela && window.mapaCompleto.pontoNaTela('kochpac');
+    if (!canvas || canvas.clientWidth < 2 || canvas.clientHeight < 2 || !p) return false;
+    if (!(p.x > 16 && p.y > 16 && p.x < innerWidth - 16 && p.y < innerHeight - 16)) return false;
+    const chave = [canvas.clientWidth, canvas.clientHeight, Math.round(p.x * 10), Math.round(p.y * 10), Math.round(z * 1000)].join(':');
+    if (window.__grafoEstavel !== chave) {
+      window.__grafoEstavel = chave;
+      window.__grafoEstavelN = 0;
+      return false;
+    }
+    window.__grafoEstavelN += 1;
+    return window.__grafoEstavelN >= 2;
+  }, null, { timeout: 15000, polling: 'raf' });
 }
 
 test('abas Temas, Mapa completo e Mapa-múndi cabem de 360 a 430 px', { timeout: 120000 }, async () => {
@@ -618,12 +630,29 @@ function abrirAnimado(width, height, extra) {
 test('gesto no meio da animação de 280 ms não volta ao alvo', { timeout: 180000 }, async () => {
   const { context, page, errors } = await abrirAnimado(1440, 900);
   try {
+    await page.addInitScript(() => {
+      const obs = new MutationObserver(() => {
+        if (window.__primeiroZoomUm) return;
+        const z = window.__grafo && window.__grafo.zoom();
+        if (window.mapaCompleto && window.mapaCompleto.ativo && typeof z === 'number' && Math.abs(z - 1) < 0.04) {
+          window.__primeiroZoomUm = {
+            z,
+            p: window.mapaCompleto.pontoNaTela && window.mapaCompleto.pontoNaTela('kochpac'),
+          };
+        }
+      });
+      obs.observe(document, { attributes: true, childList: true, subtree: true });
+    });
     await mapaAberto(page);
+    const primeiro = await page.evaluate(() => window.__primeiroZoomUm);
+    assert.ok(primeiro && primeiro.p && primeiro.p.x > 900, 'zoom≈1 exposto antes do primeiro enquadramento: ' + JSON.stringify(primeiro));
     await page.evaluate(() => {
       document.getElementById('zoom-in').click();
       document.getElementById('zoom-in').click();
     });
     await page.waitForFunction(() => window.__grafo.zoom() > 1.4, null, { timeout: 4000 });
+    await assentar(page);
+    assert.ok(await page.evaluate(() => window.__grafo.zoom()) > 1.4, 'zoom inicial foi sobrescrito pelo enquadramento tardio');
     // O relógio e o quadro são do teste: o passo de 100 ms cai no meio dos 280,
     // e o de 450 ms depois do gesto não pode puxar a câmera de volta.
     await page.evaluate(() => {
@@ -917,12 +946,15 @@ test('pinça no cartão não deixa o toque seguinte expandir', { timeout: 180000
   const { context, page, errors } = await abrirAnimado(1440, 900);
   try {
     await mapaAberto(page);
+    await instalarCentro(page);
     await page.evaluate(() => { location.hash = 'e=kochpac'; });
     await page.waitForFunction(() => {
       const card = document.querySelector('#network .network-node.selected .node-card');
       const s = window.mural.getState();
-      return !!(s.selected && s.selected.id === 'kochpac' && s.view === 'all' && s.visibleNodes.length === 1644 && card);
-    }, null, { timeout: 8000 });
+      const c = window.__centroCartao && window.__centroCartao('kochpac');
+      if (!card || !s.selected || s.selected.id !== 'kochpac' || s.view !== 'all' || s.visibleNodes.length !== 1644 || !c) return false;
+      return c.dist <= 1.5 && c.x >= 40 && c.y >= 40 && c.x <= innerWidth - 40 && c.y <= innerHeight - 40;
+    }, null, { timeout: 8000, polling: 'raf' });
     await assentar(page);
     const ler = () => page.evaluate(() => {
       const s = window.mural.getState();
@@ -982,6 +1014,301 @@ test('pinça no cartão não deixa o toque seguinte expandir', { timeout: 180000
     assert.equal(aberto.view, 'custom', JSON.stringify(aberto));
     assert.equal(aberto.id, 'kochpac', JSON.stringify(aberto));
     assert.ok(aberto.n > 1 && aberto.n < 1644, JSON.stringify(aberto));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('pinça entre cartão e palco não expande e duplo toque continua expandindo', { timeout: 180000 }, async () => {
+  const { context, page, errors } = await abrirAnimado(1440, 900);
+  try {
+    await mapaAberto(page);
+    await instalarCentro(page);
+    await page.evaluate(() => { location.hash = 'e=kochpac'; });
+    const esperarKochpacCentrado = () => page.waitForFunction(() => {
+      const card = document.querySelector('#network .network-node.selected .node-card');
+      const s = window.mural.getState();
+      const c = window.__centroCartao && window.__centroCartao('kochpac');
+      if (!card || !s.selected || s.selected.id !== 'kochpac' || s.view !== 'all' || s.visibleNodes.length !== 1644 || !c) return false;
+      return c.dist <= 1.5 && c.x >= 40 && c.y >= 40 && c.x <= innerWidth - 40 && c.y <= innerHeight - 40;
+    }, null, { timeout: 8000, polling: 'raf' });
+    await esperarKochpacCentrado();
+    await assentar(page);
+
+    const ler = () => page.evaluate(() => {
+      const s = window.mural.getState();
+      return { view: s.view, n: s.visibleNodes.length, id: s.selected && s.selected.id };
+    });
+
+    const executar = modo => page.evaluate(modoAtual => {
+      const card = document.querySelector('#network .network-node.selected');
+      const palco = document.getElementById('grafo-palco');
+      if (!card || !palco) return { erro: 'sem elementos' };
+      const r = card.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      if (cx < 8 || cy < 8 || cx > innerWidth - 8 || cy > innerHeight - 8) return { erro: 'cartão fora', cx, cy };
+      const px = Math.min(innerWidth - 40, r.right + 80);
+      const py = cy;
+      const disparar = (alvo, tipo, x, y, id) => {
+        const pressionado = tipo === 'pointerdown' || tipo === 'pointermove';
+        alvo.dispatchEvent(new PointerEvent(tipo, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          pointerId: id,
+          pointerType: 'touch',
+          clientX: x,
+          clientY: y,
+          button: tipo === 'pointermove' ? -1 : 0,
+          buttons: pressionado ? 1 : 0,
+          isPrimary: id === 1,
+        }));
+      };
+      const toqueCartao = () => {
+        disparar(card, 'pointerdown', cx, cy, 1);
+        disparar(card, 'pointerup', cx, cy, 1);
+      };
+      toqueCartao();
+      if (modoAtual === 'cartao-palco') {
+        disparar(card, 'pointerdown', cx, cy, 1);
+        disparar(palco, 'pointerdown', px, py, 2);
+        disparar(palco, 'pointermove', px + 70, py, 2);
+        disparar(card, 'pointerup', cx, cy, 1);
+        disparar(palco, 'pointerup', px + 70, py, 2);
+      } else if (modoAtual === 'cartao-palco-mais-toque') {
+        disparar(card, 'pointerdown', cx, cy, 1);
+        disparar(palco, 'pointerdown', px, py, 2);
+        disparar(palco, 'pointermove', px + 70, py, 2);
+        disparar(card, 'pointerup', cx, cy, 1);
+        disparar(palco, 'pointerup', px + 70, py, 2);
+        toqueCartao();
+      } else if (modoAtual === 'palco-cartao') {
+        disparar(palco, 'pointerdown', px, py, 1);
+        disparar(card, 'pointerdown', cx, cy, 2);
+        disparar(palco, 'pointermove', px + 70, py, 1);
+        disparar(card, 'pointerup', cx, cy, 2);
+        disparar(palco, 'pointerup', px + 70, py, 1);
+        toqueCartao();
+      } else if (modoAtual === 'duplo') {
+        toqueCartao();
+      }
+      return { ok: true, cx, cy, px, py };
+    }, modo);
+
+    for (const modo of ['cartao-palco', 'cartao-palco-mais-toque', 'palco-cartao']) {
+      const res = await executar(modo);
+      assert.ok(res && res.ok, modo + ': ' + JSON.stringify(res));
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
+      const est = await ler();
+      assert.equal(est.view, 'all', modo + ': ' + JSON.stringify(est));
+      assert.equal(est.n, 1644, modo + ': ' + JSON.stringify(est));
+      assert.equal(est.id, 'kochpac', modo + ': ' + JSON.stringify(est));
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 650)));
+      assert.equal(await page.evaluate(() => window.mural.getState().view), 'all', modo);
+      assert.equal(await page.evaluate(() => window.mural.getState().visibleNodes.length), 1644, modo);
+    }
+
+    const duplo = await executar('duplo');
+    assert.ok(duplo && duplo.ok, JSON.stringify(duplo));
+    await page.waitForFunction(() => window.mural.getState().view === 'custom', null, { timeout: 4000 });
+    const aberto = await ler();
+    assert.equal(aberto.view, 'custom', JSON.stringify(aberto));
+    assert.equal(aberto.id, 'kochpac', JSON.stringify(aberto));
+    assert.ok(aberto.n > 1 && aberto.n < 1644, JSON.stringify(aberto));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('zoom dos botões e pan durante a recentralização do chip ou da alça não são desfeitos', { timeout: 180000 }, async () => {
+  const id = 'ipes';
+  const esperarCentro = page => page.waitForFunction(nid => {
+    const c = window.__centroCartao(nid);
+    return !!(c && c.dist <= 1.5 && c.y >= c.top - 0.5 && c.y <= c.bottom + 0.5 && c.x >= c.left - 0.5 && c.x <= c.right + 0.5);
+  }, id, { timeout: 4000, polling: 'raf' });
+
+  const { context, page, errors } = await abrirAnimado(1440, 900);
+  try {
+    await mapaAberto(page);
+    await instalarCentro(page);
+    await page.evaluate(nid => { location.hash = 'e=' + nid; }, id);
+    await page.waitForFunction(nid => {
+      const card = document.querySelector('#network .network-node.selected .node-card');
+      return !!(window.mural.getState().selected && window.mural.getState().selected.id === nid && card);
+    }, id, { timeout: 8000 });
+    await esperarCentro(page);
+
+    const c0 = await page.evaluate(nid => window.__centroCartao(nid), id);
+    await page.mouse.move(c0.x, c0.y);
+    await page.mouse.down();
+    await page.mouse.move(c0.x + 240, c0.y, { steps: 6 });
+    await page.mouse.up();
+    await assentar(page);
+
+    // Inicia recentralização pelo chip e, no meio do tween de 240 ms do mural, aciona zoom-in (1.25x).
+    const duranteZoom = await page.evaluate(() => new Promise(resolve => {
+      document.getElementById('selection-label').click();
+      requestAnimationFrame(() => {
+        const z0 = window.__grafo.zoom();
+        const k0 = window.mural.getState().camera.k;
+        document.getElementById('zoom-in').click();
+        const z1 = window.__grafo.zoom();
+        const k1 = window.mural.getState().camera.k;
+        setTimeout(() => {
+          resolve({
+            z0,
+            k0,
+            z1,
+            k1,
+            zFim: window.__grafo.zoom(),
+            kFim: window.mural.getState().camera.k,
+          });
+        }, 360);
+      });
+    }));
+    assert.ok(Math.abs(duranteZoom.z1 / duranteZoom.z0 - 1.25) < 0.02, JSON.stringify(duranteZoom));
+    assert.ok(Math.abs(duranteZoom.zFim / duranteZoom.z0 - 1.25) < 0.02, 'recentralização desfez o zoom do botão: ' + JSON.stringify(duranteZoom));
+    assert.ok(Math.abs(duranteZoom.kFim / duranteZoom.k0 - 1.25) < 0.02, 'mural perdeu o zoom do botão: ' + JSON.stringify(duranteZoom));
+
+    // Durante outra recentralização pelo chip, um pan próprio também revoga o acompanhamento do centro.
+    const durantePan = await page.evaluate(nid => new Promise(resolve => {
+      document.getElementById('selection-label').click();
+      requestAnimationFrame(() => {
+        const palco = document.getElementById('grafo-palco');
+        const r = palco.getBoundingClientRect();
+        const x = r.left + 60, y = r.top + 80;
+        const disparar = (tipo, px, py) => {
+          palco.dispatchEvent(new PointerEvent(tipo, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            pointerId: 1,
+            pointerType: 'mouse',
+            clientX: px,
+            clientY: py,
+            button: tipo === 'pointermove' ? -1 : 0,
+            buttons: tipo === 'pointerup' ? 0 : 1,
+            isPrimary: true,
+          }));
+        };
+        disparar('pointerdown', x, y);
+        disparar('pointermove', x + 110, y);
+        disparar('pointerup', x + 110, y);
+        requestAnimationFrame(() => {
+          const logoApos = window.__centroCartao(nid);
+          setTimeout(() => {
+            resolve({ logoApos, fim: window.__centroCartao(nid) });
+          }, 360);
+        });
+      });
+    }), id);
+    assert.ok(Math.abs(durantePan.fim.x - durantePan.logoApos.x) <= 1.5 && Math.abs(durantePan.fim.y - durantePan.logoApos.y) <= 1.5, JSON.stringify(durantePan));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+
+  const mobile = await abrirAnimado(393, 852);
+  try {
+    await mapaAberto(mobile.page);
+    await instalarCentro(mobile.page);
+    await mobile.page.evaluate(nid => { location.hash = 'e=' + nid; }, id);
+    await mobile.page.waitForFunction(() => {
+      const h = document.getElementById('sheet-handle');
+      return !!(window.mural.getState().selected && window.mural.getState().selected.id === 'ipes' && document.getElementById('inspector').dataset.sheet === 'half' && h && getComputedStyle(h).display !== 'none');
+    }, null, { timeout: 8000 });
+    await esperarCentro(mobile.page);
+
+    for (const encerramento of ['pointercancel', 'lostpointercapture']) {
+      const antes = await mobile.page.evaluate(nid => window.__centroCartao(nid), id);
+      await mobile.page.mouse.move(antes.x, antes.y);
+      await mobile.page.mouse.down();
+      await mobile.page.mouse.move(antes.x, Math.max(8, antes.y - 140), { steps: 6 });
+      await mobile.page.mouse.up();
+      await assentar(mobile.page);
+      const longe = await mobile.page.evaluate(nid => window.__centroCartao(nid), id);
+      assert.ok(longe.dist > 60, encerramento + ': deveria estar fora do centro ' + JSON.stringify(longe));
+
+      const alca = await mobile.page.evaluate(() => {
+        const r = document.getElementById('sheet-handle').getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      await mobile.page.mouse.move(alca.x, alca.y);
+      await mobile.page.mouse.down();
+      await mobile.page.evaluate(({ tipo, x, y }) => {
+        const h = document.getElementById('sheet-handle');
+        h.dispatchEvent(new PointerEvent(tipo, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          pointerId: 1,
+          pointerType: 'mouse',
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: 0,
+          isPrimary: true,
+        }));
+      }, { tipo: encerramento, x: alca.x, y: alca.y });
+      await mobile.page.mouse.up();
+      await esperarCentro(mobile.page);
+      const centrado = await mobile.page.evaluate(nid => window.__centroCartao(nid), id);
+      assert.ok(centrado.dist <= 1.5, encerramento + ': ' + JSON.stringify(centrado));
+    }
+    assert.deepEqual(mobile.errors, []);
+  } finally { await mobile.context.close(); }
+});
+
+test('puxarGrafo respeita o piso de zoom com painel expandido em tela móvel baixa', { timeout: 180000 }, async () => {
+  const id = 'ipes';
+  const { context, page, errors } = await abrirAnimado(393, 500);
+  try {
+    await mapaAberto(page);
+    await instalarCentro(page);
+    await page.evaluate(nid => { location.hash = 'e=' + nid; }, id);
+    await page.waitForFunction(() => {
+      const h = document.getElementById('sheet-handle');
+      return !!(window.mural.getState().selected && window.mural.getState().selected.id === 'ipes' && document.getElementById('inspector').dataset.sheet === 'half' && h && getComputedStyle(h).display !== 'none');
+    }, null, { timeout: 8000 });
+    await page.waitForFunction(nid => {
+      const c = window.__centroCartao(nid);
+      return !!(c && c.dist <= 1.5);
+    }, id, { timeout: 4000, polling: 'raf' });
+
+    await page.locator('#sheet-handle').focus();
+    await page.keyboard.press('End');
+    await page.waitForFunction(() => document.getElementById('inspector').dataset.sheet === 'expanded', null, { timeout: 4000 });
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 360)));
+    await assentar(page);
+
+    const noPiso = await page.evaluate(nid => {
+      const card = document.querySelector('#network .network-node.selected .node-card').getBoundingClientRect();
+      return {
+        z: window.__grafo.zoom(),
+        k: window.mural.getState().camera.k,
+        card: { x: card.left + card.width / 2, y: card.top + card.height / 2 },
+        g: window.mapaCompleto.pontoNaTela(nid),
+      };
+    }, id);
+    assert.ok(noPiso.z >= 0.545 && noPiso.z <= 0.56, 'zoom caiu abaixo do piso 0.55: ' + JSON.stringify(noPiso));
+    assert.ok(Math.abs(noPiso.card.x - noPiso.g.x) <= 1.5 && Math.abs(noPiso.card.y - noPiso.g.y) <= 1.5, JSON.stringify(noPiso));
+
+    await page.evaluate(() => document.getElementById('zoom-out').click());
+    await assentar(page);
+    const aposOut = await page.evaluate(() => ({
+      z: window.__grafo.zoom(),
+      k: window.mural.getState().camera.k,
+    }));
+    assert.ok(Math.abs(aposOut.z / noPiso.z - 1) < 0.02, 'zoom-out saltou: ' + JSON.stringify({ noPiso, aposOut }));
+    assert.ok(Math.abs(aposOut.k / noPiso.k - 1) < 0.02, 'mural saltou no zoom-out: ' + JSON.stringify({ noPiso, aposOut }));
+
+    await page.evaluate(() => document.getElementById('zoom-in').click());
+    await assentar(page);
+    const aposIn = await page.evaluate(() => ({
+      z: window.__grafo.zoom(),
+      k: window.mural.getState().camera.k,
+    }));
+    const fatorZ = aposIn.z / noPiso.z;
+    const fatorK = aposIn.k / noPiso.k;
+    assert.ok(Math.abs(fatorZ - 1.25) < 0.02 && Math.abs(fatorK - 1.25) < 0.02, JSON.stringify({ fatorZ, fatorK, noPiso, aposIn }));
+    assert.ok(Math.abs(fatorZ - fatorK) < 0.02, JSON.stringify({ fatorZ, fatorK }));
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

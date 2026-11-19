@@ -139,7 +139,9 @@
     desenho: { nos: [], ligacoes: [], baldes: null },
     contagem: { nos: 0, ligacoes: 0 },
     cam: { k: 1, x: 0, y: 0 },
-    kFit: 1,
+    kFit: 0,
+    enquadrado: false,
+    alcaId: null,
     selecionado: null,
     focoId: null,
     ultimo: 0,
@@ -218,7 +220,7 @@
   }
 
   function zoomRelativo() {
-    return vivo.kFit > 0 ? vivo.cam.k / vivo.kFit : 1;
+    return vivo.enquadrado && vivo.kFit > 0 ? vivo.cam.k / vivo.kFit : 0;
   }
 
   function mundoTela(x, y) {
@@ -244,7 +246,9 @@
   function atualizarZoomTexto() {
     const el = document.getElementById('zoom-level');
     if (!el || !vivo.ativo) return;
-    const texto = Math.round(zoomRelativo() * 100) + '%';
+    const z = zoomRelativo();
+    if (!(z > 0)) return;
+    const texto = Math.round(z * 100) + '%';
     if (el.textContent !== texto) el.textContent = texto;
   }
 
@@ -253,13 +257,23 @@
     vivo.quadro = requestAnimationFrame(() => { vivo.quadro = 0; if (vivo.ativo) desenhar(); });
   }
 
+  function revogarCentro() {
+    vivo.seguirCentro = false;
+    if (vivo.seguirTimer) {
+      clearTimeout(vivo.seguirTimer);
+      vivo.seguirTimer = 0;
+    }
+  }
+
   function cancelarAnimacao() {
     vivo.animacao += 1;
     vivo.animando = false;
+    vivo.passoAnim = null;
     if (vivo.quadroAnim) {
       cancelAnimationFrame(vivo.quadroAnim);
       vivo.quadroAnim = 0;
     }
+    revogarCentro();
   }
 
   function zoomEm(fator, cx, cy) {
@@ -312,12 +326,14 @@
   }
 
   function animarPara(k, x, y) {
+    revogarCentro();
     const nk = limitarZoom(k);
     if (vivo.quadroAnim) {
       cancelAnimationFrame(vivo.quadroAnim);
       vivo.quadroAnim = 0;
     }
     const id = ++vivo.animacao;
+    vivo.enquadrado = true;
     // Com movimento reduzido o cartão já foi colocado pelo mural neste quadro.
     // Travar o grafo em seguida, sem reescrever o #viewport, mantém os dois no mesmo ponto.
     if (reduzido()) {
@@ -364,6 +380,7 @@
     else {
       cancelarAnimacao();
       vivo.cam.k = alvo.k; vivo.cam.x = alvo.x; vivo.cam.y = alvo.y;
+      vivo.enquadrado = true;
       adotar();
       atualizarZoomTexto();
       pedirQuadro();
@@ -757,17 +774,25 @@
       if (!dados) { vivo.carregando = false; console.warn('mapa completo: base ainda vazia'); return; }
       vivo.cena = prepararCena(dados.nos, dados.conexoes, pos || {});
       vivo.porId = new Map(vivo.cena.nos.map(n => [n.id, n]));
+      vivo.kFit = 0;
+      vivo.enquadrado = false;
       vivo.ativo = true;
       vivo.carregando = false;
       estiloCritico(true);
       montarLegenda();
       aplicarEstado(st, { semCamera: true });
       ajustarFocoCartoes();
+      if (calcularEnquadramento()) {
+        if (vivo.selecionado) centroEm(vivo.selecionado, { mobile: ehMobile() });
+        else enquadrar(false);
+      }
       requestAnimationFrame(() => {
         if (!vivo.ativo) return;
         if (!calcularEnquadramento()) { enquadrar(false); return; }
-        if (vivo.selecionado) centroEm(vivo.selecionado, { mobile: ehMobile() });
-        else enquadrar(false);
+        if (!vivo.dono && !vivo.gesto && !vivo.animando) {
+          if (vivo.selecionado) centroEm(vivo.selecionado, { mobile: ehMobile() });
+          else enquadrar(false);
+        }
         if (vivo.pendente || assinatura() !== vivo.assinatura) {
           vivo.pendente = false;
           vivo.assinatura = '';
@@ -782,6 +807,9 @@
     vivo.carregando = false;
     if (!vivo.ativo) return;
     vivo.ativo = false;
+    vivo.kFit = 0;
+    vivo.enquadrado = false;
+    vivo.alcaId = null;
     vivo.animacao += 1;
     vivo.animando = false;
     vivo.gesto = false;
@@ -1235,25 +1263,50 @@
   // O centerNode da alça ou do chip escreve o #viewport. O grafo acompanha
   // essa câmera, em vez de repor a derivada e deixar o cartão fora da vista.
   function puxarGrafo(mural) {
+    if (!(vivo.kFit > 0)) calcularEnquadramento();
     const G0 = vivo.baseGrafo;
     const M0 = vivo.baseMural;
-    const s = G0 && M0 && M0.k > 0 ? mural.k / M0.k : 0;
-    if (!G0 || !M0 || !(s > 0) || !Number.isFinite(s)) {
+    const sBruto = G0 && M0 && M0.k > 0 && G0.k > 0 ? mural.k / M0.k : 0;
+    if (!G0 || !M0 || !(sBruto > 0) || !Number.isFinite(sBruto)) {
       adotar();
       return;
     }
+    const nk = limitarZoom(G0.k * sBruto);
+    const s = nk / G0.k;
+    const mk = M0.k * s;
+    let mx = mural.x;
+    let my = mural.y;
+    if (Math.abs(mk - mural.k) > 1e-6) {
+      const pos = vivo.selecionado ? posicaoMural(vivo.selecionado) : null;
+      if (pos) {
+        const px = pos.x * mural.k + mural.x;
+        const py = pos.y * mural.k + mural.y;
+        mx = px - pos.x * mk;
+        my = py - pos.y * mk;
+      } else {
+        const c = centroVisivel();
+        const off0 = offsetTela();
+        const ax = c ? c.x - off0.x : 0;
+        const ay = c ? c.y - off0.y : 0;
+        const r = mk / mural.k;
+        mx = ax - (ax - mural.x) * r;
+        my = ay - (ay - mural.y) * r;
+      }
+    }
+    const muralLim = { k: mk, x: mx, y: my };
     const off = offsetTela();
     const cam = {
-      k: G0.k * s,
-      x: mural.x - M0.x * s + G0.x * s - off.x * (s - 1),
-      y: mural.y - M0.y * s + G0.y * s - off.y * (s - 1),
+      k: nk,
+      x: muralLim.x - M0.x * s + G0.x * s - off.x * (s - 1),
+      y: muralLim.y - M0.y * s + G0.y * s - off.y * (s - 1),
     };
     vivo.cam.k = cam.k;
     vivo.cam.x = cam.x;
     vivo.cam.y = cam.y;
     vivo.baseGrafo = { k: cam.k, x: cam.x, y: cam.y };
-    vivo.baseMural = { k: mural.k, x: mural.x, y: mural.y };
-    vivo.muralDerivada = { k: mural.k, x: mural.x, y: mural.y };
+    vivo.baseMural = { k: muralLim.k, x: muralLim.x, y: muralLim.y };
+    vivo.muralDerivada = { k: muralLim.k, x: muralLim.x, y: muralLim.y };
+    if (Math.abs(mk - mural.k) > 1e-6) escreverViewport(muralLim);
     vivo.dono = true;
     atualizarZoomTexto();
     pedirQuadro();
@@ -1348,6 +1401,9 @@
       isPrimary: true,
     };
     try {
+      for (const id of vivo.ponteiros.keys()) {
+        rede.dispatchEvent(new PointerEvent('pointercancel', Object.assign({}, base, { pointerId: id, buttons: 0 })));
+      }
       rede.dispatchEvent(new PointerEvent('pointerdown', Object.assign({}, base, { buttons: 1 })));
       rede.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, base, { buttons: 0 })));
     } finally {
@@ -1365,6 +1421,7 @@
   // seguinte: um arrasto entre dois toques não pode trocar o nó sob o dedo
   // antes do pointerup que o teste (e o duplo toque) ainda vão ler.
   function programarCam(aplicar) {
+    revogarCentro();
     const base = vivo.pendenteCam || { k: vivo.cam.k, x: vivo.cam.x, y: vivo.cam.y };
     const next = { k: base.k, x: base.x, y: base.y };
     aplicar(next);
@@ -1411,14 +1468,12 @@
     const alvo = alvoDoGesto(ev);
     if (alvo !== 'palco' && alvo !== 'rede') return;
     if (ev.pointerType === 'touch') ev.preventDefault();
-    // O cartão deixa o evento seguir até #network. Parar aqui engole o toque
-    // confiável que a rede escuta, e a câmera continua só a do grafo.
-    if (alvo !== 'rede') ev.stopPropagation();
     const p = localDe(ev);
     vivo.ponteiros.set(ev.pointerId, p);
+    // O cartão deixa o 1º toque seguir até #network. Na pinça, o grafo
+    // assume os dois dedos e invalida o clique que a rede abriu.
+    if (alvo !== 'rede' || vivo.ponteiros.size >= 2 || vivo.houvePinca) ev.stopPropagation();
     vivo.gesto = true;
-    vivo.seguirCentro = false;
-    if (vivo.seguirTimer) { clearTimeout(vivo.seguirTimer); vivo.seguirTimer = 0; }
     cancelarAnimacao();
     const palco = document.getElementById('grafo-palco');
     if (alvo === 'palco') {
@@ -1430,13 +1485,16 @@
       } catch { /* o gesto sintético não captura */ }
     }
     if (vivo.ponteiros.size >= 2) {
-      // Pinça não é o segundo toque. O histórico do grafo morre aqui.
-      // O do mural espera os dedos subirem: enquanto a pinça está ativa
-      // o pointerup dele não zera lastClickNode.
       limparToqueDuplo();
       vivo.houvePinca = true;
       vivo.arraste = null;
+      limparCliqueDoMural();
       iniciarPinca();
+      return;
+    }
+    if (vivo.houvePinca) {
+      limparToqueDuplo();
+      vivo.arraste = null;
       return;
     }
     vivo.pinca = null;
@@ -1454,11 +1512,17 @@
     if (vivo.limpandoMural) return;
     if (!vivo.ativo || !vivo.ponteiros.has(ev.pointerId)) return;
     if (ev.pointerType === 'touch') ev.preventDefault();
-    if (alvoDoGesto(ev) !== 'rede') ev.stopPropagation();
+    if (alvoDoGesto(ev) !== 'rede' || vivo.houvePinca || vivo.ponteiros.size >= 2) ev.stopPropagation();
     const p = localDe(ev);
     vivo.ponteiros.set(ev.pointerId, p);
     if (vivo.ponteiros.size >= 2) {
-      if (!vivo.pinca) iniciarPinca();
+      if (!vivo.pinca) {
+        limparToqueDuplo();
+        vivo.houvePinca = true;
+        vivo.arraste = null;
+        limparCliqueDoMural();
+        iniciarPinca();
+      }
       const pin = vivo.pinca;
       if (!pin) return;
       const pts = [...vivo.ponteiros.values()];
@@ -1496,7 +1560,9 @@
   function terminarPonteiro(ev) {
     if (vivo.limpandoMural) return;
     if (!vivo.ponteiros.has(ev.pointerId) && !(vivo.arraste && vivo.arraste.id === ev.pointerId)) return;
-    const segueParaRede = alvoDoGesto(ev) === 'rede' || !!(ev.target && ev.target.closest && ev.target.closest('#network'));
+    const emPinca = vivo.houvePinca || vivo.pincaEncerrou || vivo.ponteiros.size >= 2;
+    const segueParaRede = !emPinca
+      && (alvoDoGesto(ev) === 'rede' || !!(ev.target && ev.target.closest && ev.target.closest('#network')));
     if (vivo.ponteiros.has(ev.pointerId)) {
       if (ev.pointerType === 'touch') ev.preventDefault();
       if (!segueParaRede) ev.stopPropagation();
@@ -1506,13 +1572,13 @@
     vivo.ponteiros.delete(ev.pointerId);
     if (vivo.ponteiros.size >= 2) iniciarPinca();
     else vivo.pinca = null;
-    if (cancelou) limparToqueDuplo();
+    if (cancelou || emPinca) limparToqueDuplo();
     const g = vivo.arraste;
     const palco = document.getElementById('grafo-palco');
     if (g && g.id === ev.pointerId) {
       vivo.arraste = null;
       if (palco) palco.classList.remove('arrastando');
-      if (cancelou || g.moved || !g.no) limparToqueDuplo();
+      if (cancelou || emPinca || g.moved || !g.no) limparToqueDuplo();
       else toqueNo(g.no.id);
     }
     if (!vivo.ponteiros.size) {
@@ -1536,8 +1602,7 @@
     if (!vivo.ativo) return;
     const alvo = alvoDoGesto(ev);
     if (alvo !== 'palco' && alvo !== 'rede') return;
-    vivo.seguirCentro = false;
-    if (vivo.seguirTimer) { clearTimeout(vivo.seguirTimer); vivo.seguirTimer = 0; }
+    revogarCentro();
     ev.preventDefault();
     ev.stopPropagation();
     const rede = document.getElementById('network');
@@ -1729,11 +1794,28 @@
       pedirCentroLegitimo();
     }, true);
 
-    document.addEventListener('pointerup', ev => {
+    document.addEventListener('pointerdown', ev => {
       if (vivo.limpandoMural || !vivo.ativo || !ehMobile()) return;
-      if (!ev.target.closest || !ev.target.closest('#sheet-handle')) return;
-      pedirCentroLegitimo();
+      if (!ev.target || !ev.target.closest || !ev.target.closest('#sheet-handle')) return;
+      vivo.alcaId = ev.pointerId;
     }, true);
+
+    const encerrarAlca = ev => {
+      if (vivo.limpandoMural || !vivo.ativo) return;
+      if (!ev.target || !ev.target.closest || !ev.target.closest('#sheet-handle')) return;
+      if (ev.type === 'keydown') {
+        if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        const teclas = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', ' '];
+        if (!teclas.includes(ev.key)) return;
+      } else {
+        if (!ehMobile() || vivo.alcaId !== ev.pointerId) return;
+        vivo.alcaId = null;
+      }
+      pedirCentroLegitimo();
+    };
+    for (const tipo of ['pointerup', 'pointercancel', 'lostpointercapture', 'keydown']) {
+      document.addEventListener(tipo, encerrarAlca, true);
+    }
 
     document.addEventListener('pointerup', () => {
       if (vivo.limpandoMural) return;
@@ -1753,14 +1835,6 @@
       ev.preventDefault();
       ev.stopPropagation();
       enquadrar(true);
-    }, true);
-
-    document.addEventListener('keydown', ev => {
-      if (!vivo.ativo || ev.altKey || ev.ctrlKey || ev.metaKey) return;
-      if (!ev.target.closest || !ev.target.closest('#sheet-handle')) return;
-      const teclas = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', ' '];
-      if (!teclas.includes(ev.key)) return;
-      pedirCentroLegitimo();
     }, true);
 
     const camadaCartoes = document.getElementById('node-layer');
@@ -1788,17 +1862,24 @@
     const caixa = document.getElementById('canvas-wrap');
     if (caixa && typeof ResizeObserver === 'function') {
       new ResizeObserver(() => {
-        if (!vivo.ativo) return;
+        if (!vivo.ativo || !vivo.enquadrado) return;
         const w = canvas.clientWidth, h = canvas.clientHeight;
         if (w < 2 || h < 2) return;
         const wx = (w / 2 - vivo.cam.x) / vivo.cam.k;
         const wy = (h / 2 - vivo.cam.y) / vivo.cam.k;
-        const z = zoomRelativo();
+        const z = zoomRelativo() || 1;
         if (!calcularEnquadramento()) return;
         vivo.cam.k = limitarZoom(vivo.kFit * z);
         vivo.cam.x = w / 2 - wx * vivo.cam.k;
         vivo.cam.y = h / 2 - wy * vivo.cam.k;
         montarLegenda();
+        if (vivo.dono) {
+          const cam = derivarMural();
+          if (cam) {
+            lembrarMural(cam);
+            escreverViewport(cam);
+          }
+        }
         adotar();
         atualizarZoomTexto();
         pedirQuadro();
