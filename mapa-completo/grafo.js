@@ -155,6 +155,9 @@
     animando: false,
     gesto: false,
     dono: false,
+    agora: () => performance.now(),
+    passoAnim: null,
+    quadroAnim: 0,
     escrevendo: false,
     getStateOriginal: null,
     pendenteCam: null,
@@ -248,6 +251,10 @@
   function cancelarAnimacao() {
     vivo.animacao += 1;
     vivo.animando = false;
+    if (vivo.quadroAnim) {
+      cancelAnimationFrame(vivo.quadroAnim);
+      vivo.quadroAnim = 0;
+    }
   }
 
   function zoomEm(fator, cx, cy) {
@@ -301,6 +308,10 @@
 
   function animarPara(k, x, y) {
     const nk = limitarZoom(k);
+    if (vivo.quadroAnim) {
+      cancelAnimationFrame(vivo.quadroAnim);
+      vivo.quadroAnim = 0;
+    }
     const id = ++vivo.animacao;
     // Com movimento reduzido o cartão já foi colocado pelo mural neste quadro.
     // Travar o grafo em seguida, sem reescrever o #viewport, mantém os dois no mesmo ponto.
@@ -315,20 +326,30 @@
     adotar();
     vivo.animando = true;
     const a0 = { k: vivo.cam.k, x: vivo.cam.x, y: vivo.cam.y };
-    const t0 = performance.now();
-    const passo = now => {
-      // Gesto no meio dos 280 ms troca o token. Este quadro não pode voltar a a0.
+    const t0 = vivo.agora();
+    const passo = () => {
+      // O token muda no gesto. Um quadro atrasado não pode repor a0 nem
+      // apagar o id de uma animação que começou depois.
       if (!vivo.ativo || vivo.animacao !== id) return;
-      const t = Math.min(1, (now - t0) / 280);
+      const t = Math.min(1, (vivo.agora() - t0) / 280);
       const e = 1 - (1 - t) * (1 - t) * (1 - t);
+      if (vivo.animacao !== id) return;
       vivo.cam.k = a0.k + (nk - a0.k) * e;
       vivo.cam.x = a0.x + (x - a0.x) * e;
       vivo.cam.y = a0.y + (y - a0.y) * e;
       publicarCamera();
-      if (t < 1) requestAnimationFrame(passo);
-      else vivo.animando = false;
+      if (vivo.animacao !== id) return;
+      if (t < 1) {
+        if (vivo.quadroAnim) cancelAnimationFrame(vivo.quadroAnim);
+        vivo.quadroAnim = requestAnimationFrame(passo);
+      } else {
+        vivo.animando = false;
+        vivo.quadroAnim = 0;
+        vivo.passoAnim = null;
+      }
     };
-    requestAnimationFrame(passo);
+    vivo.passoAnim = passo;
+    vivo.quadroAnim = requestAnimationFrame(passo);
   }
 
   function enquadrar(animar) {
@@ -760,6 +781,9 @@
     vivo.animando = false;
     vivo.gesto = false;
     vivo.dono = false;
+    vivo.passoAnim = null;
+    if (vivo.quadroAnim) cancelAnimationFrame(vivo.quadroAnim);
+    vivo.quadroAnim = 0;
     vivo.arraste = null;
     vivo.pinca = null;
     vivo.ponteiros.clear();
@@ -1673,6 +1697,18 @@
       caixas: caixasVisiveis,
       zoom: zoomRelativo,
       quadro: () => ({ ultimo: vivo.ultimo, media: vivo.media }),
+      relogio: fn => {
+        if (typeof fn === 'function') vivo.agora = fn;
+        return vivo.agora();
+      },
+      quadroAnimacao: () => {
+        if (!vivo.passoAnim) return;
+        if (vivo.quadroAnim) {
+          cancelAnimationFrame(vivo.quadroAnim);
+          vivo.quadroAnim = 0;
+        }
+        vivo.passoAnim();
+      },
     };
   }
 

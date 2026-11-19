@@ -624,8 +624,15 @@ test('gesto no meio da animação de 280 ms não volta ao alvo', { timeout: 1800
       document.getElementById('zoom-in').click();
     });
     await page.waitForFunction(() => window.__grafo.zoom() > 1.4, null, { timeout: 4000 });
-    await page.evaluate(() => document.getElementById('fit').click());
-    await page.waitForTimeout(100);
+    // O relógio e o quadro são do teste: o passo de 100 ms cai no meio dos 280,
+    // e o de 450 ms depois do gesto não pode puxar a câmera de volta.
+    await page.evaluate(() => {
+      window.__tGrafo = performance.now();
+      window.__grafo.relogio(() => window.__tGrafo);
+      document.getElementById('fit').click();
+      window.__tGrafo += 100;
+      window.__grafo.quadroAnimacao();
+    });
     const meio = await page.evaluate(() => ({
       p: window.mapaCompleto.pontoNaTela('kochpac'),
       z: window.__grafo.zoom(),
@@ -660,7 +667,11 @@ test('gesto no meio da animação de 280 ms não volta ao alvo', { timeout: 1800
       k: window.mural.getState().camera.k,
     }));
     assert.ok(Math.abs(gesto.p.x - meio.p.x) > 50, JSON.stringify({ meio: meio.p, gesto: gesto.p }));
-    await page.waitForTimeout(450);
+    await page.evaluate(() => {
+      window.__tGrafo += 450;
+      window.__grafo.quadroAnimacao();
+    });
+    await assentar(page);
     const tarde = await page.evaluate(() => ({
       p: window.mapaCompleto.pontoNaTela('kochpac'),
       z: window.__grafo.zoom(),
