@@ -1,6 +1,6 @@
 # Páginas Telegram — geração separada do atlas
 
-`scripts/telegram/gerar_app_html.py` lê o host público de `config.js`, o tema couro-osso extraído do mini app de 11/11 e o cliente de login copiado do `index.html` atual. Escreve somente `app.html` e `vincular.html` na raiz do clone. Confere o SHA-256 do index público antes da geração e o de index, `config.js` e `dados-*.json` depois. Não altera o mapa, o bundle da página principal nem os dados.
+`scripts/telegram/gerar_app_html.py` lê o host público de `config.js`, o tema couro-osso extraído do mini app de 11/11 e o cliente de login copiado do app do atlas (hoje `mapa/index.html`; a raiz `index.html` é a landing). Escreve somente `app.html` e `vincular.html` na raiz do clone. Confere o SHA-256 da landing (`index.html`) e do atlas (`mapa/index.html`) antes da geração e o deles, `config.js` e `dados-*.json` depois. Não altera o mapa, o bundle da página principal nem os dados.
 
 ```sh
 python3 scripts/telegram/gerar_app_html.py

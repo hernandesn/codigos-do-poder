@@ -2,13 +2,14 @@ import base64
 import hashlib
 import re
 import unittest
-from gerar_app_html import INDEX_SHA, SITE, TURNSTILE_STYLE_ATTR, csp, public_origin, render
+from gerar_app_html import INDEX_SHA, MAPA_SHA, SITE, TURNSTILE_STYLE_ATTR, csp, public_origin, render
 
 
 class TelegramPagesTest(unittest.TestCase):
     def test_artefatos_protegidos_byte_identicos(self):
         expected = {
             'index.html': INDEX_SHA,
+            'mapa/index.html': MAPA_SHA,
             'dados-extensao.json': '655697537aa5362515849b7c91b39ceaa1e842ad880522f818d9da72cdbfd2c0',
             'dados-nucleo.json': '2a647c72025c3f45a1ba28cc39ffb9d2358c924fa5aade62498aef82bc5efdf5',
             'config.js': 'e80fe3275cabe130387a5f2fc96023f0337c6104d13259418861314bb61c65af',
@@ -45,6 +46,7 @@ class TelegramPagesTest(unittest.TestCase):
         vincular = render('vincular')
         self.assertNotIn('https://telegram.org', vincular)
         self.assertNotIn('https://telegram.org', (SITE / 'index.html').read_text())
+        self.assertNotIn('https://telegram.org', (SITE / 'mapa' / 'index.html').read_text())
         vpolicy = re.search(r'Content-Security-Policy" content="([^"]+)"', vincular)[1]
         self.assertIn('https://challenges.cloudflare.com ', vpolicy)
         self.assertIn('frame-src https://challenges.cloudflare.com', vpolicy)
