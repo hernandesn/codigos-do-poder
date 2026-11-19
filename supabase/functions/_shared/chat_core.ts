@@ -2859,10 +2859,71 @@ function ligadosDireto(ctx: ChatContextPayload, a: string, b: string): boolean {
   return (ctx.relacoes ?? []).some((rel) => (rel?.origem === a && rel?.destino === b) || (rel?.origem === b && rel?.destino === a))
 }
 
+const ALIAS_TIPOS = new Set([...PERSON_TYPES, 'familia', 'indice'])
+
+function entidadeDoContexto(ctx: ChatContextPayload, id: string): ChatContextEntity | undefined {
+  for (const item of [...(ctx.raizes ?? []), ...(ctx.entidades ?? [])]) {
+    if (item?.id === id) return item
+  }
+  return undefined
+}
+
+/**
+ * Verdadeiro quando duas entidades têm o mesmo nome público ou uma é alias/índice da outra
+ * (nome mais curto é um único token igual ao último token do mais longo, ex.: «Soros» e «George Soros»).
+ * Não colapsa pessoas distintas («Alex Soros» ≠ «George Soros») nem organizações/fundos («SFM» / «Open Society» ≠ «Soros»).
+ */
+export function saoAliasPublicos(ctx: ChatContextPayload, idA: string, idB: string): boolean {
+  if (!idA || !idB) return false
+  if (idA === idB) return true
+  const nomeA = nomePublico(ctx, idA)
+  const nomeB = nomePublico(ctx, idB)
+  if (!nomeA || !nomeB) return false
+  const fa = foldName(nomeA)
+  const fb = foldName(nomeB)
+  if (!fa || !fb) return false
+  if (fa === fb) return true
+  const ta = fa.split(' ')
+  const tb = fb.split(' ')
+  const [curtoId, curtoTokens, longoId, longoTokens] =
+    ta.length === 1 && tb.length > 1 ? [idA, ta, idB, tb]
+    : tb.length === 1 && ta.length > 1 ? [idB, tb, idA, ta]
+    : [null, null, null, null]
+  if (!curtoId || !curtoTokens || !longoId || !longoTokens) return false
+  if (curtoTokens[0] !== longoTokens[longoTokens.length - 1]) return false
+  const tipoCurto = entidadeDoContexto(ctx, curtoId)?.tipo
+  const tipoLongo = entidadeDoContexto(ctx, longoId)?.tipo
+  if (tipoCurto && !ALIAS_TIPOS.has(tipoCurto)) return false
+  if (tipoLongo && !ALIAS_TIPOS.has(tipoLongo)) return false
+  return true
+}
+
+function escolherAliasMaisEspecifico(ctx: ChatContextPayload, baseId: string, ranking: Array<[string, number]>): string {
+  let melhor = baseId
+  const score = (id: string): [number, number, number] => {
+    const ent = entidadeDoContexto(ctx, id)
+    const nome = nomePublico(ctx, id) ?? ''
+    const ehPessoa = ent?.tipo && PERSON_TYPES.has(ent.tipo) ? 1 : 0
+    const tokens = foldName(nome).split(' ').filter(Boolean).length
+    return [ehPessoa, tokens, nome.length]
+  }
+  let melhorScore = score(melhor)
+  for (const [id] of ranking) {
+    if (id === baseId || !saoAliasPublicos(ctx, baseId, id)) continue
+    const s = score(id)
+    if (s[0] > melhorScore[0] || (s[0] === melhorScore[0] && (s[1] > melhorScore[1] || (s[1] === melhorScore[1] && s[2] > melhorScore[2])))) {
+      melhor = id
+      melhorScore = s
+    }
+  }
+  return melhor
+}
+
 function parComAresta(ctx: ChatContextPayload, ranking: Array<[string, number]>): [string, string] | null {
   const ids = ranking.map(([id]) => id)
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
+      if (saoAliasPublicos(ctx, ids[i], ids[j])) continue
       if (ligadosDireto(ctx, ids[i], ids[j])) return [ids[i], ids[j]]
     }
   }
@@ -2884,7 +2945,7 @@ function sanearPerguntaMontada(pergunta: string, ctx: ChatContextPayload): strin
 }
 
 /** Pergunta final sempre do código. O em_aberto do modelo não entra. Sem nome público válido: a frase genérica. */
-function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx: ChatContextPayload): string {
+export function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; relacoes?: readonly string[]; base?: readonly string[] }[], ctx: ChatContextPayload): string {
   const contagem = new Map<string, number>()
   const soma = (id: string | undefined) => { if (id) contagem.set(id, (contagem.get(id) ?? 0) + 1) }
   const rels = new Map((ctx.relacoes ?? []).map((rel) => [rel.id, rel]))
@@ -2909,7 +2970,8 @@ function perguntaEstrutural(blocos: readonly { entidades?: readonly string[]; re
     : (() => {
       const par = parComAresta(ctx, citados)
       if (par) return `Que documento detalharia a relação entre ${nomePublico(ctx, par[0])} e ${nomePublico(ctx, par[1])}?`
-      return `Que documento detalharia o papel de ${nomePublico(ctx, citados[0][0])}?`
+      const principal = escolherAliasMaisEspecifico(ctx, citados[0][0], citados)
+      return `Que documento detalharia o papel de ${nomePublico(ctx, principal)}?`
     })()
   return sanearPerguntaMontada(texto, ctx)
 }

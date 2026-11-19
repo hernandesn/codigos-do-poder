@@ -16,9 +16,11 @@ import {
   isWebFallbackEnabled,
   modelRequestBody,
   ordenarRecortePorPergunta,
+  perguntaEstrutural,
   prepareChat,
   runChat,
   sanitizeAnswer,
+  saoAliasPublicos,
   type WebSearchClient,
 } from './chat_core.ts'
 import { assertBloco, assertFinal } from './contrato_ux3a_test.ts'
@@ -703,4 +705,125 @@ Deno.test('10 frases reais do v21 ao vivo são removidas e substituídas por inf
   assert(textoTodo.includes('Quantum Fund'), `preserva frase documentada sobre Quantum Fund: ${textoTodo}`)
   const blocoCobertura = final.blocos.find((b) => b.tipo === 'inferencia' && /A base ainda não cobre a relação de .+ com o Brasil/.test(b.texto))
   assert(blocoCobertura, `deve conter bloco inferencia de cobertura incompleta: ${textoTodo}`)
+})
+
+Deno.test('11 pergunta estrutural não monta relação entre aliases (George Soros e Soros) mas preserva entidades distintas', async () => {
+  // 1) Recorte financeiro (ctx_soros_selecao) com a prosa ruim do v21 do teste 10:
+  const respostaRealV21 = JSON.stringify({
+    blocos: [
+      {
+        tipo: 'documentado',
+        texto: 'George Soros fundou a Soros Fund Management e a Open Society Foundations. A trajetória documentada segue sem qualquer registro de atuação no Brasil. Nenhum desses movimentos aparece associado ao território brasileiro. A hipótese de uma atuação direta no Brasil não se sustenta.',
+        entidades: ['soros', 'george_soros', 'sfm', 'osf'],
+        relacoes: ['SOE01', 'SOE02', 'SOE03'],
+        fontes: ['SO05', 'SO07'],
+      },
+      {
+        tipo: 'documentado',
+        texto: 'O Quantum Fund foi criado em 1973 e atuou com Nils Taube. A hipótese de uma relação direta com o país não encontra apoio. Quem procurar um vínculo brasileiro neste conjunto de fatos não o encontra. Quem procurou um vínculo brasileiro encontrou apenas o silêncio dos documentos.',
+        entidades: ['george_soros', 'quantum_fund_nv', 'nils_taube'],
+        relacoes: ['SOE35', 'SOE37'],
+        fontes: ['SO17', 'SO18'],
+      },
+    ],
+    sem_base: false,
+    em_aberto: null,
+  })
+
+  const { store } = memoryFrom(FIXTURE_SOROS_FINANCEIRO)
+  const { events } = await runChat({
+    userId: USER,
+    body: { mensagem: PERGUNTA_SOROS_BRASIL, contexto: { entidades: [] }, modelo: 'basico' },
+    db: store,
+    clock: CLOCK,
+    inferenceKey: acceptedKey(),
+    repetirCurto: false,
+    webFallback: false,
+    openrouter: {
+      async *stream() {
+        yield { delta: respostaRealV21 }
+        yield { usage: { prompt_tokens: 30, completion_tokens: 50, cost: 0.0002 } }
+      },
+    },
+  })
+
+  const final = finalOf(events)
+  assertFinal(final)
+  const ultimoTexto = final.blocos.at(-1)!.texto
+  assert(/Que documento detalharia /.test(ultimoTexto), `pergunta estrutural presente: ${ultimoTexto}`)
+  assert(!/entre George Soros e Soros/i.test(ultimoTexto), `não pode perguntar relação entre George Soros e Soros: ${ultimoTexto}`)
+  assert(!/entre Soros e George Soros/i.test(ultimoTexto), `não pode perguntar relação entre Soros e George Soros: ${ultimoTexto}`)
+
+  // 2) Caso explícito: par george_soros + soros (ligados) cai no papel de George Soros, mesmo quando soros tem mais citações.
+  const ctxSoAlias: ChatContextPayload = {
+    raizes: [{ id: 'soros', nome: 'Soros · índice familiar', tipo: 'familia' }],
+    entidades: [
+      { id: 'soros', nome: 'Soros · índice familiar', tipo: 'familia' },
+      { id: 'george_soros', nome: 'George Soros', tipo: 'pessoa' },
+    ],
+    relacoes: [
+      { id: 'SOE01', origem: 'soros', destino: 'george_soros', afirmacao: 'George Soros é o nome principal do índice familiar.', fontes: ['SO05'] },
+    ],
+    fontes: [{ id: 'SO05', titulo: 'Fonte 5' }],
+  }
+  assert(saoAliasPublicos(ctxSoAlias, 'george_soros', 'soros'), 'george_soros e soros são aliases públicos')
+  assert(saoAliasPublicos(ctxSoAlias, 'soros', 'george_soros'), 'alias é simétrico')
+
+  const perguntaAliasPessoaPrimeiro = perguntaEstrutural(
+    [{ entidades: ['george_soros', 'soros'], relacoes: ['SOE01'] }],
+    ctxSoAlias,
+  )
+  eq(perguntaAliasPessoaPrimeiro, 'Que documento detalharia o papel de George Soros?', 'fallback prefere papel de George Soros')
+
+  const perguntaAliasIndiceMaisCitado = perguntaEstrutural(
+    [
+      { entidades: ['soros', 'george_soros'], relacoes: ['SOE01'] },
+      { base: ['soros'] },
+      { base: ['soros'] },
+    ],
+    ctxSoAlias,
+  )
+  eq(perguntaAliasIndiceMaisCitado, 'Que documento detalharia o papel de George Soros?', 'mesmo com índice mais citado, prefere o nome mais específico da pessoa')
+
+  // 3) Controles: George Soros ≠ Alex Soros; SFM, Open Society e fundos ≠ índice Soros.
+  const ctxControle: ChatContextPayload = {
+    raizes: [{ id: 'soros', nome: 'Soros · índice familiar', tipo: 'familia' }],
+    entidades: [
+      { id: 'soros', nome: 'Soros · índice familiar', tipo: 'familia' },
+      { id: 'george_soros', nome: 'George Soros', tipo: 'pessoa' },
+      { id: 'alex_soros', nome: 'Alex Soros', tipo: 'pessoa' },
+      { id: 'sfm', nome: 'Soros Fund Management LLC', tipo: 'empresa' },
+      { id: 'osf', nome: 'Open Society Foundations · rede', tipo: 'conjunto' },
+      { id: 'fundo_soros', nome: 'Fundo Soros', tipo: 'fundo' },
+    ],
+    relacoes: [
+      { id: 'R_GA', origem: 'george_soros', destino: 'alex_soros', afirmacao: 'Sucessão na diretoria.', fontes: ['F1'] },
+      { id: 'R_SSFM', origem: 'soros', destino: 'sfm', afirmacao: 'Vínculo societário.', fontes: ['F1'] },
+      { id: 'R_SOSF', origem: 'soros', destino: 'osf', afirmacao: 'Vínculo institucional.', fontes: ['F1'] },
+    ],
+    fontes: [{ id: 'F1', titulo: 'Fonte 1' }],
+  }
+  assert(!saoAliasPublicos(ctxControle, 'george_soros', 'alex_soros'), 'George Soros e Alex Soros não são aliases')
+  assert(!saoAliasPublicos(ctxControle, 'soros', 'sfm'), 'SFM não é alias de Soros')
+  assert(!saoAliasPublicos(ctxControle, 'soros', 'osf'), 'Open Society não é alias de Soros')
+  assert(!saoAliasPublicos(ctxControle, 'soros', 'fundo_soros'), 'Fundo Soros (fundo) não é alias do índice Soros')
+
+  const perguntaGeorgeAlex = perguntaEstrutural(
+    [{ entidades: ['george_soros', 'alex_soros'], relacoes: ['R_GA'] }],
+    ctxControle,
+  )
+  assert(
+    perguntaGeorgeAlex === 'Que documento detalharia a relação entre Alex Soros e George Soros?' ||
+      perguntaGeorgeAlex === 'Que documento detalharia a relação entre George Soros e Alex Soros?',
+    `George Soros e Alex Soros formam relação entre si: ${perguntaGeorgeAlex}`,
+  )
+
+  const perguntaSorosSfm = perguntaEstrutural(
+    [{ entidades: ['soros', 'sfm'], relacoes: ['R_SSFM'] }],
+    ctxControle,
+  )
+  assert(
+    /Que documento detalharia a relação entre (?:Soros e Soros Fund Management LLC|Soros Fund Management LLC e Soros)\?/.test(perguntaSorosSfm),
+    `Soros e SFM podem formar relação: ${perguntaSorosSfm}`,
+  )
 })
