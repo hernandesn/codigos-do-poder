@@ -1204,7 +1204,7 @@ Deno.test('SPEC4 fallback de dois temas gera três blocos com citações válida
   eq(answer.sem_base, false, 'tem base para os temas')
   eq(answer.blocos.length, 3, 'dois temas e a lacuna')
   const [golpe, heitor, lacuna] = answer.blocos
-  assert(golpe.tipo === 'documentado' && heitor.tipo === 'documentado' && lacuna.tipo === 'documentado', 'só blocos documentados')
+  assert(golpe.tipo === 'documentado' && heitor.tipo === 'documentado' && lacuna.tipo === 'inferencia', 'temas documentados e lacuna nunca como documentado')
   eq(golpe.texto, 'Golpe de 1964: O IPES aparece na documentação do golpe de 1964.', 'ordem das raízes e nome sem sufixo')
   eq(JSON.stringify(golpe.entidades), JSON.stringify(['golpe64', 'ipes']), 'cita raiz e outro extremo, mesmo sendo destino')
   eq(JSON.stringify(golpe.relacoes), JSON.stringify(['golpe_primeira']), 'primeira relação que toca a raiz')
@@ -1213,8 +1213,8 @@ Deno.test('SPEC4 fallback de dois temas gera três blocos com citações válida
   eq(JSON.stringify(heitor.relacoes), JSON.stringify(['heitor_primeira']), 'cita a primeira relação de Heitor')
   eq(JSON.stringify(heitor.fontes), JSON.stringify(['H1']), 'só fontes presentes no recorte')
   eq(lacuna.texto, 'O atlas não documenta ligação direta entre Golpe de 1964 e Heitor Lyra.', 'lacuna explícita')
-  eq(JSON.stringify([lacuna.entidades, lacuna.relacoes, lacuna.fontes]), '[[],[],[]]', 'lacuna sem citações')
-  for (const bloco of answer.blocos) {
+  eq(JSON.stringify(lacuna.base), '[]', 'lacuna sem citações')
+  for (const bloco of [golpe, heitor]) {
     assert(bloco.tipo === 'documentado', 'documentado')
     assert(bloco.entidades.every((id) => [...context.raizes, ...context.entidades].some((e) => e.id === id)), 'entidades válidas')
     assert(bloco.relacoes.every((id) => context.relacoes.some((r) => r.id === id)), 'relações válidas')

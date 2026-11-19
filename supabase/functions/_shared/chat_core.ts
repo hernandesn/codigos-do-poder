@@ -564,6 +564,93 @@ export interface OpenRouterClient {
   stream(input: { body: Record<string, unknown>; signal: AbortSignal }): AsyncIterable<OpenRouterChunk>
 }
 
+export const EXTERNA_NAO_VERIFICADA = 'fonte externa, não verificada na base'
+
+export interface WebSearchHit {
+  titulo: string
+  url: string
+  editor?: string
+  trecho?: string
+  publicado_em?: string
+}
+
+export interface WebSearchClient {
+  search(input: { query: string; signal?: AbortSignal; maxResults?: number }): Promise<WebSearchHit[]>
+}
+
+export function isWebFallbackEnabled(raw?: string | boolean | null): boolean {
+  if (typeof raw === 'boolean') return raw
+  if (typeof raw === 'string') {
+    const v = raw.trim().toLowerCase()
+    return v === '1' || v === 'true' || v === 'on'
+  }
+  return false
+}
+
+export function createFetchWebSearch(opts: {
+  provider?: 'brave' | 'tavily' | 'openrouter_search'
+  apiKey?: string
+  url?: string
+  fetchImpl?: typeof fetch
+}): WebSearchClient {
+  const provider = opts.provider ?? 'brave'
+  const doFetch = opts.fetchImpl ?? fetch
+  return {
+    async search(input) {
+      const apiKey = (opts.apiKey ?? '').trim()
+      if (!apiKey) throw new Error('web_search_key_ausente')
+      const maxResults = Math.min(Math.max(input.maxResults ?? 5, 1), 10)
+      if (provider === 'brave') {
+        const endpoint = opts.url || 'https://api.search.brave.com/res/v1/web/search'
+        const u = new URL(endpoint)
+        u.searchParams.set('q', input.query)
+        u.searchParams.set('count', String(maxResults))
+        const res = await doFetch(u.toString(), {
+          method: 'GET',
+          headers: {
+            accept: 'application/json',
+            'x-subscription-token': apiKey,
+          },
+          signal: input.signal,
+        })
+        if (!res.ok) throw new Error(`brave_http_${res.status}`)
+        const body = await res.json() as { web?: { results?: Array<Record<string, unknown>> } }
+        const list = Array.isArray(body?.web?.results) ? body.web!.results! : []
+        return list.flatMap((item): WebSearchHit[] => {
+          const url = typeof item.url === 'string' ? item.url.trim() : ''
+          const titulo = typeof item.title === 'string' ? item.title.trim() : ''
+          if (!/^https?:\/\//i.test(url) || !titulo) return []
+          const profile = item.profile && typeof item.profile === 'object' ? item.profile as Record<string, unknown> : undefined
+          const editor = typeof profile?.name === 'string' ? profile.name.trim() : undefined
+          const trecho = typeof item.description === 'string' ? item.description.trim() : undefined
+          return [{ titulo, url, ...(editor ? { editor } : {}), ...(trecho ? { trecho } : {}) }]
+        }).slice(0, maxResults)
+      }
+      const endpoint = opts.url || (provider === 'tavily' ? 'https://api.tavily.com/search' : 'https://openrouter.ai/api/v1/search')
+      const res = await doFetch(endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ query: input.query, max_results: maxResults }),
+        signal: input.signal,
+      })
+      if (!res.ok) throw new Error(`web_search_http_${res.status}`)
+      const body = await res.json() as { results?: Array<Record<string, unknown>> }
+      const list = Array.isArray(body?.results) ? body.results! : []
+      return list.flatMap((item): WebSearchHit[] => {
+        const url = typeof item.url === 'string' ? item.url.trim() : ''
+        const titulo = typeof item.title === 'string' ? item.title.trim() : ''
+        if (!/^https?:\/\//i.test(url) || !titulo) return []
+        const editor = typeof item.source === 'string' ? item.source.trim() : typeof item.publisher === 'string' ? item.publisher.trim() : undefined
+        const trecho = typeof item.content === 'string' ? item.content.trim() : typeof item.snippet === 'string' ? item.snippet.trim() : undefined
+        return [{ titulo, url, ...(editor ? { editor } : {}), ...(trecho ? { trecho } : {}) }]
+      }).slice(0, maxResults)
+    },
+  }
+}
+
 export class OpenRouterError extends Error {
   kind: 'rede' | 'modelo_indisponivel' | 'modelo_ocupado' | 'limite_chave' | 'chave_recusada'
   readonly noCharge: boolean
@@ -1384,11 +1471,16 @@ export async function recuperarContexto(
   }
 
   const faltam = ausentes.slice(0, 3)
-  if (faltam.length && raizesDe(context).length && cabe(0)) {
+  const pedeBrasilSemCobertura = !faltam.length
+    && /\bbrasil/.test(query)
+    && raizesDe(context).length > 0
+    && !(context.relacoes ?? []).some((rel) => mencionaBrasil(rel, indexarEntidades(context)))
+    && vizinhaInstitucional(context, raizesDe(context)[0].id) !== null
+  if ((faltam.length || pedeBrasilSemCobertura) && raizesDe(context).length && cabe(0)) {
     const consultas: string[] = []
     const raiz = raizesDe(context)[0]
     const curtoRaiz = nomeCurto(raiz.nome || '')
-    if (curtoRaiz && curtoRaiz !== 'brasil') consultas.push(`${curtoRaiz} brasil`)
+    if (faltam.length && curtoRaiz && curtoRaiz !== 'brasil') consultas.push(`${curtoRaiz} brasil`)
     const vizinha = vizinhaInstitucional(context, raiz.id)
     const curtoViz = nomeCurto(vizinha?.nome || '')
     if (curtoViz && curtoViz !== 'brasil' && !consultas.includes(`${curtoViz} brasil`)) consultas.push(`${curtoViz} brasil`)
@@ -1403,6 +1495,15 @@ export async function recuperarContexto(
       if (!uteis.length) continue
       origemBrasil = juntarRelacoes(origemBrasil, uteis, extra, false)
       trazidas = trazidas.concat(uteis.filter((rel) => !trazidas.some((item) => item.id === rel.id)))
+    }
+    if (!trazidas.length && vizinha?.id && cabe(0)) {
+      const extra = await call([vizinha.id], null)
+      const byId = indexarEntidades(extra)
+      const uteis = (extra.relacoes ?? []).filter((rel) => mencionaBrasil(rel, byId))
+      if (uteis.length) {
+        origemBrasil = juntarRelacoes(origemBrasil, uteis, extra, false)
+        trazidas = trazidas.concat(uteis.filter((rel) => !trazidas.some((item) => item.id === rel.id)))
+      }
     }
     if (trazidas.length) {
       const byId = indexarEntidades(origemBrasil)
@@ -1535,7 +1636,7 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
     'Não ponha ids no texto.',
   ]
   if (faltam.length) {
-    extras.push(`Nomes da pergunta sem registro na base: ${faltam.join(', ')}. Diga literalmente '${fraseAusentes(faltam)}' e não invente nada sobre eles. Resuma o que a base tem sobre o outro nome no Brasil.`)
+    extras.push(`Nomes da pergunta sem registro na base: ${faltam.join(', ')}. Diga literalmente '${fraseAusentes(faltam)}' em bloco hipotese (nunca documentado) e não invente nada sobre eles. Resuma o que a base tem sobre o outro nome no Brasil.`)
   }
   const estilo = pauta ? [
     'Responda em português do Brasil, só com o recorte do Atlas.',
@@ -1546,14 +1647,15 @@ export function buildSystemPrompt(modelo: Modelo, context: ChatContextPayload, p
   ] : [
     'Você é o promotor e jornalista de denúncia do Atlas Códigos do Poder. Escreva só em português do Brasil, sem caracteres de outros alfabetos e sem palavras em inglês. Acusa com os fatos.',
     'Um JSON no schema pedido. Sem markdown.',
-    'Formato: 5 a 8 blocos, cada bloco = 1 parágrafo de 3 a 6 frases. Use bloco documentado { tipo, texto, entidades, relacoes, fontes } para todos os parágrafos; cite em relacoes e fontes o que sustenta os fatos do parágrafo (no máximo 5 relações e 5 fontes por bloco; não repita ids).',
-    'Voz de denúncia com frases completas. A agressividade vem do conteúdo: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, a tese e o veredito. Diga sem rodeio quem ganhou, quem mandou e quem pagou a conta.',
+    'Formato: 5 a 8 blocos de 3 a 6 frases. Fatos do recorte usam bloco documentado { tipo, texto, entidades, relacoes, fontes } (até 5 relações e 5 fontes, sem repetir ids); lacuna de cobertura usa bloco hipotese, nunca documentado.',
+    'Voz de denúncia: verbos fortes (controlou, capturou, comprou, impôs, lucrou, dirigiu, financiou), nomes apontados, tese e veredito.',
     'O 1º bloco abre com uma acusação-tese forte. Depois, ordem cronológica, com datas, valores e cargos. Fique no tema exato da pergunta; não puxe outros temas do recorte (doações, outros países, outras famílias) se a pergunta não pedir.',
     'O ÚLTIMO bloco começa com "O que liga tudo:" e dá o veredito da tese em 3 a 5 frases. Nada depois dele além da pergunta em em_aberto. Não escreva parágrafo sobre as fontes ou sobre o que falta pesquisar.',
     'em_aberto: uma pergunta final provocativa, que aponta o próximo alvo da investigação.',
     'TRAVA LEGAL (inegociável): toda acusação vem como tese, com marca explícita na própria frase: "tudo indica", "o padrão denuncia", "a hipótese é", "isso sugere". Nunca afirme crime, corrupção, suborno, propina, fraude, lavagem ou ato ilícito como fato; não use essas palavras. Pessoa viva (nota "pessoa viva", ou sem morte registrada no recorte) não é acusada de nada, nem em hipótese: dela só os fatos do recorte. O alvo das teses é o poder, o dinheiro, as famílias como grupo e as instituições.',
     'Fato só do recorte: nomes, datas, valores, cargos e o sentido de cada relação exatamente como estão. Datas como na relação ("em 2007" não vira "desde 2007"). Nunca invente fato para sustentar a tese (cidade, sede, valor, participação acionária, controle, cargo ou decisão que nenhuma relação diz). Contrato não é participação acionária; conselheiro não é dono.',
-    'Nada de superlativo ou dado de fora do recorte ("a família mais rica", "o maior banco", sede, cidade, bairro). "Quem pagou a conta", "quem lucrou" e "quem mandou" são tese: escreva com a marca de tese na mesma frase. A pergunta final não insinua suborno, favores em troca ou outro ilícito.',
+    'Ausência no recorte não é prova de inexistência: nunca afirme que não há vínculo ou que circula sem lastro; se a base ainda não cobre o ponto pedido, diga isso em bloco hipotese e complemente com o que houver.',
+    'Nada de superlativo ou dado de fora ("a família mais rica", "o maior banco", sede, cidade). "Quem pagou a conta", "quem lucrou" e "quem mandou" exigem marca de tese na frase.',
     'Não chame ninguém de membro, parente ou representante de uma família sem relação no recorte que diga isso (conselheiro de empresa com o nome da família não é da família). Não chame caminho por intermediários de vínculo direto: diga por quem passa.',
     'Fundação, missão, banco ou empresa que leva o nome de uma família, ou que o recorte liga a ela, é a família agindo: trate como ligada. Nunca diga que falta ligação entre X e algo que leva o nome de X.',
     'pontes_entre_raizes traz caminhos documentados entre os temas: esse caminho é a ligação. Conte cada elo com o verbo do tipo e respeite a seta.',
@@ -2521,6 +2623,64 @@ function fraseInsinuacao(frase: string): boolean {
     || /\bnunca\s+(?:abriu|revelou|explicou|divulgou|prestou\s+contas)\b/.test(fora)
 }
 
+const TERMO_RELACAO_INEX = '(?:liga[cç](?:[aã]o|[oõ]es)|rela[cç](?:[aã]o|[oõ]es)|conex(?:[aã]o|[oõ]es)|atua[cç](?:[aã]o|[oõ]es)|opera[cç](?:[aã]o|[oõ]es)|v[ií]nculos?|presen[cç]as?|elos?|pontes?)'
+
+const PADROES_INEXISTENCIA = [
+  /\bcircula(?:m)?\s+sem\s+(?:qualquer\s+|nenhum\s+)?lastro\b/i,
+  /\bsem\s+(?:qualquer\s+|nenhum\s+)?lastro(?:\s+documental|\s+factual|\s+real|\s+hist[oó]rico|\s+comprovado|\s+nos\s+documentos|\s+na\s+documenta[cç][aã]o|\s+na\s+base)?\b/i,
+  /\b(?:carece(?:m)?|falta)\s+de\s+lastro\b/i,
+  new RegExp(`\\b(?:n[aã]o\\s+h[aá]|n[aã]o\\s+existe(?:m)?|inexiste(?:m)?|n[aã]o\\s+possui|n[aã]o\\s+tem|n[aã]o\\s+mant[eé]m|nunca\\s+teve|nunca\\s+manteve|jamais\\s+teve|jamais\\s+manteve)\\s+(?:qualquer\\s+|nenhum(?:a)?\\s+)?${TERMO_RELACAO_INEX}\\b`, 'i'),
+  new RegExp(`\\b(?:inexist[eê]ncia|aus[eê]ncia\\s+total)\\s+de\\s+(?:qualquer\\s+)?(?:${TERMO_RELACAO_INEX}|lastros?)\\b`, 'i'),
+  new RegExp(`\\bnenhum(?:a|ns|as)?\\s+${TERMO_RELACAO_INEX}\\s+(?:com\\s+o\\s+brasil|no\\s+brasil|entre|documentad[oa]s?|comprovad[oa]s?)\\b`, 'i'),
+  /\bn[aã]o\s+(?:atua|atuou|opera|operou|financia|financiou)\s+no\s+brasil\b/i,
+  /\bsem\s+(?:qualquer\s+|nenhum\s+)?registro\s+de\b[^.!?]{0,120}\b(?:no\s+brasil|com\s+o\s+brasil|em\s+territ[oó]rio\s+brasileiro|brasileir[oa]s?)\b/i,
+  /\bnenhum(?:a)?\b[^.!?]{0,80}\b(?:aparece|consta|est[aá]|surge|figura)\s+(?:associad[oa]|ligad[oa]|vinculad[oa]|relacionad[oa])\s+(?:ao\s+brasil|ao\s+territ[oó]rio\s+brasileiro|ao\s+pa[ií]s|com\s+o\s+brasil)\b/i,
+  /\bhip[oó]tese\s+de\b[^.!?]{0,120}\bn[aã]o\s+(?:se\s+sustenta|encontra\s+(?:apoio|respaldo|lastro|base|sustenta[cç][aã]o)|tem\s+(?:apoio|respaldo|lastro|base|sustenta[cç][aã]o))\b/i,
+  /\bquem\s+procur(?:ar|a|ou|e)\s+(?:um\s+|uma\s+|algum(?:a)?\s+)?(?:v[ií]nculo|liga[cç][aã]o|rela[cç][aã]o|conex[aã]o|atua[cç][aã]o)\s+(?:brasileir[oa]|com\s+o\s+brasil|no\s+brasil)\b[^.!?]{0,100}\b(?:n[aã]o\s+(?:o|a)?\s*encontr(?:a|ar[aá]|ou)|encontr(?:a|ou)\s+(?:apenas|s[oó]))\b/i,
+  /\bsil[eê]ncio\s+d(?:os|a)\s+(?:documentos?|documenta[cç][aã]o|arquivos?|registros?|fontes?)\b/i,
+]
+
+/** Veredito falso de inexistência a partir de lacuna do recorte («não há vínculo», «circula sem lastro»). */
+export function fraseInexistencia(frase: string): boolean {
+  const fora = semAspasNemUrl(frase)
+  return PADROES_INEXISTENCIA.some((re) => re.test(fora))
+}
+
+/** Frase legítima que admite cobertura incompleta da base ou marca fonte externa. */
+export function fraseCoberturaIncompleta(frase: string): boolean {
+  const f = foldName(semAspasNemUrl(frase))
+  return /\b(?:a base|o atlas|a documentacao)\s+(?:do atlas\s+)?(?:ainda\s+)?nao\s+(?:cobre|documenta|mostra|registra)\b/.test(f)
+    || /\bbusca\s+externa\s+nao\s+pode\s+ser\s+concluida\b/.test(f)
+    || /\bfonte\s+externa\s+nao\s+verificada\s+na\s+base\b/.test(f)
+}
+
+/** Frase que conclui ausência ou cobertura incompleta na base/recorte. */
+export function fraseConclusaoAusencia(frase: string): boolean {
+  const limpa = frase.trim()
+  if (!limpa) return false
+  if (fraseAusenciaExata(limpa) || fraseCoberturaIncompleta(limpa) || fraseInexistencia(limpa)) return true
+  const f = foldName(semAspasNemUrl(limpa))
+  return /^nao consta(?:m)?(?: no| nos)? documentos?$/.test(f)
+    || /^(?:a )?documentacao(?: e| esta)? parcial$/.test(f)
+    || /^[\p{L}\p{N}][\p{L}\p{N} &,-]{0,80} nao est(?:a|ao) na base(?:\s+do\s+atlas)?$/u.test(f)
+    || /\b(?:a base|o atlas|a documentacao|o acervo|o recorte)\s+(?:do atlas\s+)?(?:ainda\s+)?nao\s+(?:cobre|mostra|documenta|registra|traz|inclui|contem|aborda|possui|aponta|indica)\b/.test(f)
+    || /\b(?:nao\s+(?:estao?|constam?)|sem\s+(?:registro|cobertura|documentacao))\s+(?:na\s+base|no\s+atlas|na\s+documentacao|no\s+recorte)\b/.test(f)
+    || /\b(?:ausencia|falta|lacuna)\s+de\s+(?:registro|cobertura|documentacao|dados|fontes|ligacao\s+direta|vinculo\s+direto)\b/.test(f)
+    || /\bcobertura\s+(?:da\s+base\s+)?(?:ainda\s+)?incompleta\b/.test(f)
+    || /\bnao\s+ha\s+(?:registro|cobertura|documentacao|mencao|evidencia)\s+(?:na\s+base|no\s+atlas|na\s+documentacao|no\s+recorte)\b/.test(f)
+}
+
+/** Bloco cuja afirmação declarativa é conclusão de ausência ou cobertura incompleta: nunca pode sair como documentado. */
+export function ehConclusaoDeAusencia(texto: string): boolean {
+  const mascaras: string[] = []
+  const mascarado = protegerTrechos(texto, undefined, mascaras)
+  const declarativas = frasesDe(mascarado)
+    .map((f) => restaurarTrechos(f, mascaras).trim())
+    .filter((f) => f && !terminaEmPergunta(f))
+  if (!declarativas.length) return false
+  return declarativas.every((f) => fraseConclusaoAusencia(f))
+}
+
 /** Texto exato de fraseAusentes (um nome ou «A e B» / «A, B e C»). Eco mais longo continua caindo. */
 function fraseAusenciaExata(frase: string): boolean {
   return /^[\p{L}\p{N}][\p{L}\p{N} &,-]{0,80} não est(?:á|ão) na base do atlas\.$/u.test(frase.trim())
@@ -2609,7 +2769,7 @@ function semAnaforaPendente(frases: string[], cai: (frase: string) => boolean): 
 function frasesDe(t: string): string[] {
   const out: string[] = []
   let ini = 0
-  const re = /[.!?]+(?=\s+["«(]?\p{Lu})/gu
+  const re = /[.!?]+(?=\s+(?:["«(]?\p{Lu}|\u0003))/gu
   let m: RegExpExecArray | null
   while ((m = re.exec(t))) {
     const antes = t.slice(Math.max(0, m.index - 4), m.index)
@@ -2638,7 +2798,8 @@ function filtrarProsaVisivel(texto: string, preservar = '', ctx?: ChatContextPay
     const kept = semAnaforaPendente(frases, (f) => {
       const visivel = restaurarTrechos(f, mascaras)
       const chave = foldName(visivel)
-      if (fraseAusenciaExata(visivel) || (alvo && chave === alvo) || (extra && chave === extra)) return false
+      if (!manterPergunta && fraseInexistencia(visivel)) return true
+      if (fraseAusenciaExata(visivel) || fraseCoberturaIncompleta(visivel) || (alvo && chave === alvo) || (extra && chave === extra)) return false
       if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
       if (fraseInglesSolta(f) || fraseEco(f) || fraseInsinuacao(f)) return true
       // A pergunta final (pauta / em_aberto) é a única que pode terminar em «?».
@@ -3113,6 +3274,10 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
         : f)
       const semEco = semAnaforaPendente(frases, (f) => {
         const visivel = restaurarTrechos(f, mascaras)
+        if (!pergunta && fraseInexistencia(visivel)) {
+          tirouFora += 1
+          return true
+        }
         if (supera(f) || FORA.some((re, i) => re.test(fold1(f)) && (i < FORA_SEMPRE || !re.test(ctxTexto)))) {
           tirouFora += 1
           return true
@@ -3120,13 +3285,13 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
         if (CJK_VISIVEL.test(f)) { tirouCjk += 1; return true }
         if (fraseInglesSolta(f)) return true
         if (!pergunta && fraseInsinuacao(f)) return true
-        if (!pergunta && !fraseAusenciaExata(visivel) && fraseEco(f)) return true
+        if (!pergunta && !fraseAusenciaExata(visivel) && !fraseCoberturaIncompleta(visivel) && fraseEco(f)) return true
         return false
       })
       const ajustadas = pergunta
         ? semEco.map((f) => {
           const visivel = restaurarTrechos(f, mascaras)
-          return fraseEco(f) && !fraseAusenciaExata(visivel) ? tirarTrechosEco(f) : f
+          return fraseEco(f) && !fraseAusenciaExata(visivel) && !fraseCoberturaIncompleta(visivel) ? tirarTrechosEco(f) : f
         }).filter((f) => f.trim())
         : semEco
       return ajustadas.map((f) => f.trim()).filter(Boolean).join(' ')
@@ -3182,6 +3347,34 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       row.justificativa = justa.texto
     }
     row.texto = publico.texto
+    const textoVisivel = visivel(row.texto)
+    if (!textoVisivel.trim()) { removed = true; continue }
+    const ehAusencia = ehConclusaoDeAusencia(row.texto) || ehConclusaoDeAusencia(textoVisivel)
+    if (ehAusencia) {
+      const declared = asStringArray(row.base)
+      const legacy = declared.length > 0
+        ? declared
+        : [...asStringArray(row.entidades), ...asStringArray(row.relacoes)]
+      const base = unique(legacy.filter((id) => {
+        if (allowedEntities.has(id) || allowedRelations.has(id)) return true
+        if (fontesById.has(id)) return false
+        removed = true
+        return false
+      })).slice(0, MAX_IDS_BLOCO)
+      for (const id of asStringArray(row.fontes).map(fonteId)) {
+        if (!id || !fontesById.has(id)) removed = true
+      }
+      const tipoAusencia: 'inferencia' | 'hipotese' = row.tipo === 'hipotese' ? 'hipotese' : 'inferencia'
+      blocos.push({
+        tipo: tipoAusencia,
+        texto: textoVisivel,
+        base,
+        justificativa: typeof row.justificativa === 'string' && row.justificativa.trim()
+          ? visivel(row.justificativa)
+          : 'A base ainda não cobre este ponto.',
+      })
+      continue
+    }
     // Prosa corrida: hipótese e inferência viram parágrafo com as fontes das relações-base (a tese já vem marcada no texto).
     if ((row.tipo === 'inferencia' || (row.tipo === 'hipotese' && !/a base n[aã]o mostra|\?/i.test(row.texto))) && PROSA_CORRIDA.ativo) {
       const base = unique(asStringArray(row.base).concat(asStringArray(row.relacoes)))
@@ -3197,7 +3390,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
         if (rels.length) console.info(JSON.stringify({ evento: 'chat_base_reatribuida', n: rels.length }))
       }
       const fs = unique(rels.flatMap((id) => relationsById.get(id)?.fontes ?? []).filter((id) => fontesById.has(id))).slice(0, MAX_IDS_BLOCO)
-      blocos.push({ tipo: 'documentado', texto: visivel(row.texto), entidades: base.filter((id) => allowedEntities.has(id)).slice(0, MAX_IDS_BLOCO), relacoes: rels, fontes: fs })
+      blocos.push({ tipo: 'documentado', texto: textoVisivel, entidades: base.filter((id) => allowedEntities.has(id)).slice(0, MAX_IDS_BLOCO), relacoes: rels, fontes: fs })
       continue
     }
     if (row.tipo === 'hipotese' && !/a base n[aã]o mostra|\?/i.test(row.texto)) { removed = true; continue }
@@ -3213,7 +3406,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       })).slice(0, MAX_IDS_BLOCO)
       blocos.push({
         tipo: row.tipo,
-        texto: visivel(row.texto),
+        texto: textoVisivel,
         base,
         justificativa: typeof row.justificativa === 'string' ? visivel(row.justificativa) : '',
       })
@@ -3235,7 +3428,7 @@ export function sanitizeAnswer(raw: unknown, ctx: ChatContextPayload): { answer:
       refusedPerson = true
       continue
     }
-    blocos.push({ tipo: 'documentado', texto: visivel(row.texto), entidades, relacoes, fontes })
+    blocos.push({ tipo: 'documentado', texto: textoVisivel, entidades, relacoes, fontes })
   }
 
   // Parágrafo esvaziado pelos filtros (tudo era fato de fora) sai da resposta.
@@ -3543,7 +3736,7 @@ export function fallbackSemLigacao(ctx: ChatContextPayload): SanitizedAnswer | n
   const plainText = (value: string) => value.replace(/<[^>]*>/g, '').trim()
   const names = ctx.raizes.map((root) => plainText(entityName(ctx, root.id)).split('·')[0].trim() || root.id)
   const sourceIds = new Set(ctx.fontes.map((fonte) => fonte.id))
-  const blocos: BlocoDocumentado[] = []
+  const blocos: ChatBloco[] = []
   for (const [index, root] of ctx.raizes.entries()) {
     // A ordem do recorte já expressa a prioridade das relações.
     const relation = ctx.relacoes.find((rel) => rel.origem === root.id || rel.destino === root.id)
@@ -3562,9 +3755,10 @@ export function fallbackSemLigacao(ctx: ChatContextPayload): SanitizedAnswer | n
   if (blocos.length < 2) return null
 
   blocos.push({
-    tipo: 'documentado',
+    tipo: 'inferencia',
     texto: `O atlas não documenta ligação direta entre ${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}.`,
-    entidades: [], relacoes: [], fontes: [],
+    base: [],
+    justificativa: 'A ligação pedida não está documentada na base.',
   })
   const { answer } = sanitizeAnswer({
     blocos,
@@ -4064,6 +4258,8 @@ export async function streamPrepared(input: {
   now?: () => number
   /** Repetição por poucos parágrafos. Sem o campo, a produção repete. */
   repetirCurto?: boolean
+  webFallback?: boolean | string | null
+  webSearch?: WebSearchClient
 }): Promise<number> {
   try {
     return await streamPreparedInner(input)
@@ -4074,6 +4270,111 @@ export async function streamPrepared(input: {
       console.error(JSON.stringify({ evento: 'chat_lease_release_failed' }))
     }
   }
+}
+
+function rawTemInexistencia(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  const blocos = (raw as { blocos?: unknown }).blocos
+  if (!Array.isArray(blocos)) return false
+  return blocos.some((b) => {
+    if (!b || typeof b !== 'object') return false
+    const texto = (b as { texto?: unknown }).texto
+    if (typeof texto !== 'string') return false
+    const mascaras: string[] = []
+    const mascarado = protegerTrechos(texto, undefined, mascaras)
+    return frasesDe(mascarado).some((f) => fraseInexistencia(restaurarTrechos(f, mascaras)))
+  })
+}
+
+function sanearTextoExterno(texto: string, ctx: ChatContextPayload): string {
+  const bruto = limparCodigosDoNome(texto.trim(), ctx)
+  if (!bruto) return ''
+  const filtrado = filtrarProsaVisivel(bruto, '', ctx)
+  if (!filtrado) return ''
+  return textoDepoisDaGuarda(filtrado, ctx, []).texto.trim()
+}
+
+function faltaCoberturaBrasilNoRecorte(mensagem: string, ctx: ChatContextPayload): boolean {
+  if (!/\bbrasil/.test(normalizeQuery(mensagem))) return false
+  if ((ctx.raizes ?? []).length !== 1) return false
+  const byId = indexarEntidades(ctx)
+  return !(ctx.relacoes ?? []).some((rel) => mencionaBrasil(rel, byId))
+}
+
+function resumoDocumentadoDoRecorte(ctx: ChatContextPayload): {
+  bloco: BlocoDocumentado
+  entidades: EntidadeChat[]
+  fontes: string[]
+  fontes_detalhe: Record<string, FonteDetalhe>
+} | null {
+  const fontesMap = new Map<string, ChatContextFonte>()
+  for (const fonte of ctx.fontes ?? []) {
+    if (fonte?.id && !isInternalSource(fonte)) fontesMap.set(fonte.id, sanitizePublicFonte(fonte))
+  }
+  const rels = (ctx.relacoes ?? []).filter((r) => r?.id && r.afirmacao && (r.fontes ?? []).some((id) => fontesMap.has(id)))
+  if (!rels.length) return null
+  const escolhidas = rels.slice(0, 3)
+  const frases: string[] = []
+  const entIds: string[] = []
+  const relIds: string[] = []
+  const fonteIds: string[] = []
+  for (const root of ctx.raizes ?? []) {
+    if (root?.id && !entIds.includes(root.id)) entIds.push(root.id)
+  }
+  for (const rel of escolhidas) {
+    const af = (rel.afirmacao ?? '').replace(/<[^>]*>/g, '').trim()
+    if (!af) continue
+    frases.push(/[.!?]$/.test(af) ? af : `${af}.`)
+    if (!relIds.includes(rel.id)) relIds.push(rel.id)
+    for (const id of [rel.origem, rel.destino]) {
+      if (id && !entIds.includes(id)) entIds.push(id)
+    }
+    for (const id of rel.fontes ?? []) {
+      if (id && fontesMap.has(id) && !fonteIds.includes(id)) fonteIds.push(id)
+    }
+  }
+  if (!frases.length || !fonteIds.length) return null
+  const citedRelSet = new Set(relIds)
+  const fontes_detalhe: Record<string, FonteDetalhe> = {}
+  for (const id of fonteIds.slice(0, MAX_IDS_BLOCO)) {
+    const names = namesCitingFonte(ctx, id, citedRelSet)
+    fontes_detalhe[id] = fonteDetalhe(fontesMap.get(id)!, names)
+  }
+  const { answer } = sanitizeAnswer({
+    blocos: [{
+      tipo: 'documentado',
+      texto: frases.join(' '),
+      entidades: entIds.slice(0, MAX_IDS_BLOCO),
+      relacoes: relIds.slice(0, MAX_IDS_BLOCO),
+      fontes: fonteIds.slice(0, MAX_IDS_BLOCO),
+    }],
+    sem_base: false,
+  }, ctx)
+  const doc = answer.blocos.find((b): b is BlocoDocumentado => b.tipo === 'documentado')
+  if (!doc) return null
+  return {
+    bloco: doc,
+    entidades: answer.entidades,
+    fontes: answer.fontes,
+    fontes_detalhe: answer.fontes_detalhe,
+  }
+}
+
+function garantirResumoDaBase(answer: SanitizedAnswer, ctx: ChatContextPayload): void {
+  if (countValidDocumentado(answer.blocos) > 0) return
+  const resumo = resumoDocumentadoDoRecorte(ctx)
+  if (!resumo) return
+  answer.blocos.unshift(resumo.bloco)
+  for (const ent of resumo.entidades) {
+    if (!answer.entidades.some((e) => e.id === ent.id)) answer.entidades.push(ent)
+  }
+  for (const id of resumo.fontes) {
+    if (!answer.fontes.includes(id)) answer.fontes.push(id)
+    if (!answer.fontes_detalhe[id] && resumo.fontes_detalhe[id]) {
+      answer.fontes_detalhe[id] = resumo.fontes_detalhe[id]
+    }
+  }
+  answer.sem_base = false
 }
 
 async function streamPreparedInner(input: {
@@ -4087,6 +4388,8 @@ async function streamPreparedInner(input: {
   retryDelayMs?: number
   now?: () => number
   repetirCurto?: boolean
+  webFallback?: boolean | string | null
+  webSearch?: WebSearchClient
 }): Promise<number> {
   const { prepared, db, emit } = input
   let creditsOpen = true
@@ -4223,7 +4526,9 @@ async function streamPreparedInner(input: {
   }
   const idsInvalidos = (bruto: string) => {
     try {
-      const sane = lerModelo(bruto)
+      const cru = jsonCompleto(bruto) ? parseModelJson(bruto) : parseModelJson(repararJsonTruncado(bruto))
+      if (rawTemInexistencia(cru)) return false
+      const sane = sanearModelo(cru, prepared.context, prepared.apelidos).answer
       if (sane.sem_base && countValidDocumentado(sane.blocos) > 0) return false
       return respostaComTexto(sane.blocos) && !hasValidId(sane.blocos)
     } catch {
@@ -4402,6 +4707,92 @@ async function streamPreparedInner(input: {
   }
   // Guarda jurídica de novo, depois de todos os filtros e antes do débito.
   answer = revalidarCampos(answer, prepared.context)
+  const tinhaInexistencia = !prepared.pauta && !prepared.pressure && rawTemInexistencia(parsed)
+  const faltaBrasil = !prepared.pauta && !prepared.pressure && !prepared.ausentes.length
+    && faltaCoberturaBrasilNoRecorte(prepared.mensagem, prepared.context)
+  const webAtivo = isWebFallbackEnabled(input.webFallback)
+  const coberturaIncompleta = tinhaInexistencia || faltaBrasil
+    || (webAtivo && !prepared.pauta && !prepared.pressure && (prepared.ausentes.length > 0 || answer.blocos.length === 0 || answer.sem_base))
+  const abortarAntesDoCommit = async (err?: unknown): Promise<number> => {
+    const userAbort = isAbortError(err, input.signal) && (input.isUserAbort ? input.isUserAbort() : true)
+    const code: ChatErrorCode = userAbort ? 'abortado' : 'rede'
+    const custoAbort = costNow()
+    await unwind(custoAbort)
+    finish(errorEvent(code, chatErrorMessage(code)))
+    if (generatedNow() || temGasto()) {
+      await safeLog(db, logRow(prepared, { ...usage, cost: possiblyCharged || generatedNow() || temGasto() ? custoAbort : 0 }, code, started))
+    }
+    return 200
+  }
+
+  const fontesExternas: Array<{ id: string; detalhe: FonteDetalhe }> = []
+  if (coberturaIncompleta) {
+    garantirResumoDaBase(answer, prepared.context)
+    const raizId = prepared.context.raizes?.[0]?.id
+    const nomeRaiz = (raizId ? nomePublico(prepared.context, raizId) : null) || 'o tema consultado'
+    const baseRaiz = raizId ? [raizId] : []
+    if (webAtivo) {
+      let hits: WebSearchHit[] = []
+      let falhaBusca = false
+      if (input.webSearch) {
+        try {
+          const encontrados = await input.webSearch.search({ query: prepared.mensagem, signal: input.signal, maxResults: 3 })
+          if (input.signal.aborted) return await abortarAntesDoCommit(input.signal.reason)
+          hits = (encontrados ?? []).filter((h) => h && typeof h.url === 'string' && /^https?:\/\//i.test(h.url.trim()) && typeof h.titulo === 'string' && h.titulo.trim())
+          if (!hits.length) falhaBusca = true
+        } catch (err) {
+          if (input.signal.aborted || isAbortError(err, input.signal)) {
+            return await abortarAntesDoCommit(err)
+          }
+          falhaBusca = true
+        }
+      } else {
+        falhaBusca = true
+      }
+      if (!falhaBusca && hits.length > 0) {
+        const trechos: string[] = []
+        for (const [idx, hit] of hits.slice(0, 3).entries()) {
+          const tituloLimpo = sanearTextoExterno(hit.titulo, prepared.context) || 'Fonte externa'
+          const editorLimpo = hit.editor ? sanearTextoExterno(hit.editor, prepared.context) : ''
+          const resumoLimpo = hit.trecho ? sanearTextoExterno(hit.trecho, prepared.context) : ''
+          const urlLimpa = hit.url.trim()
+          const rotuloFonte = editorLimpo ? `${editorLimpo} — ${tituloLimpo}` : tituloLimpo
+          trechos.push(`${rotuloFonte}${resumoLimpo ? `: ${resumoLimpo}` : ''} (${urlLimpa} · ${EXTERNA_NAO_VERIFICADA})`)
+          fontesExternas.push({
+            id: `ext_${idx + 1}`,
+            detalhe: {
+              titulo: `${rotuloFonte} (${EXTERNA_NAO_VERIFICADA})`,
+              url: urlLimpa,
+              localizador: EXTERNA_NAO_VERIFICADA,
+            },
+          })
+        }
+        answer.blocos.push({
+          tipo: 'inferencia',
+          texto: `A base ainda não cobre integralmente este ponto sobre ${nomeRaiz}. Referências obtidas em busca externa (${EXTERNA_NAO_VERIFICADA}): ${trechos.join(' | ')}.`,
+          base: baseRaiz,
+          justificativa: `Complemento obtido em ${EXTERNA_NAO_VERIFICADA}.`,
+        })
+      } else {
+        answer.blocos.push({
+          tipo: 'inferencia',
+          texto: `A base ainda não cobre este ponto sobre ${nomeRaiz} e a busca externa não pôde ser concluída.`,
+          base: baseRaiz,
+          justificativa: 'A base ainda não cobre este ponto e a busca externa falhou.',
+        })
+      }
+    } else if (!answer.blocos.some((b) => b.tipo !== 'documentado' && ehConclusaoDeAusencia(b.texto))) {
+      const textoLacuna = faltaBrasil
+        ? `A base ainda não cobre a relação de ${nomeRaiz} com o Brasil; os registros disponíveis na base tratam de outros vínculos de ${nomeRaiz}.`
+        : `A base ainda não cobre o ponto pedido sobre ${nomeRaiz}; os registros disponíveis na base tratam apenas dos vínculos documentados.`
+      answer.blocos.push({
+        tipo: 'inferencia',
+        texto: textoLacuna,
+        base: baseRaiz,
+        justificativa: 'A base ainda não cobre este recorte.',
+      })
+    }
+  }
   // Sem id válido continua fora da base, com o custo real da tentativa.
   const semId = answer.blocos.length > 0 && !hasValidId(answer.blocos)
   if (semId) console.info(JSON.stringify({ evento: 'sem_id_valido' }))
@@ -4425,6 +4816,10 @@ async function streamPreparedInner(input: {
     }
     answer = fallback
     semLigacao = true
+  }
+
+  if (input.signal.aborted) {
+    return await abortarAntesDoCommit(input.signal.reason)
   }
 
   let balances: CreditBalances
@@ -4466,7 +4861,7 @@ async function streamPreparedInner(input: {
   // F1e(b): só quando a pergunta é sobre a ligação; nas outras a lacuna fica no prompt.
   const lacuna = !prepared.pauta && !prepared.pressure && perguntaDeLigacao(prepared.mensagem) ? fraseLacunaFaltante(answer.blocos, prepared.context) : null
   if (lacuna && false) {
-    answer.blocos.push({ tipo: 'documentado', texto: lacuna ?? '', entidades: [], relacoes: [], fontes: [] })
+    answer.blocos.push({ tipo: 'inferencia', texto: lacuna ?? '', base: [], justificativa: 'A ligação direta não consta na base.' })
     console.info(JSON.stringify({ evento: 'lacuna_canonica' }))
   }
   if (!prepared.pauta && !prepared.pressure && answer.blocos.length) {
@@ -4479,8 +4874,20 @@ async function streamPreparedInner(input: {
   answer.avisos = answer.avisos.map((aviso) => ({ ...aviso, texto: limparCampo(aviso.texto, prepared.context) }))
   const avisoAusente = avisoPrevisto
   if (avisoAusente && !answer.blocos.some((bloco) => foldName(bloco.texto).includes('nao esta na base'))) {
-    answer.blocos.push({ tipo: 'documentado', texto: avisoAusente, entidades: [], relacoes: [], fontes: [] })
+    answer.blocos.push({ tipo: 'inferencia', texto: avisoAusente, base: [], justificativa: 'A base ainda não cobre este ponto.' })
   }
+  // Garantia final da regra de ausência: nenhum bloco que conclui ausência permanece como documentado.
+  answer.blocos = answer.blocos.map((bloco): ChatBloco => {
+    if (bloco.tipo === 'documentado' && ehConclusaoDeAusencia(bloco.texto)) {
+      return {
+        tipo: 'inferencia',
+        texto: bloco.texto,
+        base: unique([...bloco.entidades, ...bloco.relacoes]).slice(0, MAX_IDS_BLOCO),
+        justificativa: 'A base ainda não cobre este ponto.',
+      }
+    }
+    return bloco
+  })
   // UX3a não aceita chave nova no final: a pergunta em aberto fecha o último bloco, em parágrafo próprio.
   const ultimo = answer.blocos.at(-1)
   if (answer.em_aberto && ultimo) ultimo.texto = limparCampo(`${ultimo.texto.trimEnd()}\n\n${answer.em_aberto}`, prepared.context)
@@ -4488,6 +4895,10 @@ async function streamPreparedInner(input: {
     if (bloco.tipo !== 'documentado') bloco.justificativa = limparCampo(bloco.justificativa, prepared.context)
   }
   aplicarMetadadosFinais(answer, prepared.context)
+  for (const ext of fontesExternas) {
+    if (!answer.fontes.includes(ext.id)) answer.fontes.push(ext.id)
+    answer.fontes_detalhe[ext.id] = ext.detalhe
+  }
   const finalEvent: ChatFinal = {
     conversa_id: prepared.conversaId,
     blocos: answer.blocos,
@@ -4605,6 +5016,8 @@ export async function runChat(input: {
   onEvent?: (event: ChatSseEvent) => void
   /** Repetição por poucos parágrafos. Sem o campo, a produção repete. */
   repetirCurto?: boolean
+  webFallback?: boolean | string | null
+  webSearch?: WebSearchClient
 }): Promise<{ httpStatus: number; events: ChatSseEvent[] }> {
   const events: ChatSseEvent[] = []
   const emit = (event: ChatSseEvent) => {
@@ -4633,6 +5046,8 @@ export async function runChat(input: {
     isUserAbort: input.isUserAbort,
     retryDelayMs: input.retryDelayMs,
     repetirCurto: input.repetirCurto,
+    webFallback: input.webFallback,
+    webSearch: input.webSearch,
     emit,
   })
   return { httpStatus, events }
