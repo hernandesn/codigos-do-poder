@@ -829,3 +829,87 @@ test('pinça não dispara o expandir do duplo toque', { timeout: 180000 }, async
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+async function instalarCentro(page) {
+  await page.evaluate(() => {
+    window.__centroCartao = id => {
+      const card = document.querySelector('#network .network-node.selected .node-card');
+      if (!card) return null;
+      const rede = document.getElementById('network').getBoundingClientRect();
+      const insp = document.getElementById('inspector');
+      const bottom = innerWidth <= 620 && insp && !insp.hidden ? Math.min(rede.bottom, insp.getBoundingClientRect().top) : rede.bottom;
+      const r = card.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      const cx = rede.left + rede.width / 2;
+      const cy = (rede.top + bottom) / 2;
+      const g = window.mapaCompleto.pontoNaTela(id);
+      return { x, y, cx, cy, dist: Math.hypot(x - cx, y - cy), g, bottom, top: rede.top, left: rede.left, right: rede.right };
+    };
+  });
+}
+
+test('com dono ativo a alça e o chip trazem o cartão para o centro', { timeout: 180000 }, async () => {
+  const id = 'ipes';
+  const esperarCentro = (page) => page.waitForFunction(nid => {
+    const c = window.__centroCartao(nid);
+    return !!(c && c.dist <= 1 && c.y >= c.top - 0.5 && c.y <= c.bottom + 0.5 && c.x >= c.left - 0.5 && c.x <= c.right + 0.5);
+  }, id, { timeout: 4000, polling: 'raf' });
+
+  const { context, page, errors } = await abrirAnimado(1440, 900);
+  try {
+    await mapaAberto(page);
+    await page.evaluate(nid => { location.hash = 'e=' + nid; }, id);
+    await page.waitForFunction(nid => {
+      const card = document.querySelector('#network .network-node.selected .node-card');
+      return !!(window.mural.getState().selected && window.mural.getState().selected.id === nid && card);
+    }, id, { timeout: 8000 });
+    await instalarCentro(page);
+    await esperarCentro(page);
+    const antesArrasto = await page.evaluate(nid => window.__centroCartao(nid), id);
+    await page.mouse.move(antesArrasto.x, antesArrasto.y);
+    await page.mouse.down();
+    await page.mouse.move(antesArrasto.x + 320, antesArrasto.y, { steps: 8 });
+    await page.mouse.up();
+    await assentar(page);
+    const naBorda = await page.evaluate(nid => window.__centroCartao(nid), id);
+    assert.ok(naBorda.dist > 200, 'cartão deveria estar longe do centro ' + JSON.stringify(naBorda));
+    await page.locator('#selection-label').click();
+    await esperarCentro(page);
+    const centro = await page.evaluate(nid => window.__centroCartao(nid), id);
+    assert.ok(centro.dist <= 1, JSON.stringify(centro));
+    assert.ok(Math.abs((centro.x - naBorda.x) - (centro.g.x - naBorda.g.x)) <= 1, JSON.stringify({ naBorda, centro }));
+    assert.ok(Math.abs((centro.y - naBorda.y) - (centro.g.y - naBorda.g.y)) <= 1, JSON.stringify({ naBorda, centro }));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+
+  const mobile = await abrirAnimado(393, 852);
+  try {
+    await mapaAberto(mobile.page);
+    await mobile.page.evaluate(nid => { location.hash = 'e=' + nid; }, id);
+    await mobile.page.waitForFunction(() => {
+      const h = document.getElementById('sheet-handle');
+      return !!(window.mural.getState().selected && window.mural.getState().selected.id === 'ipes' && document.getElementById('inspector').dataset.sheet === 'half' && h && getComputedStyle(h).display !== 'none');
+    }, null, { timeout: 8000 });
+    await instalarCentro(mobile.page);
+    await esperarCentro(mobile.page);
+    const antes = await mobile.page.evaluate(nid => window.__centroCartao(nid), id);
+    await mobile.page.mouse.move(antes.x, antes.y);
+    await mobile.page.mouse.down();
+    await mobile.page.mouse.move(antes.x, Math.max(8, antes.y - 160), { steps: 6 });
+    await mobile.page.mouse.up();
+    await assentar(mobile.page);
+    const naBorda = await mobile.page.evaluate(nid => window.__centroCartao(nid), id);
+    assert.ok(naBorda.dist > 80, 'alça: cartão deveria estar longe do centro ' + JSON.stringify(naBorda));
+    await mobile.page.locator('#sheet-handle').focus();
+    await mobile.page.keyboard.press('Home');
+    await mobile.page.waitForFunction(() => document.getElementById('inspector').dataset.sheet === 'collapsed', null, { timeout: 4000 });
+    await esperarCentro(mobile.page);
+    const centro = await mobile.page.evaluate(nid => window.__centroCartao(nid), id);
+    assert.ok(centro.dist <= 1, JSON.stringify(centro));
+    assert.ok(Math.abs((centro.x - naBorda.x) - (centro.g.x - naBorda.g.x)) <= 1, JSON.stringify({ naBorda, centro }));
+    assert.ok(Math.abs((centro.y - naBorda.y) - (centro.g.y - naBorda.g.y)) <= 1, JSON.stringify({ naBorda, centro }));
+    assert.deepEqual(mobile.errors, []);
+  } finally { await mobile.context.close(); }
+});
+

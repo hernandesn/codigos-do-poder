@@ -155,6 +155,8 @@
     animando: false,
     gesto: false,
     dono: false,
+    seguirCentro: false,
+    seguirTimer: 0,
     agora: () => performance.now(),
     passoAnim: null,
     quadroAnim: 0,
@@ -781,6 +783,9 @@
     vivo.animando = false;
     vivo.gesto = false;
     vivo.dono = false;
+    vivo.seguirCentro = false;
+    if (vivo.seguirTimer) clearTimeout(vivo.seguirTimer);
+    vivo.seguirTimer = 0;
     vivo.passoAnim = null;
     if (vivo.quadroAnim) cancelAnimationFrame(vivo.quadroAnim);
     vivo.quadroAnim = 0;
@@ -1212,6 +1217,68 @@
     };
   }
 
+  function cameraDoTexto(valor) {
+    const m = /translate\(\s*([^\s)]+)\s+([^\s)]+)\s*\)\s*scale\(\s*([^)\s]+)\s*\)/.exec(String(valor));
+    if (!m) return null;
+    const x = Number(m[1]);
+    const y = Number(m[2]);
+    const k = Number(m[3]);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !(k > 0)) return null;
+    return { x, y, k };
+  }
+
+  // O centerNode da alça ou do chip escreve o #viewport. O grafo acompanha
+  // essa câmera, em vez de repor a derivada e deixar o cartão fora da vista.
+  function puxarGrafo(mural) {
+    const G0 = vivo.baseGrafo;
+    const M0 = vivo.baseMural;
+    const s = G0 && M0 && M0.k > 0 ? mural.k / M0.k : 0;
+    if (!G0 || !M0 || !(s > 0) || !Number.isFinite(s)) {
+      adotar();
+      return;
+    }
+    const off = offsetTela();
+    const cam = {
+      k: G0.k * s,
+      x: mural.x - M0.x * s + G0.x * s - off.x * (s - 1),
+      y: mural.y - M0.y * s + G0.y * s - off.y * (s - 1),
+    };
+    vivo.cam.k = cam.k;
+    vivo.cam.x = cam.x;
+    vivo.cam.y = cam.y;
+    vivo.baseGrafo = { k: cam.k, x: cam.x, y: cam.y };
+    vivo.baseMural = { k: mural.k, x: mural.x, y: mural.y };
+    vivo.muralDerivada = { k: mural.k, x: mural.x, y: mural.y };
+    vivo.dono = true;
+    atualizarZoomTexto();
+    pedirQuadro();
+    // Cada quadro do centerNode renova o prazo. A animação de 240 ms
+    // não perde a trava entre um quadro e o seguinte.
+    armarFimDoCentro(480);
+  }
+
+  function armarFimDoCentro(ms) {
+    if (vivo.seguirTimer) clearTimeout(vivo.seguirTimer);
+    vivo.seguirTimer = setTimeout(() => {
+      vivo.seguirTimer = 0;
+      vivo.seguirCentro = false;
+    }, ms);
+  }
+
+  function pedirCentroLegitimo() {
+    if (!vivo.ativo || !vistaAll()) return;
+    cancelarAnimacao();
+    vivo.pendenteCam = null;
+    if (vivo.gestoQuadro) {
+      cancelAnimationFrame(vivo.gestoQuadro);
+      vivo.gestoQuadro = 0;
+    }
+    vivo.seguirCentro = true;
+    // O centerNode só escreve no quadro seguinte. O prazo curto corre
+    // a partir dessa escrita; aqui o teto só evita a trava ficar aberta.
+    armarFimDoCentro(1600);
+  }
+
   function instalarTrava() {
     const vp = document.getElementById('viewport');
     if (!vp || vp.dataset.grafoTrava) return;
@@ -1219,8 +1286,10 @@
     const orig = vp.setAttribute;
     vp.setAttribute = function (nome, valor) {
       if (nome !== 'transform' || vivo.escrevendo || !vivo.ativo || !vistaAll()) return orig.call(this, nome, valor);
-      // Enquanto o grafo conduz, o mural não grava a câmera dele por cima.
-      if (vivo.animando || vivo.gesto || vivo.dono) {
+      // Gesto e a animação de 280 ms do grafo continuam fechados.
+      // O centerNode da alça ou do chip é o único que atravessa o dono.
+      const seguir = !!(vivo.seguirCentro && !vivo.gesto && !vivo.animando);
+      if ((vivo.animando || vivo.gesto || vivo.dono) && !seguir) {
         const cam = derivarMural();
         if (cam) {
           lembrarMural(cam);
@@ -1230,7 +1299,11 @@
         }
       }
       const ret = orig.call(this, nome, valor);
-      adotar();
+      if (seguir) {
+        const mural = cameraDoTexto(valor);
+        if (mural) puxarGrafo(mural);
+        else adotar();
+      } else adotar();
       return ret;
     };
   }
@@ -1307,6 +1380,8 @@
     const p = localDe(ev);
     vivo.ponteiros.set(ev.pointerId, p);
     vivo.gesto = true;
+    vivo.seguirCentro = false;
+    if (vivo.seguirTimer) { clearTimeout(vivo.seguirTimer); vivo.seguirTimer = 0; }
     cancelarAnimacao();
     const palco = document.getElementById('grafo-palco');
     if (alvo === 'palco') {
@@ -1411,6 +1486,8 @@
     if (!vivo.ativo) return;
     const alvo = alvoDoGesto(ev);
     if (alvo !== 'palco' && alvo !== 'rede') return;
+    vivo.seguirCentro = false;
+    if (vivo.seguirTimer) { clearTimeout(vivo.seguirTimer); vivo.seguirTimer = 0; }
     ev.preventDefault();
     ev.stopPropagation();
     const rede = document.getElementById('network');
@@ -1597,6 +1674,17 @@
       if (id) vivo.centroPendente = id;
     }, true);
 
+    document.addEventListener('click', ev => {
+      if (!vivo.ativo || !ev.target.closest || !ev.target.closest('#selection-label')) return;
+      pedirCentroLegitimo();
+    }, true);
+
+    document.addEventListener('pointerup', ev => {
+      if (!vivo.ativo || !ehMobile()) return;
+      if (!ev.target.closest || !ev.target.closest('#sheet-handle')) return;
+      pedirCentroLegitimo();
+    }, true);
+
     document.addEventListener('keydown', ev => {
       if (!vivo.ativo || ev.key !== 'Home' || ev.altKey || ev.ctrlKey || ev.metaKey) return;
       const alvo = ev.target;
@@ -1606,6 +1694,14 @@
       ev.preventDefault();
       ev.stopPropagation();
       enquadrar(true);
+    }, true);
+
+    document.addEventListener('keydown', ev => {
+      if (!vivo.ativo || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      if (!ev.target.closest || !ev.target.closest('#sheet-handle')) return;
+      const teclas = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter', ' '];
+      if (!teclas.includes(ev.key)) return;
+      pedirCentroLegitimo();
     }, true);
 
     const camadaCartoes = document.getElementById('node-layer');
