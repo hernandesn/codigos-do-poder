@@ -6,6 +6,8 @@ import {
   OPENROUTER_KEY_URL,
   OPENROUTER_URL,
   chatErrorMessage,
+  createFetchWebSearch,
+  isWebFallbackEnabled,
   loadInferenceKeyAssessment,
   corsHeaders,
   formatSse,
@@ -184,6 +186,22 @@ export async function handleChatRequest(req: Request): Promise<Response> {
     resolveGate = resolve
   })
 
+  const webAtivo = isWebFallbackEnabled(readEnv('CHAT_WEB_FALLBACK'))
+  const webProviderRaw = (readEnv('CHAT_WEB_PROVIDER') ?? '').trim().toLowerCase()
+  const webProvider: 'brave' | 'tavily' | 'openrouter_search' = webProviderRaw === 'tavily'
+    ? 'tavily'
+    : webProviderRaw === 'openrouter_search'
+      ? 'openrouter_search'
+      : readEnv('BRAVE_SEARCH_API_KEY')
+        ? 'brave'
+        : readEnv('TAVILY_API_KEY')
+          ? 'tavily'
+          : 'openrouter_search'
+  const webApiKey = webProvider === 'brave'
+    ? readEnv('BRAVE_SEARCH_API_KEY') ?? ''
+    : webProvider === 'tavily'
+      ? readEnv('TAVILY_API_KEY') ?? ''
+      : readEnv('OPENROUTER_API_KEY') ?? ''
   const finished = streamPrepared({
     prepared,
     db,
@@ -191,6 +209,14 @@ export async function handleChatRequest(req: Request): Promise<Response> {
       apiKey: readEnv('OPENROUTER_API_KEY') ?? '',
       url: readEnv('OPENROUTER_URL') || OPENROUTER_URL,
     }),
+    webFallback: webAtivo,
+    ...(webAtivo ? {
+      webSearch: createFetchWebSearch({
+        provider: webProvider,
+        apiKey: webApiKey,
+        url: readEnv('CHAT_WEB_SEARCH_URL'),
+      }),
+    } : {}),
     signal: localAbort.signal,
     isUserAbort: () => req.signal.aborted || localAbort.signal.reason === 'client',
     emit(event) {
