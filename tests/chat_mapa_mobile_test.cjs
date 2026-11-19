@@ -22,7 +22,7 @@ before(async () => {
       const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
       if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
       const body = await fs.promises.readFile(file);
-      res.setHeader('content-type', file.endsWith('.html') ? 'text/html' : file.endsWith('.js') ? 'text/javascript' : file.endsWith('.json') ? 'application/json' : 'application/octet-stream');
+      res.setHeader('content-type', file.endsWith('.html') ? 'text/html' : file.endsWith('.js') ? 'text/javascript' : file.endsWith('.json') ? 'application/json' : file.endsWith('.css') ? 'text/css' : 'application/octet-stream');
       res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });

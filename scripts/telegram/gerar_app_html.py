@@ -7,7 +7,8 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 SITE = SCRIPTS.parent.parent
-INDEX_SHA = '5a179e6d7febd2b3bd6c488b00dc46a8b1b435d5a6a9f4da0a59289df5a3b8a9'
+# index.html mudou pelo grafo do mapa completo (#24).
+INDEX_SHA = 'a2181a1a4fbb342084e50037fa071838ff2141d618bf0b061f4b471e18dece60'
 TURNSTILE_STYLE_ATTR = "style-src-attr 'unsafe-hashes' 'sha256-HcrxrymsUfZBh2iqACpi+YzaRtmhmGlNKYCmyB23K2o='"
 
 

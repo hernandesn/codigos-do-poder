@@ -31,7 +31,7 @@ describe('UX6 UI no Chromium', { timeout: 120000 }, () => {
         const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
         if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
         const data = await fs.promises.readFile(file);
-        const type = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : file.endsWith('.woff2') ? 'font/woff2' : 'application/octet-stream';
+        const type = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : file.endsWith('.woff2') ? 'font/woff2' : 'application/octet-stream';
         res.writeHead(200, { 'content-type': type }); res.end(data);
       } catch { res.writeHead(404); res.end(); }
     });
