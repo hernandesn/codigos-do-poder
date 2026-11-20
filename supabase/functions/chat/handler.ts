@@ -188,15 +188,11 @@ export async function handleChatRequest(req: Request): Promise<Response> {
 
   const webAtivo = isWebFallbackEnabled(readEnv('CHAT_WEB_FALLBACK'))
   const webProviderRaw = (readEnv('CHAT_WEB_PROVIDER') ?? '').trim().toLowerCase()
-  const webProvider: 'brave' | 'tavily' | 'openrouter_search' = webProviderRaw === 'tavily'
-    ? 'tavily'
+  const webProvider: 'tavily' | 'brave' | 'openrouter_search' = webProviderRaw === 'brave'
+    ? 'brave'
     : webProviderRaw === 'openrouter_search'
       ? 'openrouter_search'
-      : readEnv('BRAVE_SEARCH_API_KEY')
-        ? 'brave'
-        : readEnv('TAVILY_API_KEY')
-          ? 'tavily'
-          : 'openrouter_search'
+      : 'tavily'
   const webApiKey = webProvider === 'brave'
     ? readEnv('BRAVE_SEARCH_API_KEY') ?? ''
     : webProvider === 'tavily'

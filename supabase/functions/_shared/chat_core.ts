@@ -593,7 +593,7 @@ export function createFetchWebSearch(opts: {
   url?: string
   fetchImpl?: typeof fetch
 }): WebSearchClient {
-  const provider = opts.provider ?? 'brave'
+  const provider = opts.provider ?? 'tavily'
   const doFetch = opts.fetchImpl ?? fetch
   return {
     async search(input) {
@@ -626,7 +626,48 @@ export function createFetchWebSearch(opts: {
           return [{ titulo, url, ...(editor ? { editor } : {}), ...(trecho ? { trecho } : {}) }]
         }).slice(0, maxResults)
       }
-      const endpoint = opts.url || (provider === 'tavily' ? 'https://api.tavily.com/search' : 'https://openrouter.ai/api/v1/search')
+      if (provider === 'tavily') {
+        const endpoint = opts.url || 'https://api.tavily.com/search'
+        const res = await doFetch(endpoint, {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: input.query,
+            search_depth: 'basic',
+            max_results: maxResults,
+            include_answer: false,
+            include_raw_content: false,
+          }),
+          signal: input.signal,
+        })
+        if (!res.ok) throw new Error(`tavily_http_${res.status}`)
+        const body = await res.json() as { results?: Array<Record<string, unknown>> }
+        const list = Array.isArray(body?.results) ? body.results! : []
+        return list.flatMap((item): WebSearchHit[] => {
+          const url = typeof item.url === 'string' ? item.url.trim() : ''
+          const titulo = typeof item.title === 'string' ? item.title.trim() : ''
+          if (!/^https?:\/\//i.test(url) || !titulo) return []
+          const editor = typeof item.source === 'string' ? item.source.trim() : typeof item.publisher === 'string' ? item.publisher.trim() : undefined
+          const trecho = typeof item.content === 'string' ? item.content.trim() : typeof item.snippet === 'string' ? item.snippet.trim() : undefined
+          const publicadoEm = typeof item.published_date === 'string'
+            ? item.published_date.trim()
+            : typeof item.published_at === 'string'
+              ? item.published_at.trim()
+              : undefined
+          return [{
+            titulo,
+            url,
+            ...(editor ? { editor } : {}),
+            ...(trecho ? { trecho } : {}),
+            ...(publicadoEm ? { publicado_em: publicadoEm } : {}),
+          }]
+        }).slice(0, maxResults)
+      }
+      const endpoint = opts.url || 'https://openrouter.ai/api/v1/search'
       const res = await doFetch(endpoint, {
         method: 'POST',
         headers: {
@@ -3688,11 +3729,13 @@ function pedidosDaMensagem(mensagem: string): string[] {
 }
 
 /**
- * Recusa só quando todo pedido é pergunta de ligação e cita um ausente.
- * Pedido respondível (não é ligação, ou não cita o ausente) manda ao modelo.
+ * Recusa antes do crédito só quando todo pedido é pergunta de ligação com ausente
+ * e não há nenhum recorte aproveitável na base. Se houver outra ponta na base
+ * (ex.: Fundação Rockefeller em Odebrecht–Rockefeller), segue ao modelo para
+ * responder com o mais próximo da base em vez de recusa seca.
  */
-function soLigacaoComAusente(mensagem: string, ausentes: readonly string[]): boolean {
-  if (!ausentes.length) return false
+function soLigacaoComAusente(mensagem: string, ausentes: readonly string[], ctx: ChatContextPayload): boolean {
+  if (!ausentes.length || !contextIsEmpty(ctx)) return false
   const pedidos = pedidosDaMensagem(mensagem)
   if (!pedidos.length) return false
   return pedidos.every((pedido) => {
@@ -4194,8 +4237,8 @@ export async function prepareChat(input: {
     // A consulta falha antes da reserva: não há crédito nem orçamento para devolver.
     return fail('rede', 'Falha ao consultar a base.')
   }
-  // Q14 e S-15 antes de reserveCredits. Sem saldo, a resposta continua fora_da_base.
-  if (entityIds.length === 0 && soLigacaoComAusente(request.mensagem, recovered.ausentes)) {
+  // Sem recorte aproveitável (contexto vazio com ausente) ou seleção fora da pergunta: fora_da_base antes de reserveCredits.
+  if (entityIds.length === 0 && soLigacaoComAusente(request.mensagem, recovered.ausentes, context)) {
     return fail('fora_da_base', mensagemForaDaBase(recovered.ausentes))
   }
   if (entityIds.length === 0 && imperativoSoComAusente(request.mensagem, recovered.ausentes, context)) {
@@ -4586,12 +4629,23 @@ async function streamPreparedInner(input: {
       return 0
     }
   }
+  let resumoBaseDisponivel: boolean | null = null
+  const podeRecuperarAusencia = () => {
+    if (prepared.pauta || prepared.pressure) return false
+    const precisa = prepared.ausentes.length > 0 || faltaCoberturaBrasilNoRecorte(prepared.mensagem, prepared.context)
+    if (!precisa) return false
+    if (resumoBaseDisponivel === null) resumoBaseDisponivel = resumoDocumentadoDoRecorte(prepared.context) !== null
+    return resumoBaseDisponivel
+  }
+  const soAusenciaRecuperavel = (sane: SanitizedAnswer) =>
+    sane.blocos.length > 0 && sane.blocos.every((b) => ehConclusaoDeAusencia(b.texto)) && podeRecuperarAusencia()
   const idsInvalidos = (bruto: string) => {
     try {
       const cru = jsonCompleto(bruto) ? parseModelJson(bruto) : parseModelJson(repararJsonTruncado(bruto))
       if (rawTemInexistencia(cru)) return false
       const sane = sanearModelo(cru, prepared.context, prepared.apelidos).answer
       if (sane.sem_base && countValidDocumentado(sane.blocos) > 0) return false
+      if (soAusenciaRecuperavel(sane)) return false
       return respostaComTexto(sane.blocos) && !hasValidId(sane.blocos)
     } catch {
       return false
@@ -4678,7 +4732,9 @@ async function streamPreparedInner(input: {
     }
     // Poucos parágrafos: uma segunda tentativa, nos dois modelos, sem piso de relógio.
     if (querRetryCurto(input.repetirCurto) && !textoGuardado && !prepared.pauta && !prepared.pressure && podeRepetir && !jaTentouIds) {
-      const nBlocos = contarBlocos(text)
+      let pularCurto = false
+      try { pularCurto = soAusenciaRecuperavel(lerModelo(text)) } catch { pularCurto = false }
+      const nBlocos = pularCurto ? 0 : contarBlocos(text)
       if (nBlocos >= 1 && nBlocos < 3) {
         textoGuardado = text
         blocosGuardados = nBlocos
@@ -4772,9 +4828,11 @@ async function streamPreparedInner(input: {
   const tinhaInexistencia = !prepared.pauta && !prepared.pressure && rawTemInexistencia(parsed)
   const faltaBrasil = !prepared.pauta && !prepared.pressure && !prepared.ausentes.length
     && faltaCoberturaBrasilNoRecorte(prepared.mensagem, prepared.context)
+  const temAusente = !prepared.pauta && !prepared.pressure && prepared.ausentes.length > 0
   const webAtivo = isWebFallbackEnabled(input.webFallback)
-  const coberturaIncompleta = tinhaInexistencia || faltaBrasil
-    || (webAtivo && !prepared.pauta && !prepared.pressure && (prepared.ausentes.length > 0 || answer.blocos.length === 0 || answer.sem_base))
+  const precisaResumoDaBase = tinhaInexistencia || faltaBrasil || temAusente
+  const precisaBuscaWeb = webAtivo && !prepared.pauta && !prepared.pressure
+    && (tinhaInexistencia || faltaBrasil || temAusente || answer.blocos.length === 0 || answer.sem_base)
   const abortarAntesDoCommit = async (err?: unknown): Promise<number> => {
     const userAbort = isAbortError(err, input.signal) && (input.isUserAbort ? input.isUserAbort() : true)
     const code: ChatErrorCode = userAbort ? 'abortado' : 'rede'
@@ -4788,70 +4846,48 @@ async function streamPreparedInner(input: {
   }
 
   const fontesExternas: Array<{ id: string; detalhe: FonteDetalhe }> = []
-  if (coberturaIncompleta) {
+  if (precisaResumoDaBase || precisaBuscaWeb) {
     garantirResumoDaBase(answer, prepared.context)
+  }
+  if (precisaBuscaWeb) {
     const raizId = prepared.context.raizes?.[0]?.id
-    const nomeRaiz = (raizId ? nomePublico(prepared.context, raizId) : null) || 'o tema consultado'
     const baseRaiz = raizId ? [raizId] : []
-    if (webAtivo) {
-      let hits: WebSearchHit[] = []
-      let falhaBusca = false
-      if (input.webSearch) {
-        try {
-          const encontrados = await input.webSearch.search({ query: prepared.mensagem, signal: input.signal, maxResults: 3 })
-          if (input.signal.aborted) return await abortarAntesDoCommit(input.signal.reason)
-          hits = (encontrados ?? []).filter((h) => h && typeof h.url === 'string' && /^https?:\/\//i.test(h.url.trim()) && typeof h.titulo === 'string' && h.titulo.trim())
-          if (!hits.length) falhaBusca = true
-        } catch (err) {
-          if (input.signal.aborted || isAbortError(err, input.signal)) {
-            return await abortarAntesDoCommit(err)
-          }
-          falhaBusca = true
+    let hits: WebSearchHit[] = []
+    if (input.webSearch) {
+      try {
+        const encontrados = await input.webSearch.search({ query: prepared.mensagem, signal: input.signal, maxResults: 3 })
+        if (input.signal.aborted) return await abortarAntesDoCommit(input.signal.reason)
+        hits = (encontrados ?? []).filter((h) => h && typeof h.url === 'string' && /^https?:\/\//i.test(h.url.trim()) && typeof h.titulo === 'string' && h.titulo.trim())
+      } catch (err) {
+        if (input.signal.aborted || isAbortError(err, input.signal)) {
+          return await abortarAntesDoCommit(err)
         }
-      } else {
-        falhaBusca = true
+        hits = []
       }
-      if (!falhaBusca && hits.length > 0) {
-        const trechos: string[] = []
-        for (const [idx, hit] of hits.slice(0, 3).entries()) {
-          const tituloLimpo = sanearTextoExterno(hit.titulo, prepared.context) || 'Fonte externa'
-          const editorLimpo = hit.editor ? sanearTextoExterno(hit.editor, prepared.context) : ''
-          const resumoLimpo = hit.trecho ? sanearTextoExterno(hit.trecho, prepared.context) : ''
-          const urlLimpa = hit.url.trim()
-          const rotuloFonte = editorLimpo ? `${editorLimpo} — ${tituloLimpo}` : tituloLimpo
-          trechos.push(`${rotuloFonte}${resumoLimpo ? `: ${resumoLimpo}` : ''} (${urlLimpa} · ${EXTERNA_NAO_VERIFICADA})`)
-          fontesExternas.push({
-            id: `ext_${idx + 1}`,
-            detalhe: {
-              titulo: `${rotuloFonte} (${EXTERNA_NAO_VERIFICADA})`,
-              url: urlLimpa,
-              localizador: EXTERNA_NAO_VERIFICADA,
-            },
-          })
-        }
-        answer.blocos.push({
-          tipo: 'inferencia',
-          texto: `A base ainda não cobre integralmente este ponto sobre ${nomeRaiz}. Referências obtidas em busca externa (${EXTERNA_NAO_VERIFICADA}): ${trechos.join(' | ')}.`,
-          base: baseRaiz,
-          justificativa: `Complemento obtido em ${EXTERNA_NAO_VERIFICADA}.`,
-        })
-      } else {
-        answer.blocos.push({
-          tipo: 'inferencia',
-          texto: `A base ainda não cobre este ponto sobre ${nomeRaiz} e a busca externa não pôde ser concluída.`,
-          base: baseRaiz,
-          justificativa: 'A base ainda não cobre este ponto e a busca externa falhou.',
+    }
+    if (hits.length > 0) {
+      const trechos: string[] = []
+      for (const [idx, hit] of hits.slice(0, 3).entries()) {
+        const tituloLimpo = sanearTextoExterno(hit.titulo, prepared.context) || 'Fonte externa'
+        const editorLimpo = hit.editor ? sanearTextoExterno(hit.editor, prepared.context) : ''
+        const resumoLimpo = hit.trecho ? sanearTextoExterno(hit.trecho, prepared.context) : ''
+        const urlLimpa = hit.url.trim()
+        const rotuloFonte = editorLimpo ? `${editorLimpo} — ${tituloLimpo}` : tituloLimpo
+        trechos.push(`${rotuloFonte}${resumoLimpo ? `: ${resumoLimpo}` : ''} (${urlLimpa} · ${EXTERNA_NAO_VERIFICADA})`)
+        fontesExternas.push({
+          id: `ext_${idx + 1}`,
+          detalhe: {
+            titulo: `${rotuloFonte} (${EXTERNA_NAO_VERIFICADA})`,
+            url: urlLimpa,
+            localizador: EXTERNA_NAO_VERIFICADA,
+          },
         })
       }
-    } else if (!answer.blocos.some((b) => b.tipo !== 'documentado' && ehConclusaoDeAusencia(b.texto))) {
-      const textoLacuna = faltaBrasil
-        ? `A base ainda não cobre a relação de ${nomeRaiz} com o Brasil; os registros disponíveis na base tratam de outros vínculos de ${nomeRaiz}.`
-        : `A base ainda não cobre o ponto pedido sobre ${nomeRaiz}; os registros disponíveis na base tratam apenas dos vínculos documentados.`
       answer.blocos.push({
         tipo: 'inferencia',
-        texto: textoLacuna,
+        texto: `Referências complementares em busca externa (${EXTERNA_NAO_VERIFICADA}): ${trechos.join(' | ')}.`,
         base: baseRaiz,
-        justificativa: 'A base ainda não cobre este recorte.',
+        justificativa: `Complemento obtido em ${EXTERNA_NAO_VERIFICADA}.`,
       })
     }
   }

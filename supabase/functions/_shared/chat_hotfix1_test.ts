@@ -148,27 +148,39 @@ async function pedir(store: MemoryChatDb, mensagem: string, entidades: string[],
   })
 }
 
-Deno.test('hotfix1 Q14 recusa Odebrecht antes do modelo e devolve crédito sem hold', async () => {
+Deno.test('hotfix1 Q14 usa o mais próximo da base para Odebrecht–Rockefeller; sem recorte na base continua fora_da_base sem hold', async () => {
   assert(typeof HOTFIX._nota === 'string' && HOTFIX._nota.includes('não é captura de produção'), 'fixture documenta que é montada')
   const store = bancoDe(MAPA)
   const got = await recuperarContexto(store, Q14, [], false)
   assert(!contextIsEmpty(got.context), 'Rockefeller permanece no recorte')
   eq(got.ausentes.join('|'), 'Odebrecht', 'só Odebrecht falta')
   eq(mensagemForaDaBase(got.ausentes), 'Odebrecht não está na base do atlas.', 'mesma frase da v16')
-  const orcamento = espiar(store)
   const modelo = cliente()
   const { httpStatus, events } = await pedir(store, Q14, [], modelo.openrouter)
-  const erro = erroDe(events)
-  eq(modelo.chamadas(), 0, 'zero chamadas ao OpenRouter')
-  eq(httpStatus, 200, 'status da recusa')
+  eq(modelo.chamadas(), 1, 'segue ao modelo com Rockefeller no recorte')
+  eq(httpStatus, 200, 'status da resposta')
+  const finalEv = events.find((e) => e.event === 'final')
+  assert(finalEv && finalEv.event === 'final', `emite final em vez de recusa seca: ${events.map((e) => e.event).join(',')}`)
+  assert(finalEv.data.blocos.some((b) => b.tipo === 'documentado'), 'traz fatos documentados mais próximos da base')
+  const aviso = finalEv.data.blocos.find((b) => b.texto.includes('Odebrecht não está na base do atlas.'))
+  assert(aviso && aviso.tipo === 'inferencia', 'ausência de Odebrecht sai em inferencia')
+
+  // Sem nenhuma ponta na base (contexto vazio), continua fora_da_base antes do crédito e sem hold.
+  const storeVazio = bancoDe({})
+  const orcamento = espiar(storeVazio)
+  const modeloVazio = cliente()
+  const resVazio = await pedir(storeVazio, 'Qual a relação da Odebrecht com o Brasil?', [], modeloVazio.openrouter)
+  const erro = erroDe(resVazio.events)
+  eq(modeloVazio.chamadas(), 0, 'zero chamadas ao OpenRouter sem recorte')
+  eq(resVazio.httpStatus, 200, 'status da recusa')
   eq(erro.code, 'fora_da_base', 'código')
   eq(erro.message, 'Odebrecht não está na base do atlas.', 'mensagem no evento')
   eq(orcamento.reservas(), 0, 'não reserva orçamento')
   eq(orcamento.commits.length, 0, 'não liquida custo')
-  const dia = store.budgetOf(saoPauloDay(CLOCK()))
+  const dia = storeVazio.budgetOf(saoPauloDay(CLOCK()))
   eq(dia.gasto, 0, 'gasto')
   eq(dia.reservado, 0, 'sem hold')
-  const saldo = store.snapshot(USER, CLOCK())
+  const saldo = storeVazio.snapshot(USER, CLOCK())
   eq(saldo.used, 0, 'crédito grátis intacto')
   eq(saldo.reserved, 0, 'sem reserva de crédito')
   eq(saldo.reserveCalls, 0, 'não chama reserveCredits')
@@ -383,13 +395,13 @@ Deno.test('hotfix1 estimativa parcial usa o preço do teto e não o ultrapassa',
   eq(chatPartialSpendUsd('basico', body, 0, 0, teto), 0, 'sem tentativa enviada e sem texto fica em zero')
 })
 
-Deno.test('hotfix1b sem créditos: Q14 e S-15 saem fora_da_base e não reservam', async () => {
-  const casos: Array<[string, string, string[], string]> = [
-    ['Q14', Q14, [], 'Odebrecht não está na base do atlas.'],
-    ['S-15', S15, SELECAO, 'Não encontrei isso na base do atlas.'],
+Deno.test('hotfix1b sem créditos: contexto vazio e S-15 saem fora_da_base sem reservar; Q14 com Rockefeller na base pede crédito', async () => {
+  const casos: Array<[string, string, string[], Record<string, ChatContextPayload>, string]> = [
+    ['Odebrecht sem base', 'Qual a relação da Odebrecht com o Brasil?', [], {}, 'Odebrecht não está na base do atlas.'],
+    ['S-15', S15, SELECAO, MAPA, 'Não encontrei isso na base do atlas.'],
   ]
-  for (const [nome, mensagem, entidades, mensagemErro] of casos) {
-    const store = bancoDe(MAPA)
+  for (const [nome, mensagem, entidades, mapaCaso, mensagemErro] of casos) {
+    const store = bancoDe(mapaCaso)
     store.setUsed(USER, 20)
     const modelo = cliente()
     const { httpStatus, events } = await pedir(store, mensagem, entidades, modelo.openrouter)
@@ -405,6 +417,16 @@ Deno.test('hotfix1b sem créditos: Q14 e S-15 saem fora_da_base e não reservam'
     eq(saldo.reserved, 0, `${nome}: sem hold de crédito`)
     eq(store.budgetOf(saoPauloDay(CLOCK())).reservado, 0, `${nome}: sem hold de orçamento`)
   }
+
+  // Q14 tem Rockefeller na base, então segue para reserva e devolve sem_creditos sem chamar o modelo.
+  const storeQ14 = bancoDe(MAPA)
+  storeQ14.setUsed(USER, 20)
+  const modeloQ14 = cliente()
+  const resQ14 = await pedir(storeQ14, Q14, [], modeloQ14.openrouter)
+  eq(modeloQ14.chamadas(), 0, 'Q14 sem créditos: sem modelo')
+  eq(resQ14.httpStatus, 402, 'Q14 sem créditos: status 402')
+  eq(erroDe(resQ14.events).code, 'sem_creditos', 'Q14 sem créditos: código')
+  eq(storeQ14.budgetOf(saoPauloDay(CLOCK())).reservado, 0, 'Q14 sem créditos: sem hold de orçamento')
 })
 
 Deno.test('hotfix1b oração respondível antes da ligação com ausente vai ao modelo', async () => {
@@ -634,13 +656,14 @@ Deno.test('hotfix1c estimativa parcial do Avançado usa o preço de lista', () =
   eq(chatPartialSpendUsd('avancado', body, 1, 6000, 0.001), 0.001, 'continua limitada à reserva')
 })
 
-Deno.test('hotfix1c Q14 é por pedido: coordenada e imperativo vão ao modelo', async () => {
+Deno.test('hotfix1c Q14 com Rockefeller na base vai ao modelo; sem nenhuma ponta na base recusa antes do modelo', async () => {
   const recorte = MAPA['|rockefeller foundation']
   assert(recorte, 'recorte da fundação')
   const casos: Array<[string, string, number]> = [
     ['coordenada', 'Qual a relação com a Odebrecht e o que a Rockefeller financiou no Brasil?', 1],
     ['imperativo', 'Explique o que a Rockefeller fez em 1916. Qual a relação da Odebrecht com a Rockefeller?', 1],
-    ['Q14', Q14, 0],
+    ['Q14', Q14, 1],
+    ['sem ponta na base', 'Qual a relação da Odebrecht com o Brasil?', 0],
   ]
   for (const [nome, mensagem, chamadas] of casos) {
     const store = createMemoryDb({ clock: CLOCK })
