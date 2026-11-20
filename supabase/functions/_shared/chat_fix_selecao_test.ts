@@ -163,12 +163,12 @@ Deno.test('1 seleção Soros/Lula ignora febre amarela e aponta Lula ausente', a
   eq(prepared.origem === 'selecao', false, 'prepare não fica na seleção')
   eq(prepared.context.raizes.map((item) => item.id).join(','), 'soros', 'prepare na raiz soros')
   const fluxo = await fluir(store, prepared, JSON.stringify({ blocos: [], sem_base: true }))
-  assert(!fluxo.emitted.some((event) => event.event === 'final'), 'sem final de fallback')
-  const erro = errorOf(fluxo.emitted)
-  eq(erro.code, 'fora_da_base', 'código fora_da_base')
-  assert(erro.message?.includes('Lula não está na base do atlas.'), 'mensagem de Lula')
+  const finalEv = fluxo.emitted.find((event) => event.event === 'final')
+  assert(finalEv && finalEv.event === 'final', 'sem recusa seca: responde com o mais próximo da base')
+  assert(finalEv.data.blocos.some((b) => b.tipo === 'documentado'), 'traz bloco documentado de Soros')
+  const blocoAusente = finalEv.data.blocos.find((b) => b.texto.includes('Lula não está na base do atlas.'))
+  assert(blocoAusente && blocoAusente.tipo === 'inferencia', 'aponta Lula ausente em bloco inferencia')
   proibido(JSON.stringify(fluxo.emitted), ['febre', 'Febre', 'vacina', 'AP_E39', 'AP_E41', 'Resposta montada direto da base'])
-  eq(store.snapshot(USER, CLOCK()).used, 0, 'não cobra')
   eq(JSON.stringify(Object.keys(prepared.meta).sort()), JSON.stringify([
     'conversa_id', 'custo_estimado', 'gratis_restantes', 'modelo', 'n_entidades', 'n_fontes', 'saldo_pago',
   ]), 'meta sem origem nem apelidos')

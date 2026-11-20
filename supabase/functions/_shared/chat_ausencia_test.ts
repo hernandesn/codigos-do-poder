@@ -39,6 +39,28 @@ const FIXTURE_SOROS_FINANCEIRO = JSON.parse(await Deno.readTextFile(
   new URL('../chat/fixtures/ctx_soros_selecao.json', import.meta.url),
 )) as Record<string, ChatContextPayload>
 
+const FIXTURE_HOTFIX1 = JSON.parse(await Deno.readTextFile(
+  new URL('../chat/fixtures/ctx_hotfix1.json', import.meta.url),
+)) as Record<string, ChatContextPayload>
+
+function assertFinalValido(final: ChatFinal): void {
+  assert(typeof final.conversa_id === 'string' && final.conversa_id.length > 0, 'final.conversa_id')
+  assert(Array.isArray(final.blocos) && final.blocos.length > 0, 'final.blocos')
+  for (const bloco of final.blocos) assertBloco(bloco)
+  assert(final.blocos.some((b) => b.tipo === 'documentado'), 'ao menos um bloco documentado')
+  assert(Array.isArray(final.entidades), 'final.entidades')
+  assert(Array.isArray(final.fontes), 'final.fontes')
+  assert(final.fontes_detalhe && typeof final.fontes_detalhe === 'object', 'fontes_detalhe')
+  for (const id of final.fontes) {
+    const detalhe = final.fontes_detalhe[id]
+    assert(detalhe && typeof detalhe.titulo === 'string', `detalhe ${id}`)
+  }
+  assert(Array.isArray(final.avisos), 'final.avisos')
+  assert(typeof final.custo_real === 'number' && final.custo_real >= 0, 'final.custo_real')
+  assert(typeof final.gratis_restantes === 'number', 'final.gratis_restantes')
+  assert(typeof final.saldo_pago === 'number', 'final.saldo_pago')
+}
+
 function assert(cond: unknown, message: string): asserts cond {
   if (!cond) throw new Error(message)
 }
@@ -292,20 +314,17 @@ Deno.test('2b recorte só financeiro de Soros nunca afirma que não há vínculo
     },
   })
   const final = finalOf(events)
-  assertFinal(final)
+  assertFinalValido(final)
   const textoTodo = final.blocos.map((b) => b.texto).join('\n')
   assert(!/n[aã]o\s+h[aá]\s+v[ií]nculo/i.test(textoTodo), `afirmou não há vínculo: ${textoTodo}`)
   assert(!/n[aã]o\s+existe\s+rela[cç][aã]o/i.test(textoTodo), `afirmou não existe relação: ${textoTodo}`)
   assert(!/circula(?:m)?\s+sem\s+lastro/i.test(textoTodo), `afirmou circula sem lastro: ${textoTodo}`)
   assert(!/sem\s+lastro/i.test(textoTodo), `afirmou sem lastro: ${textoTodo}`)
+  assert(!/base ainda n[aã]o cobre/i.test(textoTodo), `não injeta recusa seca enlatada: ${textoTodo}`)
   assert(textoTodo.includes('Soros Fund Management') || textoTodo.includes('Open Society'), 'preservou o que a base tem sobre Soros')
-  const blocoCobertura = final.blocos.find((b) => /base ainda n[aã]o cobre/i.test(b.texto))
-  assert(blocoCobertura, `deve admitir cobertura incompleta: ${textoTodo}`)
-  assert(blocoCobertura.tipo !== 'documentado', 'aviso de cobertura incompleta nunca é documentado')
-  eq(blocoCobertura.tipo, 'inferencia', 'bloco de cobertura incompleta é inferencia')
 })
 
-Deno.test('3 flag web off: nenhum fetch de busca; resposta admite cobertura incompleta e usa o que a base tiver', async () => {
+Deno.test('3 flag web off: nenhum fetch de busca; resposta usa o mais próximo da base sem recusa seca', async () => {
   Deno.env.delete('CHAT_WEB_FALLBACK')
   eq(isWebFallbackEnabled(), false, 'padrão desligado')
   eq(isWebFallbackEnabled('0'), false, '0 desligado')
@@ -352,13 +371,11 @@ Deno.test('3 flag web off: nenhum fetch de busca; resposta admite cobertura inco
 
   eq(chamadasWeb, 0, 'flag off não chama busca web')
   const final = finalOf(events)
-  assertFinal(final)
+  assertFinalValido(final)
   const docs = final.blocos.filter((b) => b.tipo === 'documentado')
-  const infs = final.blocos.filter((b) => b.tipo === 'inferencia')
   assert(docs.length >= 1, 'complementa com o que a base tem em bloco documentado')
-  assert(infs.length >= 1, 'inclui bloco não-documentado de cobertura incompleta')
-  assert(infs.some((b) => /base ainda n[aã]o cobre/i.test(b.texto)), 'admite cobertura incompleta com clareza')
   const textoTodo = final.blocos.map((b) => b.texto).join('\n')
+  assert(!/base ainda n[aã]o cobre/i.test(textoTodo), `sem recusa seca enlatada: ${textoTodo}`)
   assert(!/n[aã]o\s+h[aá]\s+v[ií]nculo|circula\s+sem\s+lastro/i.test(textoTodo), 'sem veredito de inexistência')
 })
 
@@ -501,13 +518,11 @@ Deno.test('5 flag web on + busca falha: degradação segura sem inventar fato ne
 
   eq(tentativasWeb, 1, 'tentou a busca web uma vez')
   const final = finalOf(events)
-  assertFinal(final)
+  assertFinalValido(final)
   assert(!final.fontes.some((id) => id.startsWith('ext_')), 'nenhuma fonte externa inventada na falha')
-  const degradado = final.blocos.find((b) => /base ainda n[aã]o cobre/i.test(b.texto) && /busca externa n[aã]o p[oô]de ser conclu[ií]da/i.test(b.texto))
-  assert(degradado, `bloco de degradação segura presente: ${final.blocos.map((b) => b.texto).join(' | ')}`)
-  assert(degradado.tipo !== 'documentado', 'degradação nunca sai como documentado')
-  eq(degradado.tipo, 'inferencia', 'degradação sai como inferencia')
   const textoTodo = final.blocos.map((b) => b.texto).join('\n')
+  assert(textoTodo.includes('Soros Fund Management') || textoTodo.includes('Open Society'), 'degrada para o mais próximo da base')
+  assert(!/base ainda n[aã]o cobre/i.test(textoTodo), `sem recusa seca na falha da busca: ${textoTodo}`)
   assert(!/timeout_provedor_busca/i.test(textoTodo), 'não vaza erro interno da busca')
   assert(!/n[aã]o\s+h[aá]\s+v[ií]nculo|circula\s+sem\s+lastro/i.test(textoTodo), 'não afirma inexistência na falha')
 })
@@ -647,7 +662,7 @@ Deno.test('9 plurais em -ão/-ões são detectados por fraseInexistencia', () =>
   assert(fraseInexistencia('Ausência total de atuações no país.'), 'detecta atuações')
 })
 
-Deno.test('10 frases reais do v21 ao vivo são removidas e substituídas por inferencia de cobertura incompleta', async () => {
+Deno.test('10 frases reais do v21 ao vivo são removidas e preservam o mais próximo da base sem bloco enlatado', async () => {
   const respostaRealV21 = JSON.stringify({
     blocos: [
       {
@@ -687,7 +702,7 @@ Deno.test('10 frases reais do v21 ao vivo são removidas e substituídas por inf
   })
 
   const final = finalOf(events)
-  assertFinal(final)
+  assertFinalValido(final)
   const textoTodo = final.blocos.map((b) => b.texto).join('\n')
   const proibidas = [
     /sem qualquer registro de atua[cç][aã]o no brasil/i,
@@ -697,14 +712,13 @@ Deno.test('10 frases reais do v21 ao vivo são removidas e substituídas por inf
     /quem procurar um v[ií]nculo brasileiro/i,
     /quem procurou um v[ií]nculo brasileiro/i,
     /sil[eê]ncio dos documentos/i,
+    /base ainda n[aã]o cobre/i,
   ]
   for (const re of proibidas) {
-    assert(!re.test(textoTodo), `frase real do v21 vazou (${re}): ${textoTodo}`)
+    assert(!re.test(textoTodo), `frase proibida vazou (${re}): ${textoTodo}`)
   }
   assert(textoTodo.includes('Soros Fund') && textoTodo.includes('Open Society'), `preserva frase documentada sobre SFM/OSF: ${textoTodo}`)
   assert(textoTodo.includes('Quantum Fund'), `preserva frase documentada sobre Quantum Fund: ${textoTodo}`)
-  const blocoCobertura = final.blocos.find((b) => b.tipo === 'inferencia' && /A base ainda não cobre a relação de .+ com o Brasil/.test(b.texto))
-  assert(blocoCobertura, `deve conter bloco inferencia de cobertura incompleta: ${textoTodo}`)
 })
 
 Deno.test('11 pergunta estrutural não monta relação entre aliases (George Soros e Soros) mas preserva entidades distintas', async () => {
@@ -748,7 +762,7 @@ Deno.test('11 pergunta estrutural não monta relação entre aliases (George Sor
   })
 
   const final = finalOf(events)
-  assertFinal(final)
+  assertFinalValido(final)
   const ultimoTexto = final.blocos.at(-1)!.texto
   assert(/Que documento detalharia /.test(ultimoTexto), `pergunta estrutural presente: ${ultimoTexto}`)
   assert(!/entre George Soros e Soros/i.test(ultimoTexto), `não pode perguntar relação entre George Soros e Soros: ${ultimoTexto}`)
@@ -826,4 +840,399 @@ Deno.test('11 pergunta estrutural não monta relação entre aliases (George Sor
     /Que documento detalharia a relação entre (?:Soros e Soros Fund Management LLC|Soros Fund Management LLC e Soros)\?/.test(perguntaSorosSfm),
     `Soros e SFM podem formar relação: ${perguntaSorosSfm}`,
   )
+})
+
+Deno.test('12 regressão Soros com recorte Brasil: documenta Fundo Brasil/OSF sem recusa seca nem desmentido', async () => {
+  // Caso A: modelo documenta Fundo Brasil / OSF e aponta lacuna pontual em bloco hipotese.
+  const respostaComLacunaPontual = JSON.stringify({
+    blocos: [
+      {
+        tipo: 'documentado',
+        texto: 'A Open Society Foundations financiou o Fundo Brasil de Direitos Humanos e estruturou estratégia latino-americana com foco no Brasil.',
+        entidades: ['soros', 'osf', 'fundobrasil', 'osf_latam_2025'],
+        relacoes: ['SOE30', 'SOE31', 'SOE32', 'SOE48'],
+        fontes: ['SO09', 'SO10'],
+      },
+      {
+        tipo: 'hipotese',
+        texto: 'A documentação não registra reuniões bilaterais fora desses repasses.',
+        base: ['soros', 'osf'],
+        justificativa: 'Lacuna pontual sobre agendas fora dos balanços citados.',
+      },
+    ],
+    sem_base: false,
+    em_aberto: null,
+  })
+
+  // Caso B: modelo documenta Fundo Brasil / OSF mas deixa escapar uma frase de inexistência que é filtrada;
+  // o pós-processamento NÃO pode injetar o bloco enlatado «A base ainda não cobre…» desmentindo os fatos já citados.
+  const respostaComInexistenciaLateral = JSON.stringify({
+    blocos: [
+      {
+        tipo: 'documentado',
+        texto: 'A Open Society Foundations financiou o Fundo Brasil de Direitos Humanos e apoiou iniciativas no Brasil. Não há vínculo direto com campanhas eleitorais.',
+        entidades: ['soros', 'osf', 'fundobrasil', 'osf_latam_2025'],
+        relacoes: ['SOE30', 'SOE31', 'SOE32', 'SOE48'],
+        fontes: ['SO09', 'SO10'],
+      },
+    ],
+    sem_base: false,
+    em_aberto: null,
+  })
+
+  for (const [nome, payload] of [
+    ['lacuna pontual em hipotese', respostaComLacunaPontual],
+    ['inexistencia lateral filtrada', respostaComInexistenciaLateral],
+  ] as const) {
+    const { store } = memoryFrom(FIXTURE_R2)
+    const { events } = await runChat({
+      userId: USER,
+      body: { mensagem: PERGUNTA_SOROS_BRASIL, contexto: { entidades: [] }, modelo: 'basico' },
+      db: store,
+      clock: CLOCK,
+      inferenceKey: acceptedKey(),
+      repetirCurto: false,
+      webFallback: false,
+      openrouter: {
+        async *stream() {
+          yield { delta: payload }
+          yield { usage: { prompt_tokens: 30, completion_tokens: 40, cost: 0.0002 } }
+        },
+      },
+    })
+    const final = finalOf(events)
+    assertFinalValido(final)
+    const docs = final.blocos.filter((b) => b.tipo === 'documentado')
+    assert(docs.length >= 1, `${nome}: preserva bloco documentado`)
+    const textoTodo = final.blocos.map((b) => b.texto).join('\n')
+    assert(textoTodo.includes('Fundo Brasil') && textoTodo.includes('Open Society'), `${nome}: documenta ligação Brasil`)
+    assert(!/base ainda n[aã]o cobre/i.test(textoTodo), `${nome}: nenhuma recusa seca ou desmentido enlatado: ${textoTodo}`)
+    assert(!/n[aã]o\s+h[aá]\s+v[ií]nculo/i.test(textoTodo), `${nome}: sem veredito de inexistência`)
+    for (const doc of docs) {
+      assert(!ehConclusaoDeAusencia(doc.texto), `${nome}: bloco documentado não conclui ausência`)
+    }
+    if (nome === 'lacuna pontual em hipotese') {
+      const lacuna = final.blocos.find((b) => b.texto.includes('reuniões bilaterais'))
+      assert(lacuna && lacuna.tipo !== 'documentado', 'lacuna pontual convive em inferencia/hipotese')
+    }
+  }
+})
+
+Deno.test('13 pergunta fora da base (Odebrecht–Rockefeller): usa o mais próximo da base e integra Tavily com degradação segura', async () => {
+  const PERGUNTA_Q14 = 'Qual a relação da família Odebrecht com a Fundação Rockefeller?'
+  const mapaHotfix: Record<string, ChatContextPayload> = {}
+  for (const [k, v] of Object.entries(FIXTURE_HOTFIX1)) {
+    if (k !== '_nota' && v && typeof v === 'object') mapaHotfix[k] = v
+  }
+  const makeStore = () => {
+    const store = createMemoryDb({ clock: CLOCK })
+    store.chatContext = async (ids, query) => {
+      const k = chave(ids, query)
+      const hit = mapaHotfix[k]
+      return hit ? JSON.parse(JSON.stringify(hit)) as ChatContextPayload : vazio()
+    }
+    return store
+  }
+
+  // A) Flag OFF: mesmo se o modelo devolver sem_base:true vazio, não termina em erro fora_da_base;
+  // traz o mais próximo da base (Rockefeller no Brasil) + bloco inferencia indicando que Odebrecht não está na base.
+  const storeOff = makeStore()
+  const resOff = await runChat({
+    userId: USER,
+    body: { mensagem: PERGUNTA_Q14, contexto: { entidades: [] }, modelo: 'basico' },
+    db: storeOff,
+    clock: CLOCK,
+    inferenceKey: acceptedKey(),
+    repetirCurto: false,
+    webFallback: false,
+    openrouter: {
+      async *stream() {
+        yield { delta: JSON.stringify({ blocos: [], sem_base: true, em_aberto: null }) }
+        yield { usage: { prompt_tokens: 20, completion_tokens: 10, cost: 0.0001 } }
+      },
+    },
+  })
+  assert(!resOff.events.some((e) => e.event === 'error'), `Q14 flag off não pode virar erro fora_da_base: ${resOff.events.map((e) => e.event).join(',')}`)
+  const finalOff = finalOf(resOff.events)
+  assertFinal(finalOff)
+  const docsOff = finalOff.blocos.filter((b) => b.tipo === 'documentado')
+  assert(docsOff.length >= 1, 'Q14 flag off traz bloco documentado mais próximo (Rockefeller)')
+  const avisoOff = finalOff.blocos.find((b) => b.tipo === 'inferencia' && b.texto.includes('Odebrecht não está na base do atlas.'))
+  assert(avisoOff, 'Q14 flag off deixa claro em inferencia que Odebrecht não está na base')
+
+  // B) Flag ON + mock Tavily: incorpora hits filtrados e rotulados + mantém o mais próximo da base.
+  let tavilyCalls = 0
+  const tavilyMock = createFetchWebSearch({
+    provider: 'tavily',
+    apiKey: 'tvly-mock-local-q14',
+    fetchImpl: async () => {
+      tavilyCalls += 1
+      return new Response(JSON.stringify({
+        results: [
+          {
+            title: 'Arquivos públicos sobre projetos no Brasil',
+            url: 'https://example.org/arquivo-rockefeller-brasil',
+            content: 'Documentos históricos sobre programas de saúde e cooperação no Brasil. Fulano cometeu fraude.',
+            source: 'Acervo Exemplo',
+          },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    },
+  })
+  const storeOn = makeStore()
+  const resOn = await runChat({
+    userId: USER,
+    body: { mensagem: PERGUNTA_Q14, contexto: { entidades: [] }, modelo: 'basico' },
+    db: storeOn,
+    clock: CLOCK,
+    inferenceKey: acceptedKey(),
+    repetirCurto: false,
+    webFallback: true,
+    webSearch: tavilyMock,
+    openrouter: {
+      async *stream() {
+        yield { delta: JSON.stringify({ blocos: [], sem_base: true, em_aberto: null }) }
+        yield { usage: { prompt_tokens: 20, completion_tokens: 10, cost: 0.0001 } }
+      },
+    },
+  })
+  eq(tavilyCalls, 1, 'Q14 flag on chama mock Tavily uma vez')
+  const finalOn = finalOf(resOn.events)
+  assertFinal(finalOn)
+  assert(finalOn.blocos.some((b) => b.tipo === 'documentado'), 'Q14 flag on mantém fatos documentados da base')
+  const extBlock = finalOn.blocos.find((b) => b.tipo === 'inferencia' && b.texto.includes(EXTERNA_NAO_VERIFICADA))
+  assert(extBlock, 'Q14 flag on traz bloco inferencia rotulado como fonte externa não verificada')
+  assert(extBlock.texto.includes('https://example.org/arquivo-rockefeller-brasil'), 'cita URL do hit Tavily')
+  assert(!/cometeu fraude/i.test(extBlock.texto), 'snippet acusatório filtrado no hit Tavily')
+  assert(finalOn.fontes.includes('ext_1'), 'registra ext_1 em fontes')
+  eq(finalOn.fontes_detalhe.ext_1.localizador, EXTERNA_NAO_VERIFICADA, 'localizador ext_1 rotulado')
+
+  // C) Flag ON + mock Tavily falha (HTTP 500): chat não quebra e degrada para o mais próximo da base.
+  const tavilyErro = createFetchWebSearch({
+    provider: 'tavily',
+    apiKey: 'tvly-mock-local-q14',
+    fetchImpl: async () => new Response('upstream error', { status: 500 }),
+  })
+  const storeFalha = makeStore()
+  const resFalha = await runChat({
+    userId: USER,
+    body: { mensagem: PERGUNTA_Q14, contexto: { entidades: [] }, modelo: 'basico' },
+    db: storeFalha,
+    clock: CLOCK,
+    inferenceKey: acceptedKey(),
+    repetirCurto: false,
+    webFallback: true,
+    webSearch: tavilyErro,
+    openrouter: {
+      async *stream() {
+        yield { delta: JSON.stringify({ blocos: [], sem_base: true, em_aberto: null }) }
+        yield { usage: { prompt_tokens: 20, completion_tokens: 10, cost: 0.0001 } }
+      },
+    },
+  })
+  const finalFalha = finalOf(resFalha.events)
+  assertFinal(finalFalha)
+  assert(finalFalha.blocos.some((b) => b.tipo === 'documentado'), 'Q14 falha Tavily preserva fatos da base')
+  assert(!finalFalha.fontes.some((id) => id.startsWith('ext_')), 'Q14 falha Tavily não inventa fonte externa')
+  const textoFalha = finalFalha.blocos.map((b) => b.texto).join('\n')
+  assert(!/base ainda n[aã]o cobre/i.test(textoFalha), `Q14 falha Tavily sem recusa seca: ${textoFalha}`)
+})
+
+Deno.test('14 Tavily + flag: formato oficial POST, default OFF, degradação sem chave/erro/zero hits e aborto', async () => {
+  // 1) Default da flag é OFF.
+  Deno.env.delete('CHAT_WEB_FALLBACK')
+  eq(isWebFallbackEnabled(Deno.env.get('CHAT_WEB_FALLBACK')), false, 'flag ausente é OFF')
+  eq(isWebFallbackEnabled('0'), false, '0 é OFF')
+  eq(isWebFallbackEnabled('false'), false, 'false é OFF')
+
+  // 2) Verifica formato oficial do POST https://api.tavily.com/search com fetchImpl local (zero rede real).
+  let capturedUrl = ''
+  let capturedMethod = ''
+  let capturedAuth = ''
+  let capturedContentType = ''
+  let capturedBody: Record<string, unknown> = {}
+  const tavilyClient = createFetchWebSearch({
+    provider: 'tavily',
+    apiKey: 'tvly-mock-test-key',
+    fetchImpl: async (url, init) => {
+      capturedUrl = String(url)
+      capturedMethod = String(init?.method ?? '')
+      const headers = new Headers(init?.headers)
+      capturedAuth = headers.get('authorization') ?? ''
+      capturedContentType = headers.get('content-type') ?? ''
+      capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      return new Response(JSON.stringify({
+        query: PERGUNTA_SOROS_BRASIL,
+        results: [
+          {
+            title: 'Open Society no Brasil',
+            url: 'https://www.opensocietyfoundations.org/newsroom/brasil',
+            content: 'Iniciativas documentadas na América Latina e no Brasil.',
+            source: 'Open Society Foundations',
+            published_date: '2025-04-10',
+          },
+          {
+            title: 'URL inválida ignorada',
+            url: 'javascript:alert(1)',
+            content: 'Deve ser descartado.',
+          },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    },
+  })
+
+  const hits = await tavilyClient.search({ query: PERGUNTA_SOROS_BRASIL, maxResults: 3 })
+  eq(capturedUrl, 'https://api.tavily.com/search', 'endpoint oficial Tavily')
+  eq(capturedMethod, 'POST', 'método POST')
+  eq(capturedAuth, 'Bearer tvly-mock-test-key', 'auth Bearer no header')
+  assert(capturedContentType.includes('application/json'), 'content-type JSON')
+  eq(capturedBody.query, PERGUNTA_SOROS_BRASIL, 'body.query')
+  eq(capturedBody.search_depth, 'basic', 'body.search_depth basic (1 crédito)')
+  eq(capturedBody.max_results, 3, 'body.max_results')
+  eq(capturedBody.include_answer, false, 'body.include_answer false')
+  eq(capturedBody.include_raw_content, false, 'body.include_raw_content false')
+  eq(hits.length, 1, 'mapeia hit válido e descarta URL inválida')
+  eq(hits[0].titulo, 'Open Society no Brasil', 'mapeia title -> titulo')
+  eq(hits[0].url, 'https://www.opensocietyfoundations.org/newsroom/brasil', 'mapeia url')
+  eq(hits[0].trecho, 'Iniciativas documentadas na América Latina e no Brasil.', 'mapeia content -> trecho')
+  eq(hits[0].editor, 'Open Society Foundations', 'mapeia source -> editor')
+  eq(hits[0].publicado_em, '2025-04-10', 'mapeia published_date -> publicado_em')
+
+  // 3) Flag ON + mock Tavily no fluxo completo de runChat: preserva base + acrescenta inferencia rotulada.
+  const { store: storeOk } = memoryFrom(FIXTURE_SOROS_FINANCEIRO)
+  const resOk = await runChat({
+    userId: USER,
+    body: { mensagem: PERGUNTA_SOROS_BRASIL, contexto: { entidades: [] }, modelo: 'basico' },
+    db: storeOk,
+    clock: CLOCK,
+    inferenceKey: acceptedKey(),
+    repetirCurto: false,
+    webFallback: true,
+    webSearch: tavilyClient,
+    openrouter: {
+      async *stream() {
+        yield {
+          delta: JSON.stringify({
+            blocos: [{
+              tipo: 'documentado',
+              texto: 'George Soros fundou a Soros Fund Management e a Open Society Foundations.',
+              entidades: ['soros', 'george_soros', 'sfm', 'osf'],
+              relacoes: ['SOE01', 'SOE02', 'SOE03'],
+              fontes: ['SO05', 'SO07'],
+            }],
+            sem_base: false,
+            em_aberto: null,
+          }),
+        }
+        yield { usage: { prompt_tokens: 25, completion_tokens: 25, cost: 0.0002 } }
+      },
+    },
+  })
+  const finalOk = finalOf(resOk.events)
+  assertFinal(finalOk)
+  assert(
+    finalOk.blocos.some((b) => b.tipo === 'documentado' && (b.texto.includes('Soros Fund') || b.texto.includes('SFM') || b.texto.includes('Open Society'))),
+    'preserva o mais próximo da base',
+  )
+  const blocoTavily = finalOk.blocos.find((b) => b.tipo === 'inferencia' && b.texto.includes(EXTERNA_NAO_VERIFICADA))
+  assert(blocoTavily && blocoTavily.texto.includes('https://www.opensocietyfoundations.org/newsroom/brasil'), 'acrescenta complemento Tavily rotulado')
+  assert(finalOk.fontes.includes('ext_1'), 'ext_1 registrado')
+
+  // 4) Flag ON + chave ausente, HTTP 502, e zero resultados: degradação segura sem quebrar o chat nem recusa seca.
+  const clientesDegradacao: Array<[string, WebSearchClient]> = [
+    ['chave ausente', createFetchWebSearch({ provider: 'tavily', apiKey: '', fetchImpl: async () => { throw new Error('não deveria chamar fetch sem chave') } })],
+    ['http 502', createFetchWebSearch({ provider: 'tavily', apiKey: 'tvly-mock', fetchImpl: async () => new Response('bad gateway', { status: 502 }) })],
+    ['zero resultados', createFetchWebSearch({ provider: 'tavily', apiKey: 'tvly-mock', fetchImpl: async () => new Response(JSON.stringify({ results: [] }), { status: 200, headers: { 'content-type': 'application/json' } }) })],
+  ]
+  for (const [cenario, cliente] of clientesDegradacao) {
+    const { store } = memoryFrom(FIXTURE_SOROS_FINANCEIRO)
+    const { events } = await runChat({
+      userId: USER,
+      body: { mensagem: PERGUNTA_SOROS_BRASIL, contexto: { entidades: [] }, modelo: 'basico' },
+      db: store,
+      clock: CLOCK,
+      inferenceKey: acceptedKey(),
+      repetirCurto: false,
+      webFallback: true,
+      webSearch: cliente,
+      openrouter: {
+        async *stream() {
+          yield {
+            delta: JSON.stringify({
+              blocos: [{
+                tipo: 'documentado',
+                texto: 'George Soros fundou a Soros Fund Management e a Open Society Foundations.',
+                entidades: ['soros', 'george_soros', 'sfm', 'osf'],
+                relacoes: ['SOE01', 'SOE02', 'SOE03'],
+                fontes: ['SO05', 'SO07'],
+              }],
+              sem_base: false,
+              em_aberto: null,
+            }),
+          }
+          yield { usage: { prompt_tokens: 25, completion_tokens: 25, cost: 0.0002 } }
+        },
+      },
+    })
+    const finalDeg = finalOf(events)
+    assertFinalValido(finalDeg)
+    assert(!finalDeg.fontes.some((id) => id.startsWith('ext_')), `${cenario}: sem ext_* inventado`)
+    const textoDeg = finalDeg.blocos.map((b) => b.texto).join('\n')
+    assert(textoDeg.includes('Soros Fund') || textoDeg.includes('SFM') || textoDeg.includes('Open Society'), `${cenario}: degrada para o mais próximo da base`)
+    assert(!/base ainda n[aã]o cobre/i.test(textoDeg), `${cenario}: sem recusa seca`)
+  }
+
+  // 5) Flag ON + aborto no meio da busca Tavily: release da reserva, sem commit.
+  const controller = new AbortController()
+  const tavilyAbort = createFetchWebSearch({
+    provider: 'tavily',
+    apiKey: 'tvly-mock',
+    fetchImpl: async () => {
+      controller.abort()
+      const err = new Error('aborted')
+      err.name = 'AbortError'
+      throw err
+    },
+  })
+  const { store: storeAbort } = memoryFrom(FIXTURE_SOROS_FINANCEIRO)
+  let commits = 0
+  let releases = 0
+  const origCommit = storeAbort.commitCredits.bind(storeAbort)
+  const origRelease = storeAbort.releaseReserve.bind(storeAbort)
+  storeAbort.commitCredits = async (...args) => { commits += 1; return await origCommit(...args) }
+  storeAbort.releaseReserve = async (...args) => { releases += 1; return await origRelease(...args) }
+  const resAbort = await runChat({
+    userId: USER,
+    body: { mensagem: PERGUNTA_SOROS_BRASIL, contexto: { entidades: [] }, modelo: 'basico' },
+    db: storeAbort,
+    clock: CLOCK,
+    signal: controller.signal,
+    inferenceKey: acceptedKey(),
+    repetirCurto: false,
+    webFallback: true,
+    webSearch: tavilyAbort,
+    openrouter: {
+      async *stream() {
+        yield {
+          delta: JSON.stringify({
+            blocos: [{
+              tipo: 'documentado',
+              texto: 'George Soros fundou a Soros Fund Management e a Open Society Foundations.',
+              entidades: ['soros', 'george_soros', 'sfm', 'osf'],
+              relacoes: ['SOE01', 'SOE02', 'SOE03'],
+              fontes: ['SO05', 'SO07'],
+            }],
+            sem_base: false,
+            em_aberto: null,
+          }),
+        }
+        yield { usage: { prompt_tokens: 25, completion_tokens: 25, cost: 0.0002 } }
+      },
+    },
+  })
+  eq(commits, 0, 'aborto na busca Tavily não commita créditos')
+  eq(releases, 1, 'aborto na busca Tavily libera reserva')
+  const erroAbort = resAbort.events.find((ev) => ev.event === 'error')
+  assert(erroAbort && erroAbort.event === 'error' && erroAbort.data.code === 'abortado', 'emite erro abortado')
+  assert(!resAbort.events.some((ev) => ev.event === 'final'), 'sem final após aborto')
 })

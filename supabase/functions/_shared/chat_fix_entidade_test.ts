@@ -485,15 +485,11 @@ Deno.test('maiúsculas não geram ausente; Odebrecht em maiúsculas não debita 
   const gotMista = await recuperarContexto(storeMista, mista, [], false)
   eq(gotMista.ausentes.join('|'), 'Odebrecht', mista)
   const preparedMista = await preparar(storeMista, mista)
-  assert(!preparedMista.ok, mista)
-  if (!preparedMista.ok && preparedMista.event.event === 'error') {
-    eq(preparedMista.event.data.code, 'fora_da_base', mista)
-    eq(preparedMista.event.data.message, mensagemForaDaBase(['Odebrecht']), mista)
+  assert(preparedMista.ok, `${mista}: segue com o mais próximo da base (Fundação Rockefeller)`)
+  if (preparedMista.ok) {
+    eq(preparedMista.ausentes.join('|'), 'Odebrecht', `${mista}: preserva ausente`)
+    assert(preparedMista.context.raizes.some((r) => r.id === 'rf'), `${mista}: preserva Fundação Rockefeller`)
   }
-  const saldoMista = storeMista.snapshot(USER, CLOCK())
-  eq(saldoMista.reserveCalls, 0, `${mista}: reserveCredits`)
-  eq(saldoMista.commitCalls, 0, `${mista}: commit`)
-  eq(saldoMista.used, 0, `${mista}: débito`)
 
   const storeAlta = createMemoryDb({ clock: CLOCK })
   storeAlta.setPaid(USER, 4)
