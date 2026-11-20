@@ -4629,12 +4629,23 @@ async function streamPreparedInner(input: {
       return 0
     }
   }
+  let resumoBaseDisponivel: boolean | null = null
+  const podeRecuperarAusencia = () => {
+    if (prepared.pauta || prepared.pressure) return false
+    const precisa = prepared.ausentes.length > 0 || faltaCoberturaBrasilNoRecorte(prepared.mensagem, prepared.context)
+    if (!precisa) return false
+    if (resumoBaseDisponivel === null) resumoBaseDisponivel = resumoDocumentadoDoRecorte(prepared.context) !== null
+    return resumoBaseDisponivel
+  }
+  const soAusenciaRecuperavel = (sane: SanitizedAnswer) =>
+    sane.blocos.length > 0 && sane.blocos.every((b) => ehConclusaoDeAusencia(b.texto)) && podeRecuperarAusencia()
   const idsInvalidos = (bruto: string) => {
     try {
       const cru = jsonCompleto(bruto) ? parseModelJson(bruto) : parseModelJson(repararJsonTruncado(bruto))
       if (rawTemInexistencia(cru)) return false
       const sane = sanearModelo(cru, prepared.context, prepared.apelidos).answer
       if (sane.sem_base && countValidDocumentado(sane.blocos) > 0) return false
+      if (soAusenciaRecuperavel(sane)) return false
       return respostaComTexto(sane.blocos) && !hasValidId(sane.blocos)
     } catch {
       return false
@@ -4721,7 +4732,9 @@ async function streamPreparedInner(input: {
     }
     // Poucos parágrafos: uma segunda tentativa, nos dois modelos, sem piso de relógio.
     if (querRetryCurto(input.repetirCurto) && !textoGuardado && !prepared.pauta && !prepared.pressure && podeRepetir && !jaTentouIds) {
-      const nBlocos = contarBlocos(text)
+      let pularCurto = false
+      try { pularCurto = soAusenciaRecuperavel(lerModelo(text)) } catch { pularCurto = false }
+      const nBlocos = pularCurto ? 0 : contarBlocos(text)
       if (nBlocos >= 1 && nBlocos < 3) {
         textoGuardado = text
         blocosGuardados = nBlocos

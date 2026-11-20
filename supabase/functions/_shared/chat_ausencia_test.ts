@@ -1236,3 +1236,128 @@ Deno.test('14 Tavily + flag: formato oficial POST, default OFF, degradação sem
   assert(erroAbort && erroAbort.event === 'error' && erroAbort.data.code === 'abortado', 'emite erro abortado')
   assert(!resAbort.events.some((ev) => ev.event === 'final'), 'sem final após aborto')
 })
+
+Deno.test('15 regressão P2 (Q14 Odebrecht–Rockefeller): resposta só de ausência com base:[] não vira fora_da_base e aciona resumo/Tavily', async () => {
+  const PERGUNTA_Q14 = 'Qual a relação da família Odebrecht com a Fundação Rockefeller?'
+  const mapaHotfix: Record<string, ChatContextPayload> = {}
+  for (const [k, v] of Object.entries(FIXTURE_HOTFIX1)) {
+    if (k !== '_nota' && v && typeof v === 'object') mapaHotfix[k] = v
+  }
+  const makeStore = () => {
+    const store = createMemoryDb({ clock: CLOCK })
+    store.chatContext = async (ids, query) => {
+      const k = chave(ids, query)
+      const hit = mapaHotfix[k]
+      return hit ? JSON.parse(JSON.stringify(hit)) as ChatContextPayload : vazio()
+    }
+    return store
+  }
+
+  // A) Flag OFF: modelo devolve apenas um bloco hipotese/inferencia «Odebrecht não está na base do atlas.» com base: [].
+  // Não pode cair em recusarSemId / fora_da_base nem desperdiçar retry.
+  for (const tipoAusencia of ['hipotese', 'inferencia'] as const) {
+    let chamadasModeloOff = 0
+    const resOff = await runChat({
+      userId: USER,
+      body: { mensagem: PERGUNTA_Q14, contexto: { entidades: [] }, modelo: 'basico' },
+      db: makeStore(),
+      clock: CLOCK,
+      inferenceKey: acceptedKey(),
+      webFallback: false,
+      openrouter: {
+        async *stream() {
+          chamadasModeloOff += 1
+          yield {
+            delta: JSON.stringify({
+              blocos: [{
+                tipo: tipoAusencia,
+                texto: 'Odebrecht não está na base do atlas.',
+                base: [],
+                justificativa: 'A base ainda não cobre este ponto.',
+              }],
+              sem_base: false,
+              em_aberto: null,
+            }),
+          }
+          yield { usage: { prompt_tokens: 20, completion_tokens: 15, cost: 0.0001 } }
+        },
+      },
+    })
+    eq(chamadasModeloOff, 1, `Q14 (${tipoAusencia}) flag off não deve entrar em retry de idsInvalidos`)
+    assert(!resOff.events.some((e) => e.event === 'error'), `Q14 (${tipoAusencia}) flag off não pode virar fora_da_base: ${resOff.events.map((e) => e.event).join(',')}`)
+    const finalOff = finalOf(resOff.events)
+    if (tipoAusencia === 'inferencia') assertFinal(finalOff)
+    else assertFinalValido(finalOff)
+    const docsOff = finalOff.blocos.filter((b) => b.tipo === 'documentado')
+    assert(docsOff.length >= 1, `Q14 (${tipoAusencia}) flag off traz bloco documentado mais próximo (Rockefeller)`)
+    const textoDocsOff = docsOff.map((b) => b.texto).join('\n')
+    assert(/Rockefeller/i.test(textoDocsOff), `Q14 (${tipoAusencia}) flag off documenta Rockefeller: ${textoDocsOff}`)
+    const blocoAusenciaOff = finalOff.blocos.find((b) => b.tipo !== 'documentado' && b.texto.includes('Odebrecht não está na base do atlas.'))
+    assert(blocoAusenciaOff, `Q14 (${tipoAusencia}) flag off mantém ausência de Odebrecht fora de documentado`)
+  }
+
+  // B) Flag ON + mock Tavily (fetchImpl local, zero rede, chave fake só no teste):
+  // Primeiro stream é só ausência com base: []; não termina em fora_da_base nem em zero buscas.
+  let chamadasModeloOn = 0
+  let tavilyCalls = 0
+  const tavilyMock = createFetchWebSearch({
+    provider: 'tavily',
+    apiKey: 'tvly-mock-local-p2-q14',
+    fetchImpl: async () => {
+      tavilyCalls += 1
+      return new Response(JSON.stringify({
+        results: [
+          {
+            title: 'Registros públicos sobre fundações e projetos no Brasil',
+            url: 'https://example.org/rockefeller-odebrecht-registros',
+            content: 'Documentos públicos de cooperação técnica no Brasil. Fulano cometeu fraude.',
+            source: 'Acervo Exemplo',
+          },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    },
+  })
+
+  const resOn = await runChat({
+    userId: USER,
+    body: { mensagem: PERGUNTA_Q14, contexto: { entidades: [] }, modelo: 'basico' },
+    db: makeStore(),
+    clock: CLOCK,
+    inferenceKey: acceptedKey(),
+    webFallback: true,
+    webSearch: tavilyMock,
+    openrouter: {
+      async *stream() {
+        chamadasModeloOn += 1
+        yield {
+          delta: JSON.stringify({
+            blocos: [{
+              tipo: 'hipotese',
+              texto: 'Odebrecht não está na base do atlas.',
+              base: [],
+              justificativa: 'A base ainda não cobre este ponto.',
+            }],
+            sem_base: false,
+            em_aberto: null,
+          }),
+        }
+        yield { usage: { prompt_tokens: 20, completion_tokens: 15, cost: 0.0001 } }
+      },
+    },
+  })
+
+  eq(chamadasModeloOn, 1, 'Q14 flag on com stream só ausência não entra em retry de idsInvalidos')
+  eq(tavilyCalls, 1, 'Q14 flag on chama mock Tavily uma vez (nunca zero buscas)')
+  assert(!resOn.events.some((e) => e.event === 'error'), `Q14 flag on não pode virar fora_da_base: ${resOn.events.map((e) => e.event).join(',')}`)
+  const finalOn = finalOf(resOn.events)
+  assertFinal(finalOn)
+  const docsOn = finalOn.blocos.filter((b) => b.tipo === 'documentado')
+  assert(docsOn.length >= 1, 'Q14 flag on traz bloco documentado mais próximo (Rockefeller)')
+  assert(/Rockefeller/i.test(docsOn.map((b) => b.texto).join('\n')), 'Q14 flag on traz fatos de Rockefeller na base')
+  const extBlock = finalOn.blocos.find((b) => b.tipo === 'inferencia' && b.texto.includes(EXTERNA_NAO_VERIFICADA))
+  assert(extBlock, 'Q14 flag on incorpora bloco inferencia rotulado como fonte externa não verificada')
+  assert(extBlock.texto.includes('https://example.org/rockefeller-odebrecht-registros'), 'cita URL do hit Tavily')
+  assert(!/cometeu fraude/i.test(extBlock.texto), 'snippet acusatório filtrado no hit Tavily')
+  assert(finalOn.fontes.includes('ext_1'), 'registra ext_1 em fontes')
+  eq(finalOn.fontes_detalhe.ext_1.localizador, EXTERNA_NAO_VERIFICADA, 'localizador ext_1 rotulado')
+})
