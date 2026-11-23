@@ -1,6 +1,43 @@
 /* Somente esta página carrega o SDK Telegram; nenhuma identidade vem do body. */
 (async function () {
   'use strict';
+  const PT_WORDS = new Set(['não', 'nao', 'você', 'voce', 'vocês', 'voces', 'também', 'tambem', 'porque', 'pelo', 'pela', 'isso', 'isto', 'obrigado', 'obrigada']);
+  const ES_WORDS = new Set(['qué', 'cómo', 'dónde', 'también', 'usted', 'ustedes', 'investigación', 'investigando']);
+  const EN_WORDS = new Set(['the', 'what', 'who', 'where', 'when', 'why', 'how', 'does', 'did', 'please', 'about', 'which', 'searching']);
+  function noticeLanguage(text, languageCode) {
+    const sample = String(text || '');
+    const folded = sample.toLowerCase();
+    const words = folded.match(/[a-záéíóúàâêôãõçñü]+/g) || [];
+    let pt = 0, es = 0, en = 0;
+    if (/[ãõ]/.test(folded) || /ç/.test(folded)) pt += 2;
+    if (/ñ/.test(folded)) es += 2;
+    if (/[¿¡]/.test(sample)) es += 2;
+    for (const word of words) {
+      if (PT_WORDS.has(word)) pt++;
+      if (ES_WORDS.has(word)) es++;
+      if (EN_WORDS.has(word)) en++;
+    }
+    const ranked = [['pt', pt], ['en', en], ['es', es]];
+    ranked.sort((a, b) => b[1] - a[1]);
+    if (ranked[0][1] > ranked[1][1]) return ranked[0][0];
+    const code = String(languageCode || '').toLowerCase();
+    if (code.startsWith('pt')) return 'pt';
+    if (code.startsWith('en')) return 'en';
+    if (code.startsWith('es')) return 'es';
+    return 'pt';
+  }
+  function searchingLabel(text, languageCode) {
+    const lang = noticeLanguage(text, languageCode);
+    return lang === 'en' ? 'Searching…' : lang === 'es' ? 'Investigando…' : 'Pesquisando…';
+  }
+  /* fim idioma */
+  // language_code vem do campo user do initData já enviado ao servidor. Não serve de identidade.
+  function languageCodeOf(raw) {
+    try {
+      const user = JSON.parse(new URLSearchParams(raw).get('user') || 'null');
+      return user && typeof user.language_code === 'string' ? user.language_code : '';
+    } catch { return ''; }
+  }
   const $ = id => document.getElementById(id);
   const status = (message, warning = false) => { $('status').textContent = message; $('status').classList.toggle('warning', warning); };
   const webapp = window.Telegram && window.Telegram.WebApp;
@@ -18,6 +55,26 @@
   webapp.ready();
   webapp.expand();
   let proof = '';
+  let pendingTimer = 0;
+  const languageCode = languageCodeOf(initData);
+  function clearPending() {
+    clearTimeout(pendingTimer);
+    pendingTimer = 0;
+    const node = $('pending');
+    node.hidden = true;
+    node.textContent = '';
+  }
+  function showPending(message) {
+    clearTimeout(pendingTimer);
+    const node = $('pending');
+    node.hidden = false;
+    node.textContent = 'Consultando a base…';
+    pendingTimer = setTimeout(() => {
+      const label = searchingLabel(message, languageCode);
+      node.textContent = label;
+      status(label);
+    }, 4000);
+  }
   async function request(route, body) {
     const response = await fetch(config.supabaseUrl + '/functions/v1/telegram/app/' + route, {
       method: 'POST',
@@ -65,6 +122,7 @@
     if (!response.ok) { failed(response, result); return; }
     proof = result.session;
     if (!result.linked) { status('Sua conta do Telegram ainda não está vinculada.'); $('link-panel').hidden = false; return; }
+    $('account-link').hidden = true;
     $('chat-section').hidden = false;
     status('Conta vinculada. Faça sua pergunta à base.');
   } catch { status('Não foi possível conectar. Feche e abra novamente pelo bot.', true); return; }
@@ -76,12 +134,14 @@
     $('question-form').setAttribute('aria-busy', 'true');
     bubble('Sua pergunta', message, 'question');
     status('Consultando a base…');
+    showPending(message);
     try {
       const { response, result } = await request('chat', { mensagem: message, modelo: $('model').value });
       if (!response.ok || !result.final) { failed(response, result); return; }
       renderFinal(result.final); $('question').value = ''; status('Resposta concluída.');
     } catch { status('Não foi possível conectar. Tente novamente em instantes.', true); }
     finally {
+      clearPending();
       $('send').disabled = !proof; $('question').disabled = !proof; $('model').disabled = !proof;
       $('question-form').setAttribute('aria-busy', 'false');
     }

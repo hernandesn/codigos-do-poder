@@ -16,13 +16,13 @@ Comandos: `/start` explica o vínculo; `/start <código>` consome código forte;
 
 Rotas do mini app (POST, com CORS das origens já aceitas):
 
-- `/app/session`: `Authorization: tma <initData>` validado; registra o hash em `telegram_initdata_replay` e devolve uma prova aleatória de 256 bits. O replay dessa abertura retorna 401. Sem token configurado, falha fechado.
+- `/app/session`: `Authorization: tma <initData>` validado; registra o hash em `telegram_initdata_replay` e devolve uma prova aleatória de 256 bits. Reabrir o mesmo initData válido, do mesmo telegram_id e ainda no prazo, rotaciona a prova e devolve 200; a prova anterior deixa de valer. InitData ausente, forjado ou vencido continua 401. Sem token configurado, falha fechado.
 - `/app/status`: mesmo header tma mais `X-Telegram-App-Session`; consulta o vínculo atual, sem chamar modelo.
 - `/app/chat`: mesmos headers; somente mensagem/modelo são encaminhados ao núcleo; resposta JSON `{final}` ou `{code,message}`. Não confia em user_id, telegram_id, contexto ou conversa do corpo.
 
 O HMAC usa `HMAC_SHA256(key="WebAppData", message=bot_token)` para derivar a chave, todos os campos exceto `hash` ordenados para a mensagem e comparação de digest em laço fixo. Rejeita parâmetros duplicados, usuário inválido, initData maior que 16 KiB, idade acima de uma hora e futuro acima de 30 segundos. Base documental fornecida no job: `spec/HMAC-INITDATA.md`; referência oficial: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app. Nenhuma consulta à referência foi feita neste job local.
 
-A prova de sessão resolve o conflito entre replay e múltiplas perguntas: o mesmo initData sozinho não abre outra sessão; depois da troca inicial, cada chamada exige também a prova que só o cliente original recebeu. O banco guarda somente o hash dessa prova. Ela fica em memória no cliente e expira junto do initData. A autenticação HMAC e a data são verificadas em toda chamada. Rebind/desvínculo invalidam provas, preservando os hashes já reclamados; é preciso fechar e reabrir o mini app. Roubo simultâneo de initData e prova equivale a roubo de sessão e ainda exige tratamento operacional.
+A prova de sessão fica em memória no cliente. Cada carga chama `/app/session` de novo: o mesmo initData válido, do mesmo telegram_id e ainda no prazo, recebe outra prova, e a anterior deixa de resolver o vínculo. O banco guarda somente o hash da prova vigente. A autenticação HMAC e a data são verificadas em toda chamada. Rebind/desvínculo invalidam a prova antiga pelo `binding_id` e pelo `session_hash`. Um init_hash já gravado para outro telegram_id é recusado. Roubo simultâneo de initData e da prova vigente equivale a roubo de sessão e ainda exige tratamento operacional.
 
 ## Banco, transporte e falhas
 
@@ -49,6 +49,6 @@ deno test --no-remote supabase/functions/_shared/telegram_auth_test.ts supabase/
 PGLITE_PATH=<pacote-local>/dist/index.js node supabase/tests/run_telegram_pglite.mjs
 ```
 
-O runner Node proíbe rede e leitura de ambiente pelas dependências Deno, e apaga do processo os nomes de token, secret, pepper, chave e DSN sem imprimi-los. O comando Deno novo não concede env nem net; todos os valores são sintéticos e injetados. PGLite cria papéis vazios e banco WASM descartável, aplica 001–005, 007–010, 012 e 013, verifica RLS/ACL, unicidade, código expirado/reusado, rebind, revogação, idempotência, rate sem overflow e replay. Não aponta a DSN ou produção. O papel vazio service_role no harness existe apenas porque migrações antigas o referenciam; nenhuma chave é usada.
+O runner Node proíbe rede e leitura de ambiente pelas dependências Deno, e apaga do processo os nomes de token, secret, pepper, chave e DSN sem imprimi-los. O comando Deno novo não concede env nem net; todos os valores são sintéticos e injetados. PGLite cria papéis vazios e banco WASM descartável, aplica as migrações deste clone (sem a 012 e sem a 014) mais a 013 e a 015, verifica RLS/ACL, unicidade, código expirado/reusado, rebind, revogação, idempotência, rate sem overflow e a reabertura da sessão. Não aponta a DSN ou produção. O papel vazio service_role no harness existe apenas porque migrações antigas o referenciam; nenhuma chave é usada.
 
 Os passos de implantação **futura** e o rollback comentado estão no `RELATORIO.md` da pasta do job e no cabeçalho da 013. Não executar sem o sim do Hernandes; não fazer redeploy da chat.

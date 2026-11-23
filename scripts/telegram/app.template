@@ -12,7 +12,7 @@
   <style>__CSS__</style>
 </head>
 <body>
-  <header><a class="brand" href="index.html">Códigos do Poder<small>mural investigativo</small></a><a href="vincular.html" target="_blank" rel="noopener noreferrer">Vincular conta</a></header>
+  <header><a class="brand" href="index.html">Códigos do Poder<small>mural investigativo</small></a><a id="account-link" href="vincular.html" target="_blank" rel="noopener noreferrer">Vincular conta</a></header>
   <main>
     <span class="eyebrow">Aion · Telegram</span>
     <h1>Uma pergunta.<br>O que a base sustenta?</h1>
@@ -24,6 +24,7 @@
       <div class="actions"><a class="button" href="https://aion.hernandesnogueira.com.br/vincular.html" target="_blank" rel="noopener noreferrer">Gerar código de vínculo</a><a href="https://t.me/aion_codigosdopoder_bot" target="_blank" rel="noopener noreferrer">Abrir @aion_codigosdopoder_bot</a></div>
     </section>
     <section id="chat-section" hidden aria-label="Conversa com a base">
+      <p id="pending" class="pending" hidden role="status" aria-live="polite"></p>
       <div id="history" class="history" aria-live="polite" aria-relevant="additions"></div>
       <form id="question-form" class="panel">
         <label for="question">Sua pergunta para a base</label>

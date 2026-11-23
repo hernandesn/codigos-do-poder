@@ -3,7 +3,7 @@ import { readEnv,loadProjectJwks } from '../chat/handler.ts'
 import { userIdFromAuthorization,supabaseIssuer,resolveDailyBudgetUsd,loadInferenceKeyAssessment,OPENROUTER_KEY_URL,OPENROUTER_URL,type ChatDb } from './chat_core.ts'
 import { collectChatFinal } from './chat_final.ts'
 import { createFetchOpenRouter } from './openrouter_stream.ts'
-import { createTelegramSender } from './telegram_client.ts'
+import { createTelegramClient } from './telegram_client.ts'
 import { webhookSecretValue } from './telegram_auth.ts'
 import type { TelegramDb } from './telegram_db.ts'
 import type { TelegramDeps } from '../telegram/handler.ts'
@@ -19,6 +19,11 @@ export async function getTelegramDb():Promise<TelegramDb> {
   return telegramDb
 }
 export const linkPepper=()=>readEnv('TELEGRAM_LINK_PEPPER')
+function botApi() {
+  const token=readEnv('TELEGRAM_BOT_TOKEN')
+  if (!token) throw new Error('configuracao_ausente')
+  return createTelegramClient(token,fetch)
+}
 export const structuredLog=(entry:Record<string,string>)=>console.log(JSON.stringify(entry))
 export const authenticateUser=(header:string|null)=>userIdFromAuthorization(header,{
   jwtSecret:readEnv('JWT_SECRET')||readEnv('SUPABASE_JWT_SECRET'),loadJwks:loadProjectJwks,
@@ -28,9 +33,13 @@ export function productionTelegramDeps():TelegramDeps {
   return {
     webhookSecret:()=>webhookSecretValue(readEnv('TELEGRAM_WEBHOOK_SECRET')),botToken:()=>readEnv('TELEGRAM_BOT_TOKEN'),linkPepper,db:getTelegramDb,log:structuredLog,
     async send(id,text) {
-      const token=readEnv('TELEGRAM_BOT_TOKEN')
-      if (!token) throw new Error('configuracao_ausente')
-      await createTelegramSender(token,fetch)(id,text)
+      await botApi().sendMessage(id,text)
+    },
+    bot:{
+      sendMessage:(id,text)=>botApi().sendMessage(id,text),
+      sendChatAction:id=>botApi().sendChatAction(id),
+      editMessageText:(id,messageId,text)=>botApi().editMessageText(id,messageId,text),
+      deleteMessage:(id,messageId)=>botApi().deleteMessage(id,messageId),
     },
     async ask(userId,body,signal) {
       const budget=resolveDailyBudgetUsd(readEnv('CHAT_DAILY_BUDGET_USD'))

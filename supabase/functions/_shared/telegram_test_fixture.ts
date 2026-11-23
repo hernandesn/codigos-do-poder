@@ -48,7 +48,19 @@ export function testDb() {
     async linkedUser(t) { calls.push('linked');return links.get(t)??null },
     async claimUpdate(i) { calls.push('claim');if(updates.has(i))return false;updates.add(i);return true },
     async rateTouch(t) { calls.push('rate');const all=rates.get(t)??[];if(all.filter(x=>x>now-60).length>=8||all.filter(x=>x>now-86400).length>=100)return false;rates.set(t,[...all,now]);return true },
-    async beginSession(h,t,p,e) { calls.push('begin');if(sessions.has(h)||e<=now)return false;sessions.set(h,{telegram:t,proof:p,expires:e,boundUser:links.get(t)??null});return true },
+    async beginSession(h,t,p,e) {
+      calls.push('begin')
+      // Mesmo piso da função SQL: não no passado e não além de 61 minutos. Expires inválido não grava nem apaga.
+      if (e<=now || e>now+61*60) return false
+      for (const [key,row] of [...sessions]) if (row.expires<=now) sessions.delete(key)
+      const existing=sessions.get(h)
+      if (!existing) { sessions.set(h,{telegram:t,proof:p,expires:e,boundUser:links.get(t)??null});return true }
+      if (existing.telegram!==t) return false
+      existing.proof=p
+      existing.expires=e
+      existing.boundUser=links.get(t)??null
+      return true
+    },
     async sessionUser(h,t,p) { calls.push('session');const s=sessions.get(h);const ok=!!s&&s.telegram===t&&s.proof===p&&s.expires>now&&s.boundUser===(links.get(t)??null);return {ok,userId:ok?s!.boundUser:null} },
   }
   return {db,links,codes,updates,rates,sessions,calls,setNow:(value:number)=>{now=value}}
