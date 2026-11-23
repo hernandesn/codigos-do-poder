@@ -120,14 +120,18 @@ test('Telegram: vínculo, conversa, erros, login e CSP em 1440×900 e 390×844',
         await page.getByText('Abra este mini app pelo @aion_codigosdopoder_bot no Telegram.').waitFor();
         assert.equal(apiCalls.length, 0); await capture('fora-telegram');
         currentInit = initData();
-        await page.reload(); await page.getByText('Sua conta do Telegram ainda não está vinculada.').waitFor(); await capture('nao-vinculado');
+        await page.reload(); await page.getByText('Sua conta do Telegram ainda não está vinculada.').waitFor();
+        assert.equal(await page.locator('#account-link').isHidden(), false); await capture('nao-vinculado');
         linked = true; currentInit = initData();
-        await page.reload(); await page.locator('#question').waitFor({ state: 'visible' }); await capture('vinculado');
+        await page.reload(); await page.locator('#question').waitFor({ state: 'visible' });
+        assert.equal(await page.locator('#account-link').isHidden(), true); await capture('vinculado');
         await page.locator('#question').fill('O que a base documenta sobre Mauá?'); await page.locator('#send').click();
-        await page.getByText('Consultando a base…').waitFor(); await capture('carregando');
+        await page.getByText('Consultando a base…').waitFor();
+        await page.locator('#pending').waitFor({ state: 'visible' }); await capture('carregando');
         await page.waitForFunction(() => document.querySelector('#question-form').getAttribute('aria-busy') === 'true');
         while (!releaseChat) await new Promise(resolve => setImmediate(resolve));
         releaseChat(); await page.getByText('Resposta concluída.').waitFor();
+        await page.locator('#pending').waitFor({ state: 'hidden' });
         assert.match(await page.locator('#history').textContent(), /<script> não é executado/);
         await page.getByText('Cota grátis restante: 19. Saldo pago: 0.').waitFor(); await capture('resposta');
         for (const [message, text, state] of [['Fora da base', 'Não encontrei isso na base do atlas.', 'fora-da-base'], ['Cota encerrada', 'Seus créditos acabaram.', 'cota'], ['Falha simulada', 'Serviço indisponível. Tente novamente.', 'erro']]) {

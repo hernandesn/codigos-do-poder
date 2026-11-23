@@ -47,6 +47,8 @@ def csp(html, origin, telegram):
 def render(page, origin=None):
     origin = origin or public_origin()
     css = (SCRIPTS / 'couro-osso.css').read_text() + '\n' + (SCRIPTS / 'telegram-pages.css').read_text()
+    if page == 'app':
+        css += '\n' + (SCRIPTS / 'telegram-app.css').read_text()
     js = (SCRIPTS / ('telegram-app.js' if page == 'app' else 'telegram-link.js')).read_text().replace('__SUPABASE_ORIGIN__', origin)
     slots = {'__CSS__': css, '__JS__': js}
     if page == 'vincular':

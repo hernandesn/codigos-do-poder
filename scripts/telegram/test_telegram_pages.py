@@ -91,6 +91,23 @@ class TelegramPagesTest(unittest.TestCase):
         self.assertNotIn('window.copyText(', app)
         self.assertIn('.copy-toast', app)
 
+    def test_indicador_de_pesquisa_e_vinculo_ja_feito(self):
+        app = render('app')
+        source = (SITE / 'scripts/telegram/telegram-app.js').read_text()
+        self.assertIn('id="pending"', app)
+        self.assertIn('id="account-link"', app)
+        self.assertIn('Pesquisando…', source)
+        self.assertIn('Searching…', source)
+        self.assertIn('Investigando…', source)
+        self.assertIn("setAttribute('aria-busy', 'true')", source)
+        self.assertIn('clearTimeout(pendingTimer)', source)
+        self.assertIn("$('account-link').hidden = true", source)
+        self.assertIn('language_code', source)
+        self.assertNotIn('initDataUnsafe', source)
+        self.assertNotIn('CloudStorage', source)
+        self.assertIn('pending-pulse', app)
+        self.assertNotIn('id="pending"', render('vincular'))
+
 
 if __name__ == '__main__':
     unittest.main()

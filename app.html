@@ -2,7 +2,7 @@
 <html lang="pt-BR" data-theme="couro-osso">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org/js/telegram-web-app.js 'sha256-ozgd1w/EL4wtu0+1SWaNwijB4IXbmqj9zvvYR4Tjz3k='; style-src 'self' 'sha256-8XnM2zicFjc3aXrZRbGV2T1Ne/Gus0+Vgs3zAFFvh3M='; style-src-attr 'none'; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org/js/telegram-web-app.js 'sha256-0eqO5/lUAl2IFQbBzKBJqH4MrjU0B67NQM98FkVF1YQ='; style-src 'self' 'sha256-kV8fFAZQeyRswqju2Jg9d6sCoZkiC/aghtqqjuIFnCM='; style-src-attr 'none'; connect-src 'self' https://ozeiyqpbtggvuyhplisa.supabase.co; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'none';">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
@@ -143,10 +143,15 @@ main{padding-bottom:120px}
 .copy-toast.is-visible{opacity:1;visibility:visible}
 @media(prefers-reduced-motion:reduce){.copy-toast{transition:none}}
 #copy{scroll-margin-bottom:96px}
+
+.pending{display:flex;align-items:center;gap:10px;min-height:28px;margin:0 0 12px;color:var(--ink-2);font-family:var(--font-mono);font-size:15px}
+.pending::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--blood);flex:none}
+@media(prefers-reduced-motion:no-preference){.pending::before{animation:pending-pulse 1.2s ease-in-out infinite}}
+@keyframes pending-pulse{50%{opacity:.35}}
 </style>
 </head>
 <body>
-  <header><a class="brand" href="index.html">Códigos do Poder<small>mural investigativo</small></a><a href="vincular.html" target="_blank" rel="noopener noreferrer">Vincular conta</a></header>
+  <header><a class="brand" href="index.html">Códigos do Poder<small>mural investigativo</small></a><a id="account-link" href="vincular.html" target="_blank" rel="noopener noreferrer">Vincular conta</a></header>
   <main>
     <span class="eyebrow">Aion · Telegram</span>
     <h1>Uma pergunta.<br>O que a base sustenta?</h1>
@@ -158,6 +163,7 @@ main{padding-bottom:120px}
       <div class="actions"><a class="button" href="https://aion.hernandesnogueira.com.br/vincular.html" target="_blank" rel="noopener noreferrer">Gerar código de vínculo</a><a href="https://t.me/aion_codigosdopoder_bot" target="_blank" rel="noopener noreferrer">Abrir @aion_codigosdopoder_bot</a></div>
     </section>
     <section id="chat-section" hidden aria-label="Conversa com a base">
+      <p id="pending" class="pending" hidden role="status" aria-live="polite"></p>
       <div id="history" class="history" aria-live="polite" aria-relevant="additions"></div>
       <form id="question-form" class="panel">
         <label for="question">Sua pergunta para a base</label>
@@ -173,6 +179,43 @@ main{padding-bottom:120px}
   <script>/* Somente esta página carrega o SDK Telegram; nenhuma identidade vem do body. */
 (async function () {
   'use strict';
+  const PT_WORDS = new Set(['não', 'nao', 'você', 'voce', 'vocês', 'voces', 'também', 'tambem', 'porque', 'pelo', 'pela', 'isso', 'isto', 'obrigado', 'obrigada']);
+  const ES_WORDS = new Set(['qué', 'cómo', 'dónde', 'también', 'usted', 'ustedes', 'investigación', 'investigando']);
+  const EN_WORDS = new Set(['the', 'what', 'who', 'where', 'when', 'why', 'how', 'does', 'did', 'please', 'about', 'which', 'searching']);
+  function noticeLanguage(text, languageCode) {
+    const sample = String(text || '');
+    const folded = sample.toLowerCase();
+    const words = folded.match(/[a-záéíóúàâêôãõçñü]+/g) || [];
+    let pt = 0, es = 0, en = 0;
+    if (/[ãõ]/.test(folded) || /ç/.test(folded)) pt += 2;
+    if (/ñ/.test(folded)) es += 2;
+    if (/[¿¡]/.test(sample)) es += 2;
+    for (const word of words) {
+      if (PT_WORDS.has(word)) pt++;
+      if (ES_WORDS.has(word)) es++;
+      if (EN_WORDS.has(word)) en++;
+    }
+    const ranked = [['pt', pt], ['en', en], ['es', es]];
+    ranked.sort((a, b) => b[1] - a[1]);
+    if (ranked[0][1] > ranked[1][1]) return ranked[0][0];
+    const code = String(languageCode || '').toLowerCase();
+    if (code.startsWith('pt')) return 'pt';
+    if (code.startsWith('en')) return 'en';
+    if (code.startsWith('es')) return 'es';
+    return 'pt';
+  }
+  function searchingLabel(text, languageCode) {
+    const lang = noticeLanguage(text, languageCode);
+    return lang === 'en' ? 'Searching…' : lang === 'es' ? 'Investigando…' : 'Pesquisando…';
+  }
+  /* fim idioma */
+  // language_code vem do campo user do initData já enviado ao servidor. Não serve de identidade.
+  function languageCodeOf(raw) {
+    try {
+      const user = JSON.parse(new URLSearchParams(raw).get('user') || 'null');
+      return user && typeof user.language_code === 'string' ? user.language_code : '';
+    } catch { return ''; }
+  }
   const $ = id => document.getElementById(id);
   const status = (message, warning = false) => { $('status').textContent = message; $('status').classList.toggle('warning', warning); };
   const webapp = window.Telegram && window.Telegram.WebApp;
@@ -190,6 +233,26 @@ main{padding-bottom:120px}
   webapp.ready();
   webapp.expand();
   let proof = '';
+  let pendingTimer = 0;
+  const languageCode = languageCodeOf(initData);
+  function clearPending() {
+    clearTimeout(pendingTimer);
+    pendingTimer = 0;
+    const node = $('pending');
+    node.hidden = true;
+    node.textContent = '';
+  }
+  function showPending(message) {
+    clearTimeout(pendingTimer);
+    const node = $('pending');
+    node.hidden = false;
+    node.textContent = 'Consultando a base…';
+    pendingTimer = setTimeout(() => {
+      const label = searchingLabel(message, languageCode);
+      node.textContent = label;
+      status(label);
+    }, 4000);
+  }
   async function request(route, body) {
     const response = await fetch(config.supabaseUrl + '/functions/v1/telegram/app/' + route, {
       method: 'POST',
@@ -237,6 +300,7 @@ main{padding-bottom:120px}
     if (!response.ok) { failed(response, result); return; }
     proof = result.session;
     if (!result.linked) { status('Sua conta do Telegram ainda não está vinculada.'); $('link-panel').hidden = false; return; }
+    $('account-link').hidden = true;
     $('chat-section').hidden = false;
     status('Conta vinculada. Faça sua pergunta à base.');
   } catch { status('Não foi possível conectar. Feche e abra novamente pelo bot.', true); return; }
@@ -248,12 +312,14 @@ main{padding-bottom:120px}
     $('question-form').setAttribute('aria-busy', 'true');
     bubble('Sua pergunta', message, 'question');
     status('Consultando a base…');
+    showPending(message);
     try {
       const { response, result } = await request('chat', { mensagem: message, modelo: $('model').value });
       if (!response.ok || !result.final) { failed(response, result); return; }
       renderFinal(result.final); $('question').value = ''; status('Resposta concluída.');
     } catch { status('Não foi possível conectar. Tente novamente em instantes.', true); }
     finally {
+      clearPending();
       $('send').disabled = !proof; $('question').disabled = !proof; $('model').disabled = !proof;
       $('question-form').setAttribute('aria-busy', 'false');
     }

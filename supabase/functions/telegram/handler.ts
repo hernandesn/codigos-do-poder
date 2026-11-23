@@ -1,10 +1,18 @@
 import { corsHeaders,isAllowedOrigin } from '../_shared/chat_core.ts'
 import { constantTimeTextEqual,hashLinkCode,newSessionProof,sha256,validateInitData } from '../_shared/telegram_auth.ts'
+import { searchingLabel,splitTelegramText,type TelegramBotApi } from '../_shared/telegram_client.ts'
 import type { TelegramDb } from '../_shared/telegram_db.ts'
 import { finalPlainText,type FinalResult } from '../_shared/chat_final.ts'
 import { JsonBodyReadError,readJsonWithByteLimit } from '../_shared/read_json.ts'
 
 export const LINK_INSTRUCTIONS='Para vincular sua conta ao @aion_codigosdopoder_bot, abra https://aion.hernandesnogueira.com.br/vincular.html, entre na sua conta e gere um código. Depois envie aqui /start <código>. Não criamos contas pelo Telegram.'
+export const TELEGRAM_TYPING_INTERVAL_MS=4_000
+export const TELEGRAM_TYPING_LIMIT_MS=50_000
+export const TELEGRAM_NOTICE_DELAY_MS=4_000
+export interface TelegramClock {
+  now(): number
+  delay(ms: number): { promise: Promise<'elapsed' | 'cancelled'>, cancel(): void }
+}
 export interface TelegramDeps {
   webhookSecret:()=>string|undefined
   botToken:()=>string|undefined
@@ -12,11 +20,106 @@ export interface TelegramDeps {
   db:()=>Promise<TelegramDb>
   send:(telegramId:string,text:string)=>Promise<void>
   ask:(userId:string,body:unknown,signal?:AbortSignal)=>Promise<FinalResult>
+  /** Presente em produção. Sem ele, a resposta segue só por send (testes antigos). */
+  bot?: TelegramBotApi
+  clock?: TelegramClock
   log?:(entry:{evento:string;classificacao:string;pedido_id:string})=>void
   now?:()=>number
 }
 const object=(x:unknown):Record<string,unknown>|null=>x!==null&&typeof x==='object'&&!Array.isArray(x)?x as Record<string,unknown>:null
 const id=(x:unknown):string|null=>typeof x==='number'&&Number.isSafeInteger(x)&&x>0?String(x):null
+
+function realClock(): TelegramClock {
+  return {
+    now:()=>Date.now(),
+    delay(ms: number) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let settle: (value: 'elapsed' | 'cancelled') => void = () => {}
+      let settled=false
+      const promise=new Promise<'elapsed' | 'cancelled'>(resolve => {
+        settle=value => { if (!settled) { settled=true;resolve(value) } }
+        timer=setTimeout(()=>settle('elapsed'),ms)
+      })
+      return { promise, cancel() { if (timer!==undefined) clearTimeout(timer);timer=undefined;settle('cancelled') } }
+    },
+  }
+}
+
+function edgeWaitUntil(): ((work: Promise<unknown>) => void) | null {
+  const runtime=(globalThis as {EdgeRuntime?: {waitUntil?: (work: Promise<unknown>) => void}}).EdgeRuntime
+  return runtime && typeof runtime.waitUntil==='function' ? work => runtime.waitUntil!(work) : null
+}
+
+/** Primeira ação na hora; repete a cada ~4 s; para no teto, no cancelamento ou se a ação falhar sem deixar timer. */
+function startTyping(bot: TelegramBotApi, chatId: string, clock: TelegramClock): () => void {
+  let stopped=false
+  let current: { cancel(): void } | null=null
+  const started=clock.now()
+  const loop=async () => {
+    while (!stopped) {
+      if (clock.now()-started>=TELEGRAM_TYPING_LIMIT_MS) break
+      try { await bot.sendChatAction(chatId) } catch { /* presença é acessória */ }
+      if (stopped || clock.now()-started>=TELEGRAM_TYPING_LIMIT_MS) break
+      const wait=Math.min(TELEGRAM_TYPING_INTERVAL_MS,TELEGRAM_TYPING_LIMIT_MS-(clock.now()-started))
+      if (wait<=0 || stopped) break
+      const pending=clock.delay(wait)
+      current=pending
+      // stop() pode ter corrido entre o delay e a atribuição. Cancela antes de esperar.
+      if (stopped) { pending.cancel();current=null;break }
+      const reason=await pending.promise
+      current=null
+      if (stopped || reason==='cancelled') break
+    }
+  }
+  void loop()
+  return () => { stopped=true;current?.cancel();current=null }
+}
+
+async function deliverModelAnswer(d: TelegramDeps, telegramId: string, text: string, languageCode: string, userId: string): Promise<void> {
+  const bot=d.bot
+  if (!bot) {
+    await d.send(telegramId,finalPlainText(await d.ask(userId,{mensagem:text,modelo:'basico',contexto:{entidades:[]}})))
+    return
+  }
+  const clock=d.clock??realClock()
+  const stopTyping=startTyping(bot,telegramId,clock)
+  const noticeDelay=clock.delay(TELEGRAM_NOTICE_DELAY_MS)
+  let noticeId: number | null=null
+  try {
+    const askPromise=d.ask(userId,{mensagem:text,modelo:'basico',contexto:{entidades:[]}})
+    const first=await Promise.race([
+      askPromise.then(value=>({kind:'answer' as const,value}),error=>({kind:'error' as const,error})),
+      noticeDelay.promise.then(reason=>({kind:'delay' as const,reason})),
+    ])
+    if (first.kind==='delay' && first.reason==='elapsed') {
+      try { noticeId=await bot.sendMessage(telegramId,searchingLabel(text,languageCode)) } catch { noticeId=null }
+    }
+    if (first.kind==='error') throw first.error
+    const result=first.kind==='answer' ? first.value : await askPromise
+    const reply=finalPlainText(result)
+    if (noticeId!=null && splitTelegramText(reply).length===1) {
+      try {
+        await bot.editMessageText(telegramId,noticeId,reply)
+        noticeId=null
+        return
+      } catch { /* apaga o aviso e envia a resposta */ }
+    }
+    if (noticeId!=null) {
+      const stale=noticeId
+      noticeId=null
+      try { await bot.deleteMessage(telegramId,stale) } catch { /* a resposta segue mesmo assim */ }
+    }
+    await d.send(telegramId,reply)
+  } finally {
+    noticeDelay.cancel()
+    stopTyping()
+    if (noticeId!=null) {
+      const stale=noticeId
+      noticeId=null
+      try { await bot.deleteMessage(telegramId,stale) } catch { /* não mascara a falha original */ }
+    }
+  }
+}
 
 export function createTelegramHandler(d:TelegramDeps) {
   return async (req:Request):Promise<Response>=>{
@@ -45,8 +148,9 @@ export function createTelegramHandler(d:TelegramDeps) {
         if (app==='session') {
           if (!await db.rateTouch(auth.telegramId)) return error('rate_limit','Muitas tentativas. Aguarde um minuto.',429)
           const proof=newSessionProof()
+          // false aqui não é reabertura: expires fora da janela ou init_hash de outro telegram_id.
           if (!await db.beginSession(auth.hash,auth.telegramId,await sha256(proof),auth.expiresAt)) {
-            log('replay');return error('replay','Esta abertura já foi usada. Feche e abra novamente pelo bot.',401)
+            log('sessao_recusada');return error('sem_login','Abra o mini app pelo @aion_codigosdopoder_bot. A sessão pode ter expirado.',401)
           }
           const session=await db.sessionUser(auth.hash,auth.telegramId,await sha256(proof))
           if (!session.ok) return error('sem_login','O vínculo mudou. Feche e abra novamente pelo bot.',401)
@@ -101,33 +205,43 @@ export function createTelegramHandler(d:TelegramDeps) {
       const db=await d.db()
       if (!await db.claimUpdate(updateId)) { log('duplicado');return new Response(null,{status:200,headers}) }
       const text=message.text.trim()
-      const command=text.length<=2000?text.match(/^\/(start|desvincular)(?:@aion_codigosdopoder_bot)?(?:\s+([\s\S]*))?$/i):null
-      // /desvincular segue com o rate esgotado. Não chama o modelo nem grava rate (nem overflow).
-      if (command?.[1].toLowerCase()==='desvincular') {
-        await db.unlink(telegramId)
-        await d.send(telegramId,'Vínculo removido do @aion_codigosdopoder_bot. Para vincular novamente, gere outro código na página de vínculo.')
-        log('processado')
-        return new Response(null,{status:200,headers})
-      }
-      // Bloqueios não gravam evento de rate nem geram nova resposta (evita amplificação).
-      if (!await db.rateTouch(telegramId)) { log('rate_limit');return new Response(null,{status:200,headers}) }
-      let reply:string
-      if (text.length>2000) reply='A mensagem ultrapassa 2000 caracteres. Envie uma pergunta de até 2000 caracteres para consultar a base.'
-      else if (command?.[1].toLowerCase()==='start') {
-        if (!command[2]) reply=`Bem-vindo ao @aion_codigosdopoder_bot. ${LINK_INSTRUCTIONS}`
-        else {
-          const hash=await hashLinkCode(command[2].trim(),d.linkPepper())
-          reply=hash&&await db.consumeCode(telegramId,hash)
-            ?'Conta vinculada ao @aion_codigosdopoder_bot. Faça uma pergunta sobre a base do Códigos do Poder (até 2000 caracteres). Sua cota é a mesma do site. Use /desvincular para remover o vínculo.'
-            :'Código inválido, expirado ou já usado. Gere outro em https://aion.hernandesnogueira.com.br/vincular.html e envie /start <código> ao @aion_codigosdopoder_bot.'
+      const languageCode=typeof from?.language_code==='string'?from.language_code:''
+      const handleClaimed=async (): Promise<string> => {
+        const command=text.length<=2000?text.match(/^\/(start|desvincular)(?:@aion_codigosdopoder_bot)?(?:\s+([\s\S]*))?$/i):null
+        // /desvincular segue com o rate esgotado. Não chama o modelo nem grava rate (nem overflow).
+        if (command?.[1].toLowerCase()==='desvincular') {
+          await db.unlink(telegramId)
+          await d.send(telegramId,'Vínculo removido do @aion_codigosdopoder_bot. Para vincular novamente, gere outro código na página de vínculo.')
+          return 'processado'
         }
-      } else {
+        // Bloqueios não gravam evento de rate nem geram nova resposta (evita amplificação).
+        if (!await db.rateTouch(telegramId)) return 'rate_limit'
+        if (text.length>2000) {
+          await d.send(telegramId,'A mensagem ultrapassa 2000 caracteres. Envie uma pergunta de até 2000 caracteres para consultar a base.')
+          return 'processado'
+        }
+        if (command?.[1].toLowerCase()==='start') {
+          if (!command[2]) await d.send(telegramId,`Bem-vindo ao @aion_codigosdopoder_bot. ${LINK_INSTRUCTIONS}`)
+          else {
+            const hash=await hashLinkCode(command[2].trim(),d.linkPepper())
+            await d.send(telegramId,hash&&await db.consumeCode(telegramId,hash)
+              ?'Conta vinculada ao @aion_codigosdopoder_bot. Faça uma pergunta sobre a base do Códigos do Poder (até 2000 caracteres). Sua cota é a mesma do site. Use /desvincular para remover o vínculo.'
+              :'Código inválido, expirado ou já usado. Gere outro em https://aion.hernandesnogueira.com.br/vincular.html e envie /start <código> ao @aion_codigosdopoder_bot.')
+          }
+          return 'processado'
+        }
         const userId=await db.linkedUser(telegramId)
-        reply=userId?finalPlainText(await d.ask(userId,{mensagem:text,modelo:'basico',contexto:{entidades:[]}})):LINK_INSTRUCTIONS
+        if (!userId) { await d.send(telegramId,LINK_INSTRUCTIONS);return 'processado' }
+        // language_code só escolhe o idioma do aviso. A identidade continua sendo o id já validado.
+        await deliverModelAnswer(d,telegramId,text,languageCode,userId)
+        return 'processado'
       }
-      await d.send(telegramId,reply)
-      log('processado')
-      return new Response(null,{status:200,headers})
+      const job=handleClaimed().then(classification=>{ log(classification) },()=>{ log('falha_interna');throw new Error('falha_interna') })
+      const waitUntil=edgeWaitUntil()
+      // Com waitUntil o 200 sai depois do claim; o retry do Telegram não pergunta de novo.
+      if (waitUntil) { waitUntil(job.then(()=>undefined,()=>undefined));return new Response(null,{status:200,headers}) }
+      try { await job;return new Response(null,{status:200,headers}) }
+      catch { return error('rede','Serviço indisponível.',502) }
     } catch {
       // At-most-once: após claim, uma repetição não chama modelo nem envia novamente.
       log('falha_interna');return error('rede','Serviço indisponível.',502)

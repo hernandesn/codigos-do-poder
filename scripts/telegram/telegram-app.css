@@ -1,0 +1,4 @@
+.pending{display:flex;align-items:center;gap:10px;min-height:28px;margin:0 0 12px;color:var(--ink-2);font-family:var(--font-mono);font-size:15px}
+.pending::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--blood);flex:none}
+@media(prefers-reduced-motion:no-preference){.pending::before{animation:pending-pulse 1.2s ease-in-out infinite}}
+@keyframes pending-pulse{50%{opacity:.35}}

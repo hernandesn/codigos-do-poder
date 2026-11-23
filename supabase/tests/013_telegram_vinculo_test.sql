@@ -15,21 +15,26 @@ BEGIN
   IF NOT chat_private.telegram_consume_code(102,repeat('b',64)) THEN RAISE EXCEPTION 'vínculo b'; END IF;
 
   IF NOT chat_private.telegram_begin_session(repeat('c',64),101,repeat('d',64),extract(epoch FROM now())::bigint+600) THEN RAISE EXCEPTION 'sessão'; END IF;
-  IF chat_private.telegram_begin_session(repeat('c',64),101,repeat('e',64),extract(epoch FROM now())::bigint+600) THEN RAISE EXCEPTION 'replay'; END IF;
-  IF NOT (chat_private.telegram_session_user(repeat('c',64),101,repeat('d',64))->>'ok')::boolean THEN RAISE EXCEPTION 'prova'; END IF;
-  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('d',64))->>'user_id')::uuid IS DISTINCT FROM a THEN RAISE EXCEPTION 'identidade atômica'; END IF;
-  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('e',64))->>'ok')::boolean THEN RAISE EXCEPTION 'prova adulterada'; END IF;
+  -- 015: o mesmo init_hash e o mesmo telegram_id rotacionam a prova. A antiga morre.
+  IF NOT chat_private.telegram_begin_session(repeat('c',64),101,repeat('e',64),extract(epoch FROM now())::bigint+600) THEN RAISE EXCEPTION 'reabrir'; END IF;
+  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('d',64))->>'ok')::boolean THEN RAISE EXCEPTION 'prova antiga'; END IF;
+  IF NOT (chat_private.telegram_session_user(repeat('c',64),101,repeat('e',64))->>'ok')::boolean THEN RAISE EXCEPTION 'prova nova'; END IF;
+  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('e',64))->>'user_id')::uuid IS DISTINCT FROM a THEN RAISE EXCEPTION 'identidade atômica'; END IF;
+  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('f',64))->>'ok')::boolean THEN RAISE EXCEPTION 'prova adulterada'; END IF;
   -- Mesmo sem a invalidação explícita, uma versão nova nunca aceita prova velha.
   UPDATE chat_private.telegram_links SET binding_id=gen_random_uuid() WHERE telegram_id=101;
-  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('d',64))->>'ok')::boolean THEN RAISE EXCEPTION 'versão antiga'; END IF;
+  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('e',64))->>'ok')::boolean THEN RAISE EXCEPTION 'versão antiga'; END IF;
   IF chat_private.telegram_begin_session(repeat('f',64),101,repeat('e',64),extract(epoch FROM now())::bigint-1) THEN RAISE EXCEPTION 'sessão expirada'; END IF;
   UPDATE chat_private.telegram_link_codes SET created_at=now()-interval '1 minute' WHERE user_id=a;
   IF NOT chat_private.telegram_issue_code(a,repeat('e',64),issued) THEN RAISE EXCEPTION 'novo código'; END IF;
   IF NOT chat_private.telegram_consume_code(102,repeat('e',64)) THEN RAISE EXCEPTION 'rebind'; END IF;
   IF chat_private.telegram_linked_user(102) IS DISTINCT FROM a OR chat_private.telegram_linked_user(101) IS NOT NULL THEN RAISE EXCEPTION 'transferência'; END IF;
   IF EXISTS(SELECT FROM chat_private.telegram_links WHERE user_id=b) THEN RAISE EXCEPTION 'liberar dono anterior'; END IF;
-  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('d',64))->>'ok')::boolean THEN RAISE EXCEPTION 'invalidar sessão antiga'; END IF;
-  IF chat_private.telegram_begin_session(repeat('c',64),101,repeat('d',64),extract(epoch FROM now())::bigint+600) THEN RAISE EXCEPTION 'rebind não libera replay'; END IF;
+  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('e',64))->>'ok')::boolean THEN RAISE EXCEPTION 'invalidar sessão antiga'; END IF;
+  IF NOT chat_private.telegram_begin_session(repeat('c',64),101,repeat('1',64),extract(epoch FROM now())::bigint+600) THEN RAISE EXCEPTION 'reabrir após rebind'; END IF;
+  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('e',64))->>'ok')::boolean THEN RAISE EXCEPTION 'prova anterior ao rebind'; END IF;
+  IF (chat_private.telegram_session_user(repeat('c',64),101,repeat('1',64))->>'user_id') IS NOT NULL THEN RAISE EXCEPTION 'rebind não herda dono'; END IF;
+  IF NOT (chat_private.telegram_session_user(repeat('c',64),101,repeat('1',64))->>'ok')::boolean THEN RAISE EXCEPTION 'reabrir sem vínculo'; END IF;
   PERFORM chat_private.telegram_unlink(102);
   IF chat_private.telegram_linked_user(102) IS NOT NULL THEN RAISE EXCEPTION 'desvínculo'; END IF;
 
